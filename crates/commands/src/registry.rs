@@ -26,6 +26,8 @@ pub enum Route {
     ExportView,
     /// The IFC export commands, whose output is rendered by the command itself.
     Export,
+    /// The IFC input study commands, which read a received file and change nothing.
+    Ifc,
     /// The view snapshot commands.
     View,
     /// The named-view session commands.
@@ -1781,6 +1783,14 @@ pub const COMMANDS: &[Command] = &[
         &[one(1, "--id", "UUID"), one(1, "--decode", "GLOBALID")],
     ),
     entry(
+        Route::Ifc,
+        "ifc",
+        "ifc-inspect",
+        Access::Read,
+        Ids::None,
+        &[req("--source", "FILE")],
+    ),
+    entry(
         Route::Numbering,
         "numbering",
         "preview-numbering",
@@ -2352,7 +2362,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--scale", "N"),
             opt("--origin", "X,Y"),
             opt("--offset", "MM"),
-            opt("--decimals", "0..255"),
+            opt("--decimals", "0..3"),
             opt("--intent-out", "FILE"),
         ],
     ),
@@ -2380,7 +2390,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--scale", "N"),
             opt("--origin", "X,Y"),
             opt("--offset", "MM"),
-            opt("--decimals", "0..255"),
+            opt("--decimals", "0..3"),
         ],
     ),
     entry(
@@ -2408,7 +2418,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--scale", "N"),
             opt("--origin", "X,Y"),
             opt("--offset", "MM"),
-            opt("--decimals", "0..255"),
+            opt("--decimals", "0..3"),
         ],
     ),
     entry(

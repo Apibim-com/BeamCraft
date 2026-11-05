@@ -48,6 +48,17 @@ const TUBE_HOLE_OP: &str = "019a7bf0-0000-7000-8000-00000000aa79";
 /// scenario): two columns, the cut beam, and two plates with one rectangular hole each.
 const STARTING_VOLUMES: [f64; 5] = [5_000_000.0, 5_000_000.0, 4_750_000.0, 396_000.0, 396_000.0];
 
+/// The shipped synthetic fastener library (contributor-original, MPL-2.0).
+const SYNTHETIC_FASTENERS: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../assets/libraries/synthetic-fasteners.usda"
+);
+
+/// The measured quantity drop of one connected plate under its group's two generated
+/// washered d 12 holes (the engine suites certify the hole geometry; the story pins the
+/// executed drop).
+const BOLT_DROP_MM3: f64 = 2_838.81;
+
 struct Story(PathBuf);
 
 impl Story {
@@ -56,6 +67,17 @@ impl Story {
             .join(format!("q01-expanded-{}", crate::support::boot_nonce()));
         fs::create_dir(&root).unwrap();
         fs::create_dir(root.join("published")).unwrap();
+        fs::create_dir(root.join("curved-published")).unwrap();
+        fs::create_dir(root.join("plates-published")).unwrap();
+        fs::create_dir(root.join("tools-published")).unwrap();
+        fs::create_dir(root.join("bolts-published")).unwrap();
+        fs::create_dir(root.join("data-published")).unwrap();
+        fs::create_dir(root.join("contour-published")).unwrap();
+        fs::create_dir(root.join("classes-published")).unwrap();
+        fs::create_dir(root.join("cuts-published")).unwrap();
+        fs::create_dir(root.join("fits-published")).unwrap();
+        fs::create_dir(root.join("holes-published")).unwrap();
+        fs::create_dir(root.join("storeys-published")).unwrap();
         fs::create_dir(root.join("empty-store")).unwrap();
         Self(root)
     }
@@ -109,6 +131,14 @@ fn close(actual: f64, expected: f64) {
         (actual - expected).abs() <= 1e-8 * expected.abs().max(1.0),
         "actual {actual}, expected {expected}"
     );
+}
+
+fn numbers(json: &Json) -> Vec<f64> {
+    json.array()
+        .unwrap()
+        .iter()
+        .map(|v| v.float().unwrap())
+        .collect()
 }
 
 /// (element_id, volume mm3, mesh_digest) of every part, sorted by id.
@@ -595,6 +625,130 @@ fn expanded_alpha_runs_tools_views_regressions_and_exact_outputs() {
         1
     );
 
+    // Named views (V12): the storey plan, a grid-axis elevation and a free orbit become
+    // named views in the W01 camera prim layer beside the store. A view is display state:
+    // the draft head and the layer bytes stay identical across every read and every
+    // refusal, and each provenance-bearing save captures the draft revision it was taken
+    // against.
+    let views_file = s.path("story-views.usda");
+    let draft_head = s.head("draft");
+    let save_named = |args: &[&str]| -> Json {
+        let mut all = vec!["--file", views_file.as_str()];
+        all.extend_from_slice(args);
+        s.ok("draft", "save-view", &all)
+    };
+    let plan = save_named(&[
+        "--name",
+        "Q01 plan",
+        "--parallel",
+        "xy",
+        "--offset",
+        "1000",
+        "--author",
+        "Q01 story",
+        "--comment",
+        "the storey plan",
+    ]);
+    assert_eq!(text(&plan, "outcome"), "view_saved");
+    let plan_view = &at(&plan, &["views"]).array().unwrap()[0];
+    assert_eq!(text(plan_view, "name"), "Q01 plan");
+    assert_eq!(
+        numbers(at(plan_view, &["plane", "origin_mm"])),
+        [0.0, 0.0, 1000.0]
+    );
+    let stamp = at(plan_view, &["provenance"]);
+    assert_eq!(text(stamp, "author"), "Q01 story");
+    assert_eq!(text(stamp, "comment"), "the storey plan");
+    assert_eq!(text(stamp, "model_revision"), draft_head);
+    assert!(at(stamp, &["created_at_ms"]).unsigned().unwrap() > 1_700_000_000_000);
+    let axis = save_named(&[
+        "--name",
+        "Q01 axis 2",
+        "--grid",
+        "Q01 grid",
+        "--axis",
+        "2",
+        "--author",
+        "Q01 story",
+    ]);
+    let axis_view = &at(&axis, &["views"]).array().unwrap()[0];
+    assert_eq!(text(axis_view, "name"), "Q01 axis 2");
+    assert_eq!(
+        numbers(at(axis_view, &["plane", "origin_mm"])),
+        [1000.0, -2000.0, 0.0],
+        "the elevation stands on the second U axis: its plane origin sits on the x = 1000 line"
+    );
+    let level_plan = save_named(&["--name", "Q01 level plan", "--level", "Q01 level"]);
+    let level_view = &at(&level_plan, &["views"]).array().unwrap()[0];
+    assert_eq!(text(level_view, "name"), "Q01 level plan");
+    assert_eq!(
+        numbers(at(level_view, &["plane", "origin_mm"])),
+        [0.0, 0.0, 1000.0],
+        "the level plan is the model XY plane at the level elevation"
+    );
+    assert!(matches!(at(level_view, &["provenance"]), Json::Null));
+    let orbit = save_named(&["--name", "Q01 3d", "--yaw", "0.7", "--pitch", "0.85"]);
+    let orbit_view = &at(&orbit, &["views"]).array().unwrap()[0];
+    assert_eq!(text(orbit_view, "name"), "Q01 3d");
+    assert_eq!(text(orbit_view, "projection"), "perspective");
+    let listed = s.ok("draft", "list-views", &["--file", &views_file]);
+    assert_eq!(at(&listed, &["view_count"]).unsigned().unwrap(), 4);
+    let mut names: Vec<String> = at(&listed, &["views"])
+        .array()
+        .unwrap()
+        .iter()
+        .map(|v| text(v, "name"))
+        .collect();
+    names.sort();
+    assert_eq!(
+        names,
+        ["Q01 3d", "Q01 axis 2", "Q01 level plan", "Q01 plan"]
+    );
+    assert_eq!(at(&listed, &["folders"]).array().unwrap().len(), 0);
+    let layer_bytes = fs::read(&views_file).unwrap();
+    let applied = s.ok(
+        "draft",
+        "apply-view",
+        &["--file", &views_file, "--view", "q01 axis 2"],
+    );
+    assert_eq!(text(&applied, "outcome"), "view_applied");
+    assert_eq!(
+        numbers(at(&applied, &["camera_plane", "origin_mm"])),
+        [1000.0, -2000.0, 0.0]
+    );
+    assert_eq!(text(at(&applied, &["provenance"]), "author"), "Q01 story");
+    assert_eq!(
+        text(at(&applied, &["provenance"]), "model_revision"),
+        draft_head
+    );
+    let duplicate = s.run(
+        "draft",
+        "save-view",
+        &[
+            "--file",
+            &views_file,
+            "--name",
+            "Q01 PLAN",
+            "--parallel",
+            "xy",
+        ],
+        2,
+    );
+    assert_eq!(text(&duplicate, "outcome"), "rejected");
+    let missing = s.run(
+        "draft",
+        "apply-view",
+        &["--file", &views_file, "--view", "no such view"],
+        2,
+    );
+    assert_eq!(text(&missing, "outcome"), "rejected");
+    assert_eq!(
+        fs::read(&views_file).unwrap(),
+        layer_bytes,
+        "reads and refusals never rewrite the layer"
+    );
+    assert_eq!(s.head("draft"), draft_head, "views never write the model");
+
     // Assembly, bolts and welds complete the frame (the original scenario keeps the details).
     let assembly = text(
         &s.ok(
@@ -659,6 +813,58 @@ fn expanded_alpha_runs_tools_views_regressions_and_exact_outputs() {
         close(found.1, *volume);
         assert_eq!(found.2, *digest, "{id} mesh must survive the round trip");
     }
+
+    // The named views survive the publication round trip: the camera prim layer is
+    // store-independent display state, so the published head lists the same four views,
+    // restores the exact camera, and the captured provenance still names the draft
+    // revision the view was taken against.
+    assert_eq!(
+        s.ok("published", "list-views", &["--file", &views_file])
+            .get("view_count")
+            .unwrap()
+            .unsigned()
+            .unwrap(),
+        4
+    );
+    let restored = s.ok(
+        "published",
+        "apply-view",
+        &["--file", &views_file, "--view", "Q01 plan"],
+    );
+    assert_eq!(text(&restored, "outcome"), "view_applied");
+    assert_eq!(
+        numbers(at(&restored, &["camera_plane", "origin_mm"])),
+        [0.0, 0.0, 1000.0]
+    );
+    assert_eq!(
+        text(at(&restored, &["provenance"]), "model_revision"),
+        draft_head
+    );
+    assert_eq!(
+        fs::read(&views_file).unwrap(),
+        layer_bytes,
+        "publication and reads never rewrite the layer"
+    );
+    let removed = s.ok(
+        "published",
+        "remove-view",
+        &["--file", &views_file, "--view", "Q01 3d"],
+    );
+    assert_eq!(text(&removed, "outcome"), "view_removed");
+    assert_eq!(text(&removed, "name"), "Q01 3d");
+    assert_eq!(at(&removed, &["view_count"]).unsigned().unwrap(), 3);
+    let gone = s.run(
+        "published",
+        "apply-view",
+        &["--file", &views_file, "--view", "Q01 3d"],
+        2,
+    );
+    assert_eq!(text(&gone, "outcome"), "rejected");
+    assert_eq!(
+        s.head("published"),
+        accepted_head,
+        "views never write the model"
+    );
 
     // Views: the kind filter over the real frame is exercised through query-elements above;
     // snapshot-view still runs on its synthetic kernel plate scene because P01 does not
@@ -1933,4 +2139,2210 @@ fn expanded_alpha_runs_tools_views_regressions_and_exact_outputs() {
         tube_found.2, tube_digest,
         "tube mesh must survive the reopen"
     );
+}
+
+/// The curved and poly story (P12/P13): its own published store, so the numbered frame
+/// above keeps the exact part counts the manual runbook records, and its own test, so
+/// the documented entry point still runs both and the per-test budget stays honest.
+#[test]
+fn curved_and_poly_members_run_their_own_published_store() {
+    let s = Story::new();
+    // The store numbers a poly member, but refuses once the curved member exists
+    // (`UNSUPPORTED_GEOMETRY`, a delivered-surface limit), so the curved story cannot
+    // join the numbered frame yet. The mitred polybeam quantity drops the corners out
+    // exactly; the arc quantity is the exact analytic sweep, only the mesh facets.
+    s.ok(
+        "curved-published",
+        "define-profile",
+        &[
+            "--designation",
+            "Q01-ARC",
+            "--width",
+            "100",
+            "--height",
+            "100",
+        ],
+    );
+    s.ok(
+        "curved-published",
+        "define-material",
+        &["--grade", "Q01-steel", "--density", "7850"],
+    );
+    s.ok(
+        "curved-published",
+        "create-workspace",
+        &[
+            "--workspace-dir",
+            &s.path("curved-draft"),
+            "--user-id",
+            USER,
+        ],
+    );
+    let poly = s.ok(
+        "curved-draft",
+        "create-polybeam",
+        &[
+            "--points",
+            "0,0,0;2000,0,0;2000,3000,0",
+            "--profile",
+            "Q01-ARC",
+            "--material",
+            "Q01-steel",
+            "--name",
+            "Q01 poly gutter",
+        ],
+    );
+    assert_eq!(text(&poly, "outcome"), "polybeam_created");
+    let poly_member = at(&poly, &["member"]);
+    assert_eq!(text(poly_member, "kind"), "beam");
+    assert_eq!(
+        at(poly_member, &["section_mm", "width"]).float().unwrap(),
+        100.0
+    );
+    assert_eq!(
+        at(poly_member, &["section_mm", "height"]).float().unwrap(),
+        100.0
+    );
+    // The mitres drop out of the quantity: area x polyline length, exactly.
+    let poly_volume = at(poly_member, &["quantities", "volume", "mm3"])
+        .float()
+        .unwrap();
+    close(poly_volume, 50_000_000.0);
+    close(
+        at(poly_member, &["quantities", "mass", "kg"])
+            .float()
+            .unwrap(),
+        392.5,
+    );
+    assert_eq!(
+        at(poly_member, &["axis_points_mm"]).array().unwrap().len(),
+        3
+    );
+    let poly_id = text(poly_member, "element_id");
+    let poly_digest = text(poly_member, "mesh_digest");
+    s.ok("curved-draft", "preview-numbering", &[]);
+
+    // The radius-mode semicircle: the axis length and the quantity are the exact arc
+    // values (area x arc length); only the stored mesh facets the sweep.
+    let arc = s.ok(
+        "curved-draft",
+        "create-curved-beam",
+        &[
+            "--start",
+            "1000,0,0",
+            "--end",
+            "-1000,0,0",
+            "--radius",
+            "1000",
+            "--normal",
+            "0,0,1",
+            "--profile",
+            "Q01-ARC",
+            "--material",
+            "Q01-steel",
+            "--name",
+            "Q01 arc hanger",
+        ],
+    );
+    let arc_member = at(&arc, &["member"]);
+    assert_eq!(text(arc_member, "path_type"), "arc");
+    let arc_length = 1000.0 * std::f64::consts::PI;
+    close(
+        at(arc_member, &["axis_length_mm"]).float().unwrap(),
+        arc_length,
+    );
+    assert!(at(arc_member, &["arc_deviation_mm"]).float().unwrap() <= 0.05);
+    let arc_volume = at(arc_member, &["quantities", "volume", "mm3"])
+        .float()
+        .unwrap();
+    close(arc_volume, 10_000.0 * arc_length);
+    let arc_id = text(arc_member, "element_id");
+    let arc_digest = text(arc_member, "mesh_digest");
+
+    let curved_head = s.head("curved-draft");
+    let degenerate = s.run(
+        "curved-draft",
+        "create-polybeam",
+        &["--points", "0,0,0;2000,0,0", "--profile", "Q01-ARC"],
+        2,
+    );
+    assert_eq!(text(&degenerate, "outcome"), "rejected");
+    let unnumbered = s.run("curved-draft", "preview-numbering", &[], 2);
+    assert_eq!(text(&unnumbered, "code"), "UNSUPPORTED_GEOMETRY");
+    assert_eq!(s.head("curved-draft"), curved_head);
+
+    // The arc creation undoes and redoes as one command.
+    let undo = s.execute(&["undo-workspace", "--workspace-dir", &s.path("curved-draft")]);
+    assert_eq!(undo.0, 0);
+    assert_eq!(text(&undo.1, "outcome"), "workspace_undone");
+    assert_eq!(
+        parts(&s.ok("curved-draft", "inspect-elements", &[])).len(),
+        1
+    );
+    let redo = s.execute(&["redo-workspace", "--workspace-dir", &s.path("curved-draft")]);
+    assert_eq!(redo.0, 0);
+    assert_eq!(text(&redo.1, "outcome"), "workspace_redone");
+
+    let curved_published = s.ok(
+        "curved-published",
+        "publish-workspace",
+        &["--workspace-dir", &s.path("curved-draft")],
+    );
+    assert_eq!(text(&curved_published, "outcome"), "workspace_published");
+    let reopened_curved = parts(&s.ok("curved-published", "inspect-elements", &[]));
+    assert_eq!(reopened_curved.len(), 2);
+    for (id, volume, digest, label) in [
+        (poly_id.as_str(), poly_volume, poly_digest.as_str(), "poly"),
+        (arc_id.as_str(), arc_volume, arc_digest.as_str(), "arc"),
+    ] {
+        let found = reopened_curved
+            .iter()
+            .find(|(other, _, _)| other == id)
+            .unwrap_or_else(|| panic!("{label} member is present"));
+        close(found.1, volume);
+        assert_eq!(found.2, digest, "{label} mesh must survive the round trip");
+    }
+}
+
+/// The bent and lofted plate story (A10/A11): its own published store, so the numbered
+/// frame keeps the counts the manual runbook records, and its own test for the per-test
+/// budget. The lofted plate is the certified ruled loft with the exact analytic volume;
+/// the fold keeps the blank's `t x area` volume within the certified bound and the
+/// unfold stays the authored contour.
+#[test]
+fn bent_and_lofted_plates_run_their_own_published_store() {
+    let s = Story::new();
+    // The project's steel seeds the store head; the workspace forks from it.
+    s.ok(
+        "plates-published",
+        "define-material",
+        &["--grade", "Q01-steel", "--density", "7850"],
+    );
+    s.ok(
+        "plates-published",
+        "create-workspace",
+        &[
+            "--workspace-dir",
+            &s.path("plates-draft"),
+            "--user-id",
+            USER,
+        ],
+    );
+
+    // The lofted plate between two translated contours: the oblique prism of the square,
+    // with the exact analytic volume in the reply and in the stored quantities.
+    let lofted = s.ok(
+        "plates-draft",
+        "create-lofted-plate",
+        &[
+            "--name",
+            "Q01 lofted transition",
+            "--new-id",
+            "019a7bf0-0000-7000-8000-00000000aa90",
+            "--start",
+            "0,0,0;200,0,0;200,100,0;0,100,0",
+            "--end",
+            "0,0,50;200,0,50;200,100,50;0,100,50",
+        ],
+    );
+    assert_eq!(text(&lofted, "outcome"), "lofted_plate_created");
+    let lofted_id = text(at(&lofted, &["plate"]), "id");
+    assert!(
+        (at(&lofted, &["geometry", "volume_mm3"]).float().unwrap() - 1_000_000.0).abs() < 1e-6,
+        "the lofted oblique prism volume"
+    );
+    let stored_lofts = s.ok("plates-draft", "inspect-lofted-plates", &[]);
+    assert_eq!(text(&stored_lofts, "outcome"), "lofted_plates");
+    let lofts = at(&stored_lofts, &["plates"]).array().unwrap();
+    assert_eq!(lofts.len(), 1);
+    assert_eq!(text(&lofts[0], "id"), lofted_id);
+    assert_eq!(text(&lofts[0], "volume_status"), "current");
+    assert!(
+        (at(&lofts[0], &["volume_mm3"]).float().unwrap() - 1_000_000.0).abs() < 1e-6,
+        "the stored lofted quantity"
+    );
+
+    // The folded plate: one right-angle fold on radius 8 keeps the volume at the blank's
+    // t x area within the certified bound, the outline becomes the unfold contour, and
+    // the bend record carries its parameters.
+    let flat = s.ok(
+        "plates-draft",
+        "create-plate",
+        &[
+            "--width",
+            "1000",
+            "--length",
+            "2000",
+            "--thickness",
+            "2",
+            "--name",
+            "Q01 folded bracket",
+        ],
+    );
+    let flat_id = text(at(&flat, &["plate"]), "element_id");
+    let fold_args = [
+        "--id",
+        flat_id.as_str(),
+        "--operation-id",
+        "019a7bf0-0000-7000-8000-00000000aa91",
+        "--op-id",
+        "019a7bf0-0000-7000-8000-00000000aa92",
+        "--kind",
+        "fold",
+        "--point-a",
+        "0,1000,0",
+        "--point-b",
+        "1000,1000,0",
+        "--radius",
+        "8",
+        "--angle-rad",
+        "1.5707963267948966",
+    ];
+    let bent = s.ok("plates-draft", "bend-plate", &fold_args);
+    assert_eq!(text(&bent, "outcome"), "bend_applied");
+    let inspection = s.ok("plates-draft", "inspect-elements", &[]);
+    let bent_parts = parts(&inspection);
+    assert_eq!(
+        bent_parts.len(),
+        1,
+        "the loft lists separately from the plates"
+    );
+    let bent_found = bent_parts
+        .iter()
+        .find(|(element, _, _)| element == flat_id.as_str())
+        .expect("the folded plate is present");
+    let bent_volume = bent_found.1;
+    assert!(
+        (bent_volume - 4_000_000.0).abs() <= 8_000.0,
+        "bent volume {bent_volume} past the fold bound"
+    );
+    let bent_digest = bent_found.2.clone();
+    let folded_entry = at(&inspection, &["plates"])
+        .array()
+        .unwrap()
+        .iter()
+        .find(|p| text(p, "element_id") == flat_id)
+        .expect("the folded plate entry is present");
+    assert_eq!(text(folded_entry, "outline"), "contour");
+    let bends = at(folded_entry, &["bends"]).array().unwrap();
+    assert_eq!(bends.len(), 1);
+    assert_eq!(text(&bends[0], "bend"), "fold");
+
+    let plates_head = s.head("plates-draft");
+    let replay = s.ok("plates-draft", "bend-plate", &fold_args);
+    assert_eq!(text(&replay, "outcome"), "bend_replayed");
+    assert_eq!(
+        s.head("plates-draft"),
+        plates_head,
+        "the replay writes nothing"
+    );
+    let overlapping = s.run(
+        "plates-draft",
+        "bend-plate",
+        &[
+            "--id",
+            flat_id.as_str(),
+            "--operation-id",
+            "019a7bf0-0000-7000-8000-00000000aa93",
+            "--kind",
+            "fold",
+            "--point-a",
+            "0,1001,0",
+            "--point-b",
+            "1000,1001,0",
+            "--radius",
+            "8",
+            "--angle-rad",
+            "1.5707963267948966",
+        ],
+        2,
+    );
+    assert_eq!(text(&overlapping, "outcome"), "rejected");
+    assert_eq!(s.head("plates-draft"), plates_head);
+
+    // The bend is one undo unit: the fold rolls back to the exact flat blank and the
+    // redo restores the bent volume.
+    let undo = s.execute(&["undo-workspace", "--workspace-dir", &s.path("plates-draft")]);
+    assert_eq!(undo.0, 0);
+    assert_eq!(text(&undo.1, "outcome"), "workspace_undone");
+    let unfolded = parts(&s.ok("plates-draft", "inspect-elements", &[]));
+    close(volume_of(&unfolded, flat_id.as_str()), 4_000_000.0);
+    let redo = s.execute(&["redo-workspace", "--workspace-dir", &s.path("plates-draft")]);
+    assert_eq!(redo.0, 0);
+    assert_eq!(text(&redo.1, "outcome"), "workspace_redone");
+
+    let plates_published = s.ok(
+        "plates-published",
+        "publish-workspace",
+        &["--workspace-dir", &s.path("plates-draft")],
+    );
+    assert_eq!(text(&plates_published, "outcome"), "workspace_published");
+    let reopened_plates = parts(&s.ok("plates-published", "inspect-elements", &[]));
+    assert_eq!(reopened_plates.len(), 1);
+    let folded_back = reopened_plates
+        .iter()
+        .find(|(other, _, _)| other == flat_id.as_str())
+        .expect("the folded plate is present");
+    close(folded_back.1, bent_volume);
+    assert_eq!(
+        folded_back.2, bent_digest,
+        "folded mesh must survive the round trip"
+    );
+    let reopened_lofts = s.ok("plates-published", "inspect-lofted-plates", &[]);
+    assert_eq!(text(&reopened_lofts, "outcome"), "lofted_plates");
+    let reopened_loft_entries = at(&reopened_lofts, &["plates"]).array().unwrap();
+    assert_eq!(reopened_loft_entries.len(), 1);
+    assert_eq!(text(&reopened_loft_entries[0], "id"), lofted_id);
+    assert_eq!(text(&reopened_loft_entries[0], "volume_status"), "current");
+    assert!(
+        (at(&reopened_loft_entries[0], &["volume_mm3"])
+            .float()
+            .unwrap()
+            - 1_000_000.0)
+            .abs()
+            < 1e-6,
+        "the lofted quantity must survive the round trip"
+    );
+    assert!(
+        at(&reopened_loft_entries[0], &["triangles"])
+            .unsigned()
+            .unwrap()
+            > 0
+    );
+}
+
+/// The model-tool story (T03): rotate, mirror and the arrays run in their own published
+/// store, so the numbered frame keeps the counts the manual runbook records, and in its
+/// own test for the per-test budget. Every transform is exactly one placement or shape
+/// step and one undo unit; the arrays land independent copies in one revision.
+#[test]
+fn tools_rotate_mirror_and_array_exactly() {
+    let s = Story::new();
+    s.ok(
+        "tools-published",
+        "define-profile",
+        &[
+            "--designation",
+            "Q01-BAR",
+            "--width",
+            "100",
+            "--height",
+            "100",
+        ],
+    );
+    s.ok(
+        "tools-published",
+        "create-workspace",
+        &["--workspace-dir", &s.path("tools-draft"), "--user-id", USER],
+    );
+    let tool_volume = 10_000_000.0;
+    let strut = |id: &str, start: &str, end: &str, name: &str| -> String {
+        let created = s.ok(
+            "tools-draft",
+            "create-member",
+            &[
+                "--new-id",
+                id,
+                "--kind",
+                "beam",
+                "--start",
+                start,
+                "--end",
+                end,
+                "--profile",
+                "Q01-BAR",
+                "--name",
+                name,
+            ],
+        );
+        text(at(&created, &["member"]), "element_id")
+    };
+
+    // The linear array lands three independent copies in one revision: stepped
+    // placements, the source body and quantity each, and one undo removes them all.
+    let arrayed = strut(
+        "019a7bf0-0000-7000-8000-00000000aaa0",
+        "0,0,0",
+        "1000,0,0",
+        "Q01 array strut",
+    );
+    let array = s.ok(
+        "tools-draft",
+        "array-linear",
+        &[
+            "--id",
+            &arrayed,
+            "--count",
+            "3",
+            "--direction",
+            "1,0,0",
+            "--spacing",
+            "2000",
+        ],
+    );
+    assert_eq!(text(&array, "outcome"), "element_arrayed");
+    for (index, element) in at(&array, &["elements"])
+        .array()
+        .unwrap()
+        .iter()
+        .enumerate()
+    {
+        let expected = 2000.0 * (index as f64 + 1.0);
+        assert_eq!(
+            numbers(at(element, &["placement", "translation_mm"]))[0],
+            expected,
+            "the copy at the stepped placement"
+        );
+        assert_eq!(
+            at(element, &["quantities", "volume", "mm3"])
+                .float()
+                .unwrap(),
+            tool_volume
+        );
+    }
+    assert_eq!(
+        parts(&s.ok("tools-draft", "inspect-elements", &[])).len(),
+        4
+    );
+    let undo = s.execute(&["undo-workspace", "--workspace-dir", &s.path("tools-draft")]);
+    assert_eq!(undo.0, 0);
+    assert_eq!(text(&undo.1, "outcome"), "workspace_undone");
+    assert_eq!(
+        parts(&s.ok("tools-draft", "inspect-elements", &[])).len(),
+        1,
+        "one undo removes every copy"
+    );
+    let redo = s.execute(&["redo-workspace", "--workspace-dir", &s.path("tools-draft")]);
+    assert_eq!(redo.0, 0);
+    assert_eq!(text(&redo.1, "outcome"), "workspace_redone");
+
+    // The mirror reflects the path across the plane, keeping the length and the volume;
+    // a mirrored polybeam path is not expressible and refuses with nothing written.
+    let mirrored_strut = strut(
+        "019a7bf0-0000-7000-8000-00000000aaa1",
+        "2000,0,0",
+        "3000,0,0",
+        "Q01 mirrored strut",
+    );
+    let mirror = s.ok(
+        "tools-draft",
+        "update-element",
+        &[
+            "--id",
+            &mirrored_strut,
+            "--mirror-point",
+            "0,0,0",
+            "--mirror-normal",
+            "1,0,0",
+        ],
+    );
+    assert_eq!(text(&mirror, "outcome"), "element_updated");
+    let mirror_element = at(&mirror, &["element"]);
+    let mirrored_points = at(mirror_element, &["axis_points_mm"]).array().unwrap();
+    assert_eq!(mirrored_points.len(), 2);
+    assert_eq!(
+        numbers(&mirrored_points[0]),
+        [-2000.0, 0.0, 0.0],
+        "the path reflects across x = 0"
+    );
+    assert_eq!(
+        at(mirror_element, &["axis_length_mm"]).float().unwrap(),
+        1000.0
+    );
+    let poly = s.ok(
+        "tools-draft",
+        "create-polybeam",
+        &[
+            "--points",
+            "0,0,0;1000,0,0;1000,1000,0",
+            "--profile",
+            "Q01-BAR",
+            "--name",
+            "Q01 tool gutter",
+        ],
+    );
+    let poly_id = text(at(&poly, &["member"]), "element_id");
+    let tools_head = s.head("tools-draft");
+    let refused_mirror = s.run(
+        "tools-draft",
+        "update-element",
+        &[
+            "--id",
+            &poly_id,
+            "--mirror-point",
+            "0,0,0",
+            "--mirror-normal",
+            "1,0,0",
+        ],
+        2,
+    );
+    assert_eq!(text(&refused_mirror, "code"), "UNSUPPORTED_GEOMETRY");
+    assert_eq!(s.head("tools-draft"), tools_head);
+
+    // The rotation is one placement step: the quarter turn about Z moves the mirrored
+    // placement onto -Y and composes the orientation; undo and redo each restore one step.
+    let rotation = s.ok(
+        "tools-draft",
+        "update-element",
+        &[
+            "--id",
+            &mirrored_strut,
+            "--rotate-about",
+            "0,0,0",
+            "--rotate-axis",
+            "0,0,1",
+            "--rotate-angle",
+            "1.5707963267948966",
+        ],
+    );
+    assert_eq!(text(&rotation, "outcome"), "element_updated");
+    let rotated = at(&rotation, &["element"]);
+    // The turn composes the orientation and keeps the authored path: the member turns in
+    // place.
+    let turned = numbers(at(rotated, &["placement", "orientation_xyzw"]));
+    assert!((turned[2] - 0.5_f64.sqrt()).abs() < 1e-6, "{turned:?}");
+    let rotated_path = at(rotated, &["axis_points_mm"]).array().unwrap();
+    assert_eq!(
+        numbers(&rotated_path[0]),
+        [-2000.0, 0.0, 0.0],
+        "the rotation keeps the authored path"
+    );
+    let rotate_undo = s.execute(&["undo-workspace", "--workspace-dir", &s.path("tools-draft")]);
+    assert_eq!(rotate_undo.0, 0);
+    let undone_inspection = s.ok("tools-draft", "inspect-elements", &[]);
+    assert_eq!(parts(&undone_inspection).len(), 6);
+    let restored_entry = at(&undone_inspection, &["members"])
+        .array()
+        .unwrap()
+        .iter()
+        .find(|e| text(e, "element_id") == mirrored_strut)
+        .expect("the mirrored strut entry is present");
+    let upright = numbers(at(restored_entry, &["placement", "orientation_xyzw"]));
+    assert!(
+        (upright[2]).abs() < 1e-9 && (upright[3] - 1.0).abs() < 1e-9,
+        "{upright:?}"
+    );
+    let rotate_redo = s.execute(&["redo-workspace", "--workspace-dir", &s.path("tools-draft")]);
+    assert_eq!(rotate_redo.0, 0);
+    assert_eq!(text(&rotate_redo.1, "outcome"), "workspace_redone");
+    let final_inspection = s.ok("tools-draft", "inspect-elements", &[]);
+    let final_parts = parts(&final_inspection);
+    assert_eq!(final_parts.len(), 6);
+    let rotated_again = at(&final_inspection, &["members"])
+        .array()
+        .unwrap()
+        .iter()
+        .find(|e| text(e, "element_id") == mirrored_strut)
+        .expect("the mirrored strut entry is present");
+    let turned_again = numbers(at(rotated_again, &["placement", "orientation_xyzw"]));
+    assert!(
+        (turned_again[2] - 0.5_f64.sqrt()).abs() < 1e-6,
+        "{turned_again:?}"
+    );
+
+    let tools_published = s.ok(
+        "tools-published",
+        "publish-workspace",
+        &["--workspace-dir", &s.path("tools-draft")],
+    );
+    assert_eq!(text(&tools_published, "outcome"), "workspace_published");
+    let reopened_tools = parts(&s.ok("tools-published", "inspect-elements", &[]));
+    assert_eq!(reopened_tools.len(), final_parts.len());
+    for (id, volume, digest) in &final_parts {
+        let found = reopened_tools
+            .iter()
+            .find(|(other, _, _)| other == id)
+            .unwrap_or_else(|| panic!("{id} is present"));
+        close(found.1, *volume);
+        assert_eq!(found.2, *digest, "{id} mesh must survive the round trip");
+    }
+    let published_inspection = s.ok("tools-published", "inspect-elements", &[]);
+    let published_entry = at(&published_inspection, &["members"])
+        .array()
+        .unwrap()
+        .iter()
+        .find(|e| text(e, "element_id") == mirrored_strut)
+        .expect("the mirrored strut entry is present");
+    let published_turn = numbers(at(published_entry, &["placement", "orientation_xyzw"]));
+    assert!(
+        (published_turn[2] - 0.5_f64.sqrt()).abs() < 1e-6,
+        "the transformed orientation survives publication: {published_turn:?}"
+    );
+}
+
+/// The bolt-group story (A14.3/A14.4): its own published store, so the numbered frame
+/// keeps the counts the manual runbook records, and its own test for the per-test budget.
+/// A group commits one atomic edit, generates one group-owned hole record per crossing
+/// fastener on every connected plate, and undoes as one unit.
+#[test]
+fn a_bolt_group_generates_its_holes_and_survives_publication() {
+    let s = Story::new();
+    s.ok(
+        "bolts-published",
+        "define-material",
+        &["--grade", "Q01-steel", "--density", "7850"],
+    );
+    s.ok(
+        "bolts-published",
+        "create-workspace",
+        &["--workspace-dir", &s.path("bolts-draft"), "--user-id", USER],
+    );
+    let spliced = |id: &str, z: &str, name: &str| -> String {
+        let created = s.ok(
+            "bolts-draft",
+            "create-plate",
+            &[
+                "--name",
+                name,
+                "--new-id",
+                id,
+                "--width",
+                "1000",
+                "--length",
+                "500",
+                "--thickness",
+                "10",
+                "--translation",
+                z,
+            ],
+        );
+        text(at(&created, &["plate"]), "element_id")
+    };
+    let low = spliced(
+        "019a7bf0-0000-7000-8000-00000000bbb1",
+        "0,0,0",
+        "Q01 splice low",
+    );
+    let high = spliced(
+        "019a7bf0-0000-7000-8000-00000000bbb2",
+        "0,0,10",
+        "Q01 splice high",
+    );
+    let parts_arg = format!("{low},{high}");
+    let group = s.ok(
+        "bolts-draft",
+        "create-bolt-group",
+        &[
+            "--name",
+            "Q01 splice group",
+            "--new-id",
+            "019a7bf0-0000-7000-8000-00000000bbb3",
+            "--parts",
+            parts_arg.as_str(),
+            "--fastener-library",
+            SYNTHETIC_FASTENERS,
+            "--designation",
+            "SYN-BOLT-12x50",
+            "--point1",
+            "0,250,0",
+            "--point2",
+            "600,250,0",
+            "--plane-normal",
+            "0,0,1",
+            "--offset-start",
+            "100",
+            "--spacings",
+            "150",
+        ],
+    );
+    assert_eq!(text(&group, "outcome"), "bolt_group_committed");
+    let group_id = text(&group, "element_id");
+    // The record: the auto length resolves over the grip and its hardware; the group
+    // generates its holes.
+    let bolts_book = s.ok("bolts-draft", "bolts", &[]);
+    let record = &at(&bolts_book, &["bolt_groups"]).array().unwrap()[0];
+    assert_eq!(text(record, "id"), group_id);
+    assert_eq!(text(record, "hole_mode"), "generate");
+    assert_eq!(text(record, "length_mode"), "auto");
+    assert_eq!(text(record, "length_mm"), "40");
+    assert_eq!(text(record, "count"), "2");
+    let bolted = parts(&s.ok("bolts-draft", "inspect-elements", &[]));
+    assert_eq!(bolted.len(), 2);
+    for id in [&low, &high] {
+        let found = bolted
+            .iter()
+            .find(|(element, _, _)| element == id)
+            .expect("the spliced plate is present");
+        assert!(
+            (5_000_000.0 - found.1 - BOLT_DROP_MM3).abs() <= 1.0,
+            "the plate volume {} misses the two generated holes",
+            found.1
+        );
+    }
+    let bolted_inspection = s.ok("bolts-draft", "inspect-elements", &[]);
+    for entry in at(&bolted_inspection, &["plates"]).array().unwrap().iter() {
+        let records = at(entry, &["hole_records"]).array().unwrap();
+        assert_eq!(records.len(), 2, "{}", text(entry, "element_id"));
+        for record in records {
+            assert_eq!(text(record, "generated_by"), group_id);
+        }
+    }
+
+    // One atomic edit and one undo unit: the undo returns the blank plates, the redo
+    // regenerates the same drops.
+    let undo = s.execute(&["undo-workspace", "--workspace-dir", &s.path("bolts-draft")]);
+    assert_eq!(undo.0, 0);
+    assert_eq!(text(&undo.1, "outcome"), "workspace_undone");
+    for found in parts(&s.ok("bolts-draft", "inspect-elements", &[])) {
+        close(found.1, 5_000_000.0);
+    }
+    let redo = s.execute(&["redo-workspace", "--workspace-dir", &s.path("bolts-draft")]);
+    assert_eq!(redo.0, 0);
+    assert_eq!(text(&redo.1, "outcome"), "workspace_redone");
+
+    let bolts_published = s.ok(
+        "bolts-published",
+        "publish-workspace",
+        &["--workspace-dir", &s.path("bolts-draft")],
+    );
+    assert_eq!(text(&bolts_published, "outcome"), "workspace_published");
+    let reopened = parts(&s.ok("bolts-published", "inspect-elements", &[]));
+    assert_eq!(reopened.len(), 2);
+    for id in [&low, &high] {
+        let found = reopened
+            .iter()
+            .find(|(element, _, _)| element == id)
+            .expect("the spliced plate is present");
+        assert!(
+            (5_000_000.0 - found.1 - BOLT_DROP_MM3).abs() <= 1.0,
+            "the plate volume {} misses the generated holes after publication",
+            found.1
+        );
+    }
+    let reopened_inspection = s.ok("bolts-published", "inspect-elements", &[]);
+    for entry in at(&reopened_inspection, &["plates"])
+        .array()
+        .unwrap()
+        .iter()
+    {
+        let records = at(entry, &["hole_records"]).array().unwrap();
+        assert_eq!(records.len(), 2, "{}", text(entry, "element_id"));
+        for record in records {
+            assert_eq!(
+                text(record, "generated_by"),
+                group_id,
+                "the generated holes keep their owner across publication"
+            );
+        }
+    }
+    let published_book = s.ok("bolts-published", "bolts", &[]);
+    let published_record = &at(&published_book, &["bolt_groups"]).array().unwrap()[0];
+    assert_eq!(text(published_record, "hole_mode"), "generate");
+    assert_eq!(text(published_record, "count"), "2");
+    assert_eq!(text(published_record, "length_mm"), "40");
+}
+
+/// The model-data tool story (T01/T02): construction objects and the drawn grid line
+/// tools run in their own published store, so the numbered frame keeps the counts the
+/// manual runbook records, and in its own test for the per-test budget. The grid line
+/// edits keep the axis identity through reshape, relabel and remove, and the construction
+/// helpers reopen exactly as they were stored.
+#[test]
+fn model_data_construction_and_grid_line_tools() {
+    let s = Story::new();
+    s.ok(
+        "data-published",
+        "define-material",
+        &["--grade", "Q01-steel", "--density", "7850"],
+    );
+    s.ok(
+        "data-published",
+        "create-workspace",
+        &["--workspace-dir", &s.path("data-draft"), "--user-id", USER],
+    );
+
+    // The drawn grid starts with one U axis; the V axis is drawn, reshaped, relabelled
+    // and removed, each edit keeping the identity it was given.
+    s.ok(
+        "data-draft",
+        "create-grid",
+        &[
+            "--name",
+            "Q01 tool grid",
+            "--new-id",
+            "019a7bf0-0000-7000-8000-00000000ccc1",
+            "--u-from",
+            "1000,0",
+            "--u-to",
+            "1000,8000",
+            "--u-label",
+            "1",
+            "--u-axis-id",
+            "019a7bf0-0000-7000-8000-00000000ccc2",
+        ],
+    );
+    s.ok(
+        "data-draft",
+        "draw-grid-line",
+        &[
+            "--id",
+            "019a7bf0-0000-7000-8000-00000000ccc1",
+            "--family",
+            "v",
+            "--new-axis-id",
+            "019a7bf0-0000-7000-8000-00000000ccc3",
+            "--label",
+            "A",
+            "--from",
+            "0,5000",
+            "--to",
+            "9000,5000",
+        ],
+    );
+    s.ok(
+        "data-draft",
+        "reshape-grid-line",
+        &[
+            "--id",
+            "019a7bf0-0000-7000-8000-00000000ccc1",
+            "--axis-id",
+            "019a7bf0-0000-7000-8000-00000000ccc3",
+            "--from",
+            "0,6000",
+            "--to",
+            "12000,6000",
+        ],
+    );
+    s.ok(
+        "data-draft",
+        "relabel-grid-line",
+        &[
+            "--id",
+            "019a7bf0-0000-7000-8000-00000000ccc1",
+            "--axis-id",
+            "019a7bf0-0000-7000-8000-00000000ccc3",
+            "--label",
+            "B",
+        ],
+    );
+    let shaped = s.ok("data-draft", "list-grids", &[]);
+    let shaped_grid = at(&shaped, &["grids"]).array().unwrap();
+    assert_eq!(shaped_grid.len(), 1);
+    assert_eq!(
+        text(&shaped_grid[0], "id"),
+        "019a7bf0-0000-7000-8000-00000000ccc1"
+    );
+    let shaped_v = at(&shaped_grid[0], &["v", "lines"]).array().unwrap();
+    assert_eq!(shaped_v.len(), 1);
+    assert_eq!(
+        text(&shaped_v[0], "axis_id"),
+        "019a7bf0-0000-7000-8000-00000000ccc3"
+    );
+    assert_eq!(text(&shaped_v[0], "label"), "B");
+    assert_eq!(numbers(at(&shaped_v[0], &["start_mm"])), [0.0, 6000.0, 0.0]);
+    assert_eq!(
+        numbers(at(&shaped_v[0], &["end_mm"])),
+        [12000.0, 6000.0, 0.0]
+    );
+    s.ok(
+        "data-draft",
+        "remove-grid-line",
+        &[
+            "--id",
+            "019a7bf0-0000-7000-8000-00000000ccc1",
+            "--axis-id",
+            "019a7bf0-0000-7000-8000-00000000ccc3",
+        ],
+    );
+    let removed = s.ok("data-draft", "list-grids", &[]);
+    let removed_v = at(
+        &at(&removed, &["grids"]).array().unwrap()[0],
+        &["v", "lines"],
+    )
+    .array()
+    .unwrap();
+    assert_eq!(removed_v.len(), 0);
+    // One undo brings the drawn axis back with its label and geometry.
+    let undo = s.execute(&["undo-workspace", "--workspace-dir", &s.path("data-draft")]);
+    assert_eq!(undo.0, 0);
+    assert_eq!(text(&undo.1, "outcome"), "workspace_undone");
+    let restored = s.ok("data-draft", "list-grids", &[]);
+    let restored_v = at(
+        &at(&restored, &["grids"]).array().unwrap()[0],
+        &["v", "lines"],
+    )
+    .array()
+    .unwrap();
+    assert_eq!(restored_v.len(), 1);
+    assert_eq!(text(&restored_v[0], "label"), "B");
+    assert_eq!(
+        numbers(at(&restored_v[0], &["start_mm"])),
+        [0.0, 6000.0, 0.0]
+    );
+
+    // The construction helpers are stored elements of every kind; the listing reports
+    // them exactly.
+    for (kind, extra) in [
+        ("point", vec![]),
+        ("line", vec!["--b", "10000,2000,0"]),
+        ("circle", vec!["--b", "0,0,1", "--radius", "500"]),
+        ("plane", vec!["--b", "0,0,1"]),
+    ] {
+        let mut args = vec![
+            "--name",
+            "Q01 helper",
+            "--kind",
+            kind,
+            "--a",
+            "5000,0,0",
+            "--new-id",
+            "",
+        ];
+        args.extend(extra.iter().copied());
+        let id_index = args.iter().position(|a| a.is_empty()).unwrap();
+        let id = match kind {
+            "point" => "019a7bf0-0000-7000-8000-00000000ccc4",
+            "line" => "019a7bf0-0000-7000-8000-00000000ccc5",
+            "circle" => "019a7bf0-0000-7000-8000-00000000ccc6",
+            _ => "019a7bf0-0000-7000-8000-00000000ccc7",
+        };
+        args[id_index] = id;
+        s.ok("data-draft", "create-construction", &args);
+    }
+    let helpers = s.ok("data-draft", "list-construction", &[]);
+    let objects = at(&helpers, &["objects"]).array().unwrap();
+    assert_eq!(objects.len(), 4);
+    let kinds: Vec<String> = objects.iter().map(|o| text(o, "kind")).collect();
+    assert_eq!(kinds, ["point", "line", "circle", "plane"]);
+    assert_eq!(at(&objects[2], &["radius_mm"]).float().unwrap(), 500.0);
+
+    let data_published = s.ok(
+        "data-published",
+        "publish-workspace",
+        &["--workspace-dir", &s.path("data-draft")],
+    );
+    assert_eq!(text(&data_published, "outcome"), "workspace_published");
+    let reopened_grids = s.ok("data-published", "list-grids", &[]);
+    let reopened_grid = at(&reopened_grids, &["grids"]).array().unwrap();
+    assert_eq!(reopened_grid.len(), 1);
+    let reopened_v = at(&reopened_grid[0], &["v", "lines"]).array().unwrap();
+    assert_eq!(reopened_v.len(), 1);
+    assert_eq!(
+        text(&reopened_v[0], "axis_id"),
+        "019a7bf0-0000-7000-8000-00000000ccc3"
+    );
+    assert_eq!(text(&reopened_v[0], "label"), "B");
+    assert_eq!(
+        numbers(at(&reopened_v[0], &["start_mm"])),
+        [0.0, 6000.0, 0.0]
+    );
+    let reopened_helpers = s.ok("data-published", "list-construction", &[]);
+    assert_eq!(
+        at(&reopened_helpers, &["objects"]).array().unwrap().len(),
+        4,
+        "the helpers survive the round trip"
+    );
+}
+
+/// The contour plate story (A12.3): the vertex, insert and edge edits shape a plate's
+/// contour in their own published store, so the numbered frame keeps the counts the
+/// manual runbook records, and in its own test for the per-test budget. Every edit is one
+/// shape revision with the closed-form polygon volume, and a treated corner rides along.
+#[test]
+fn contour_plate_edits_shape_exactly_and_survive_publication() {
+    let s = Story::new();
+    s.ok(
+        "contour-published",
+        "define-material",
+        &["--grade", "Q01-steel", "--density", "7850"],
+    );
+    s.ok(
+        "contour-published",
+        "create-workspace",
+        &[
+            "--workspace-dir",
+            &s.path("contour-draft"),
+            "--user-id",
+            USER,
+        ],
+    );
+    let contoured = s.ok(
+        "contour-draft",
+        "create-plate",
+        &[
+            "--name",
+            "Q01 contour web",
+            "--new-id",
+            "019a7bf0-0000-7000-8000-00000000ddd1",
+            "--width",
+            "1000",
+            "--length",
+            "1000",
+            "--thickness",
+            "10",
+        ],
+    );
+    let web = text(at(&contoured, &["plate"]), "element_id");
+    close(
+        volume_of(
+            &parts(&s.ok("contour-draft", "inspect-elements", &[])),
+            &web,
+        ),
+        10_000_000.0,
+    );
+
+    // Case 6 of the amendment: a vertex delete gives the half square, the collinear
+    // insert keeps the body, and the outward move adds the 1000 x 500 / 2 triangle.
+    let deleted = s.ok(
+        "contour-draft",
+        "delete-plate-vertex",
+        &[
+            "--id",
+            &web,
+            "--vertex",
+            "0",
+            "--op-id",
+            "019a7bf0-0000-7000-8000-00000000ddd3",
+        ],
+    );
+    assert_eq!(text(&deleted, "outcome"), "plate_vertex_deleted");
+    assert_eq!(at(&deleted, &["effect", "shape"]), &Json::Bool(true));
+    s.ok(
+        "contour-draft",
+        "insert-plate-vertex",
+        &["--id", &web, "--edge", "1", "--point", "500,1000"],
+    );
+    let web_parts = parts(&s.ok("contour-draft", "inspect-elements", &[]));
+    close(volume_of(&web_parts, &web), 5_000_000.0);
+    let moved = s.ok(
+        "contour-draft",
+        "move-plate-vertex",
+        &["--id", &web, "--vertex", "2", "--to", "500,1500"],
+    );
+    assert_eq!(text(&moved, "outcome"), "plate_vertex_moved");
+    let web_parts = parts(&s.ok("contour-draft", "inspect-elements", &[]));
+    close(volume_of(&web_parts, &web), 7_500_000.0);
+    let web_digest = web_parts
+        .iter()
+        .find(|(element, _, _)| element == web.as_str())
+        .expect("the contour web is present")
+        .2
+        .clone();
+
+    // The edge move changes exactly its two end vertices and the treated corner rides
+    // along: the 200 mm growth adds 2,000,000 mm3 to the chamfered blank.
+    let chamfered = s.ok(
+        "contour-draft",
+        "create-plate",
+        &[
+            "--name",
+            "Q01 chamfered flange",
+            "--new-id",
+            "019a7bf0-0000-7000-8000-00000000ddd2",
+            "--width",
+            "1000",
+            "--length",
+            "1000",
+            "--thickness",
+            "10",
+            "--corners",
+            "2=chamfer:100",
+        ],
+    );
+    let flange = text(at(&chamfered, &["plate"]), "element_id");
+    let flange_parts = parts(&s.ok("contour-draft", "inspect-elements", &[]));
+    close(volume_of(&flange_parts, &flange), 9_950_000.0);
+    s.ok(
+        "contour-draft",
+        "move-plate-edge",
+        &["--id", &flange, "--edge", "3", "--delta", "-200,0"],
+    );
+    let edge_inspection = s.ok("contour-draft", "inspect-elements", &[]);
+    let edge_parts = parts(&edge_inspection);
+    close(volume_of(&edge_parts, &flange), 11_950_000.0);
+    let flange_entry = at(&edge_inspection, &["plates"])
+        .array()
+        .unwrap()
+        .iter()
+        .find(|p| text(p, "element_id") == flange)
+        .expect("the chamfered plate entry is present");
+    let corners = at(flange_entry, &["corners"]).array().unwrap();
+    assert_eq!(corners.len(), 1);
+    assert_eq!(at(&corners[0], &["vertex"]).float().unwrap(), 2.0);
+
+    // The edge move is the last shape revision: one undo rolls it back to the chamfered
+    // blank while the pentagon keeps its shape, and the redo restores the growth.
+    let contour_undo = s.execute(&[
+        "undo-workspace",
+        "--workspace-dir",
+        &s.path("contour-draft"),
+    ]);
+    assert_eq!(contour_undo.0, 0);
+    let undone = parts(&s.ok("contour-draft", "inspect-elements", &[]));
+    close(volume_of(&undone, &web), 7_500_000.0);
+    close(volume_of(&undone, &flange), 9_950_000.0);
+    let contour_redo = s.execute(&[
+        "redo-workspace",
+        "--workspace-dir",
+        &s.path("contour-draft"),
+    ]);
+    assert_eq!(contour_redo.0, 0);
+    assert_eq!(text(&contour_redo.1, "outcome"), "workspace_redone");
+
+    let contour_published = s.ok(
+        "contour-published",
+        "publish-workspace",
+        &["--workspace-dir", &s.path("contour-draft")],
+    );
+    assert_eq!(text(&contour_published, "outcome"), "workspace_published");
+    let reopened = parts(&s.ok("contour-published", "inspect-elements", &[]));
+    assert_eq!(reopened.len(), 2);
+    close(volume_of(&reopened, &web), 7_500_000.0);
+    close(volume_of(&reopened, &flange), 11_950_000.0);
+    let reopened_web = reopened
+        .iter()
+        .find(|(element, _, _)| element == web.as_str())
+        .expect("the contour web is present");
+    assert_eq!(
+        reopened_web.2, web_digest,
+        "the web mesh must survive the round trip"
+    );
+    let reopened_flange = reopened
+        .iter()
+        .find(|(element, _, _)| element == flange.as_str())
+        .expect("the chamfered flange is present");
+    assert_eq!(
+        reopened_flange.2,
+        edge_parts
+            .iter()
+            .find(|(element, _, _)| element == flange.as_str())
+            .expect("the chamfered flange is present")
+            .2,
+        "the flange mesh must survive the round trip"
+    );
+}
+
+/// The part class story (P15): classes are authored metadata that rides on any element,
+/// preserved by copies, independent of the engineering quantities, and refused outside
+/// the integer bound. Its own published store keeps the numbered frame's counts the
+/// manual runbook records, and its own test keeps the per-test budget honest.
+#[test]
+fn part_classes_carry_metadata_that_publication_preserves() {
+    let s = Story::new();
+    s.ok(
+        "classes-published",
+        "define-material",
+        &["--grade", "Q01-steel", "--density", "7850"],
+    );
+    s.ok(
+        "classes-published",
+        "create-workspace",
+        &[
+            "--workspace-dir",
+            &s.path("classes-draft"),
+            "--user-id",
+            USER,
+        ],
+    );
+    let classed = s.ok(
+        "classes-draft",
+        "create-plate",
+        &[
+            "--name",
+            "Q01 classed plate",
+            "--new-id",
+            "019a7bf0-0000-7000-8000-00000000eee1",
+            "--width",
+            "200",
+            "--length",
+            "300",
+            "--thickness",
+            "10",
+            "--class",
+            "-7",
+        ],
+    );
+    let plate = at(&classed, &["plate"]);
+    assert_eq!(at(plate, &["class"]).float().unwrap(), -7.0);
+    let plate_id = text(plate, "element_id");
+    close(
+        at(plate, &["quantities", "volume", "mm3"]).float().unwrap(),
+        600_000.0,
+    );
+    // The copy inherits the class; the edit retargets it without touching the mesh or
+    // the quantities.
+    let copied = s.ok(
+        "classes-draft",
+        "copy-element",
+        &["--id", &plate_id, "--offset", "1000,0,0"],
+    );
+    assert_eq!(
+        at(at(&copied, &["element"]), &["class"]).float().unwrap(),
+        -7.0
+    );
+    let edited = s.ok(
+        "classes-draft",
+        "update-element",
+        &["--id", &plate_id, "--class", "2147483647"],
+    );
+    let edited_element = at(&edited, &["element"]);
+    assert_eq!(
+        at(edited_element, &["class"]).float().unwrap(),
+        2_147_483_647.0
+    );
+    assert_eq!(
+        text(edited_element, "mesh_digest"),
+        text(plate, "mesh_digest"),
+        "the class is metadata: the mesh is untouched"
+    );
+    assert_eq!(
+        at(edited_element, &["quantities", "volume", "mm3"])
+            .float()
+            .unwrap(),
+        600_000.0
+    );
+
+    // A member defaults to class zero, and a nonzero class is authored.
+    s.ok(
+        "classes-draft",
+        "define-profile",
+        &[
+            "--designation",
+            "Q01-CLASS-BAR",
+            "--width",
+            "20",
+            "--height",
+            "30",
+        ],
+    );
+    let plain = s.ok(
+        "classes-draft",
+        "create-member",
+        &[
+            "--kind",
+            "beam",
+            "--start",
+            "0,0,0",
+            "--end",
+            "1000,0,0",
+            "--profile",
+            "Q01-CLASS-BAR",
+        ],
+    );
+    assert_eq!(
+        at(at(&plain, &["member"]), &["class"]).float().unwrap(),
+        0.0
+    );
+    let classed_member = s.ok(
+        "classes-draft",
+        "create-member",
+        &[
+            "--kind",
+            "beam",
+            "--start",
+            "2000,0,0",
+            "--end",
+            "3000,0,0",
+            "--profile",
+            "Q01-CLASS-BAR",
+            "--class",
+            "12",
+        ],
+    );
+    assert_eq!(
+        at(at(&classed_member, &["member"]), &["class"])
+            .float()
+            .unwrap(),
+        12.0
+    );
+
+    // The integer bound holds: every out-of-range class refuses and writes nothing.
+    let classed_head = s.head("classes-draft");
+    let inspected = s.ok("classes-draft", "inspect-elements", &[]);
+    for bad in ["1.5", "NaN", "2147483648", "-2147483649"] {
+        let refused = s.run(
+            "classes-draft",
+            "update-element",
+            &["--id", &plate_id, "--class", bad],
+            2,
+        );
+        assert_eq!(text(&refused, "outcome"), "rejected");
+    }
+    assert_eq!(s.head("classes-draft"), classed_head);
+    assert_eq!(
+        text(
+            &at(&inspected, &["plates"]).array().unwrap()[0],
+            "element_id"
+        ),
+        plate_id
+    );
+
+    let classes_published = s.ok(
+        "classes-published",
+        "publish-workspace",
+        &["--workspace-dir", &s.path("classes-draft")],
+    );
+    assert_eq!(text(&classes_published, "outcome"), "workspace_published");
+    let reopened_inspection = s.ok("classes-published", "inspect-elements", &[]);
+    let reopened_plates = at(&reopened_inspection, &["plates"]).array().unwrap();
+    let reopened_plate = reopened_plates
+        .iter()
+        .find(|p| text(p, "element_id") == plate_id)
+        .expect("the classed plate is present");
+    assert_eq!(
+        at(reopened_plate, &["class"]).float().unwrap(),
+        2_147_483_647.0,
+        "the edited class survives the round trip"
+    );
+    let reopened_copies = reopened_plates
+        .iter()
+        .filter(|p| text(p, "element_id") != plate_id)
+        .collect::<Vec<_>>();
+    assert_eq!(reopened_copies.len(), 1);
+    assert_eq!(at(reopened_copies[0], &["class"]).float().unwrap(), -7.0);
+    let reopened_members = at(&reopened_inspection, &["members"]).array().unwrap();
+    let reopened_classed_member = reopened_members
+        .iter()
+        .find(|m| at(m, &["class"]).float().unwrap() == 12.0)
+        .expect("the classed member is present");
+    assert_eq!(
+        at(reopened_classed_member, &["class"]).float().unwrap(),
+        12.0
+    );
+    let reopened_plain = reopened_members
+        .iter()
+        .find(|m| at(m, &["class"]).float().unwrap() == 0.0)
+        .expect("the plain member is present");
+    assert_eq!(
+        at(reopened_plain, &["quantities", "volume", "mm3"])
+            .float()
+            .unwrap(),
+        600_000.0
+    );
+}
+
+/// The cut lifecycle story (A03): a plane cut moves, replays and removes through the
+/// owned record, in its own published store so the numbered frame keeps the counts the
+/// manual runbook records, and in its own test for the per-test budget. The update keeps
+/// the record identity, the identical retry replays the original revision, and the
+/// removal frees the ordinal without reusing it.
+#[test]
+fn cut_updates_and_removal_keep_identity_and_survive_publication() {
+    let s = Story::new();
+    s.ok(
+        "cuts-published",
+        "define-material",
+        &["--grade", "Q01-steel", "--density", "7850"],
+    );
+    s.ok(
+        "cuts-published",
+        "create-workspace",
+        &["--workspace-dir", &s.path("cuts-draft"), "--user-id", USER],
+    );
+    let cut_plate = s.ok(
+        "cuts-draft",
+        "create-plate",
+        &[
+            "--name",
+            "Q01 cut web",
+            "--new-id",
+            "019a7bf0-0000-7000-8000-00000000fff1",
+            "--width",
+            "1000",
+            "--length",
+            "500",
+            "--thickness",
+            "10",
+        ],
+    );
+    let web = text(at(&cut_plate, &["plate"]), "element_id");
+    close(
+        volume_of(&parts(&s.ok("cuts-draft", "inspect-elements", &[])), &web),
+        5_000_000.0,
+    );
+
+    // The owned cut trims the plate to its kept half-space, exactly.
+    let applied = s.ok(
+        "cuts-draft",
+        "cut-by-plane",
+        &[
+            "--id",
+            &web,
+            "--operation-id",
+            "019a7bf0-0000-7000-8000-00000000fff3",
+            "--point",
+            "250,0,0",
+            "--normal",
+            "1,0,0",
+            "--keep",
+            "negative",
+        ],
+    );
+    assert_eq!(text(&applied, "outcome"), "cut_applied");
+    assert_eq!(
+        at(at(&applied, &["record"]), &["ordinal"])
+            .unsigned()
+            .unwrap(),
+        0
+    );
+    let cut_parts = parts(&s.ok("cuts-draft", "inspect-elements", &[]));
+    close(volume_of(&cut_parts, &web), 1_250_000.0);
+
+    // The update moves the same record: the identity stays, the volume follows the point.
+    let edited = s.ok(
+        "cuts-draft",
+        "update-cut",
+        &[
+            "--id",
+            &web,
+            "--operation-id",
+            "019a7bf0-0000-7000-8000-00000000fff3",
+            "--point",
+            "500,0,0",
+            "--normal",
+            "1,0,0",
+            "--keep",
+            "negative",
+            "--op-id",
+            "019a7bf0-0000-7000-8000-00000000fff4",
+        ],
+    );
+    let cut_parts = parts(&s.ok("cuts-draft", "inspect-elements", &[]));
+    close(volume_of(&cut_parts, &web), 2_500_000.0);
+    let cuts_head = s.head("cuts-draft");
+    let replay = s.ok(
+        "cuts-draft",
+        "update-cut",
+        &[
+            "--id",
+            &web,
+            "--operation-id",
+            "019a7bf0-0000-7000-8000-00000000fff3",
+            "--point",
+            "500,0,0",
+            "--normal",
+            "1,0,0",
+            "--keep",
+            "negative",
+            "--op-id",
+            "019a7bf0-0000-7000-8000-00000000fff4",
+        ],
+    );
+    assert_eq!(text(&replay, "outcome"), "cut_replayed");
+    assert_eq!(at(&replay, &["revision"]), at(&edited, &["revision"]));
+    assert_eq!(s.head("cuts-draft"), cuts_head);
+
+    // The removal restores the blank; one undo returns the moved cut and the redo
+    // removes it again.
+    s.ok(
+        "cuts-draft",
+        "remove-cut",
+        &[
+            "--id",
+            &web,
+            "--operation-id",
+            "019a7bf0-0000-7000-8000-00000000fff3",
+            "--op-id",
+            "019a7bf0-0000-7000-8000-00000000fff5",
+        ],
+    );
+    let removed_parts = parts(&s.ok("cuts-draft", "inspect-elements", &[]));
+    close(volume_of(&removed_parts, &web), 5_000_000.0);
+    let cuts_undo = s.execute(&["undo-workspace", "--workspace-dir", &s.path("cuts-draft")]);
+    assert_eq!(cuts_undo.0, 0);
+    let undone = parts(&s.ok("cuts-draft", "inspect-elements", &[]));
+    close(volume_of(&undone, &web), 2_500_000.0);
+    let cuts_redo = s.execute(&["redo-workspace", "--workspace-dir", &s.path("cuts-draft")]);
+    assert_eq!(cuts_redo.0, 0);
+    assert_eq!(text(&cuts_redo.1, "outcome"), "workspace_redone");
+
+    // A fresh cut after the removal takes the next ordinal, and publication preserves
+    // the record.
+    let fresh = s.ok(
+        "cuts-draft",
+        "cut-by-plane",
+        &[
+            "--id",
+            &web,
+            "--operation-id",
+            "019a7bf0-0000-7000-8000-00000000fff6",
+            "--point",
+            "750,0,0",
+            "--normal",
+            "1,0,0",
+            "--keep",
+            "negative",
+        ],
+    );
+    assert_eq!(
+        at(at(&fresh, &["record"]), &["ordinal"])
+            .unsigned()
+            .unwrap(),
+        1,
+        "the removed ordinal is never reused"
+    );
+    let final_parts = parts(&s.ok("cuts-draft", "inspect-elements", &[]));
+    close(volume_of(&final_parts, &web), 3_750_000.0);
+    let web_digest = final_parts
+        .iter()
+        .find(|(element, _, _)| element == web.as_str())
+        .expect("the cut web is present")
+        .2
+        .clone();
+
+    let cuts_published = s.ok(
+        "cuts-published",
+        "publish-workspace",
+        &["--workspace-dir", &s.path("cuts-draft")],
+    );
+    assert_eq!(text(&cuts_published, "outcome"), "workspace_published");
+    let reopened = parts(&s.ok("cuts-published", "inspect-elements", &[]));
+    close(volume_of(&reopened, &web), 3_750_000.0);
+    let reopened_web = reopened
+        .iter()
+        .find(|(element, _, _)| element == web.as_str())
+        .expect("the cut web is present");
+    assert_eq!(
+        reopened_web.2, web_digest,
+        "the mesh must survive the round trip"
+    );
+    let reopened_inspection = s.ok("cuts-published", "inspect-elements", &[]);
+    let reopened_entry = at(&reopened_inspection, &["plates"])
+        .array()
+        .unwrap()
+        .iter()
+        .find(|p| text(p, "element_id") == web)
+        .expect("the cut web entry is present");
+    let records = at(reopened_entry, &["cuts"]).array().unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(
+        text(&records[0], "operation_id"),
+        "019a7bf0-0000-7000-8000-00000000fff6",
+        "the owned cut record survives the round trip"
+    );
+}
+
+/// The fits and combine story (A13): a member end fits flush with a tool plate's near
+/// face and two touching members combine into one, in their own published store so the
+/// numbered frame keeps the counts the manual runbook records, and in its own test for
+/// the per-test budget. A missing tool refuses not-found, a gapped combine refuses
+/// before anything is written, and the combine is one undo unit.
+#[test]
+fn a_fit_trims_flush_and_a_combine_joins_touching_members() {
+    let s = Story::new();
+    s.ok(
+        "fits-published",
+        "define-material",
+        &["--grade", "Q01-steel", "--density", "7850"],
+    );
+    s.ok(
+        "fits-published",
+        "define-profile",
+        &[
+            "--designation",
+            "Q01-COMBINE-BAR",
+            "--width",
+            "200",
+            "--height",
+            "300",
+        ],
+    );
+    s.ok(
+        "fits-published",
+        "create-workspace",
+        &["--workspace-dir", &s.path("fits-draft"), "--user-id", USER],
+    );
+
+    // The fit trims the plate flush with the tool's near face (z = 5): the kept side is
+    // the plate's midpoint side, so half the plate stays, exactly.
+    let fitted = s.ok(
+        "fits-draft",
+        "create-plate",
+        &[
+            "--name",
+            "Q01 fitted web",
+            "--new-id",
+            "019a7bf0-0000-7000-8000-00000000a131",
+            "--width",
+            "1000",
+            "--length",
+            "500",
+            "--thickness",
+            "10",
+        ],
+    );
+    let web = text(at(&fitted, &["plate"]), "element_id");
+    s.ok(
+        "fits-draft",
+        "create-plate",
+        &[
+            "--name",
+            "Q01 fit tool",
+            "--new-id",
+            "019a7bf0-0000-7000-8000-00000000a132",
+            "--width",
+            "200",
+            "--length",
+            "200",
+            "--thickness",
+            "20",
+            "--translation",
+            "100,100,5",
+        ],
+    );
+    let fit = s.ok(
+        "fits-draft",
+        "fit-end-to-part",
+        &[
+            "--id",
+            &web,
+            "--operation-id",
+            "019a7bf0-0000-7000-8000-00000000a133",
+            "--tool",
+            "019a7bf0-0000-7000-8000-00000000a132",
+        ],
+    );
+    assert_eq!(text(&fit, "outcome"), "a13_applied");
+    close(
+        at(at(&fit, &["element"]), &["quantities", "volume", "mm3"])
+            .float()
+            .unwrap(),
+        2_500_000.0,
+    );
+    let fits_head = s.head("fits-draft");
+    let missing = s.run(
+        "fits-draft",
+        "fit-end-to-part",
+        &[
+            "--id",
+            &web,
+            "--operation-id",
+            "019a7bf0-0000-7000-8000-00000000a134",
+            "--tool",
+            "019a7bf0-0000-7000-8000-00000000ffff",
+        ],
+        2,
+    );
+    assert_eq!(text(&missing, "code"), "NOT_FOUND");
+    assert_eq!(s.head("fits-draft"), fits_head);
+
+    // Two touching members combine into one exact body; a gapped pair refuses before
+    // anything is written.
+    let member = |id: &str, translation: &str| -> String {
+        let created = s.ok(
+            "fits-draft",
+            "create-member",
+            &[
+                "--kind",
+                "beam",
+                "--start",
+                "0,0,0",
+                "--end",
+                "4000,0,0",
+                "--profile",
+                "Q01-COMBINE-BAR",
+                "--translation",
+                translation,
+                "--new-id",
+                id,
+            ],
+        );
+        text(at(&created, &["member"]), "element_id")
+    };
+    let survivor = member("019a7bf0-0000-7000-8000-00000000a135", "0,0,0");
+    let consumed = member("019a7bf0-0000-7000-8000-00000000a136", "4000,0,0");
+    let apart = member("019a7bf0-0000-7000-8000-00000000a137", "9000,0,0");
+    let members_head = s.head("fits-draft");
+    let gapped = s.run(
+        "fits-draft",
+        "combine-parts",
+        &[
+            "--survivor",
+            &survivor,
+            "--consumed",
+            &apart,
+            "--operation-id",
+            "019a7bf0-0000-7000-8000-00000000a138",
+        ],
+        2,
+    );
+    assert_eq!(text(&gapped, "outcome"), "rejected");
+    assert_eq!(s.head("fits-draft"), members_head);
+    let combined = s.ok(
+        "fits-draft",
+        "combine-parts",
+        &[
+            "--survivor",
+            &survivor,
+            "--consumed",
+            &consumed,
+            "--operation-id",
+            "019a7bf0-0000-7000-8000-00000000a139",
+        ],
+    );
+    assert_eq!(text(&combined, "outcome"), "a13_applied");
+    close(
+        at(
+            at(&combined, &["element"]),
+            &["quantities", "volume", "mm3"],
+        )
+        .float()
+        .unwrap(),
+        480_000_000.0,
+    );
+    assert_eq!(
+        parts(&s.ok("fits-draft", "inspect-elements", &[])).len(),
+        4,
+        "the consumed member is gone; the tool plate and the apart member stay"
+    );
+
+    // The combine is one undo unit: the consumed member returns with its own volume.
+    let fits_undo = s.execute(&["undo-workspace", "--workspace-dir", &s.path("fits-draft")]);
+    assert_eq!(fits_undo.0, 0);
+    let undone = parts(&s.ok("fits-draft", "inspect-elements", &[]));
+    assert_eq!(undone.len(), 5);
+    close(volume_of(&undone, &survivor), 240_000_000.0);
+    close(volume_of(&undone, &consumed), 240_000_000.0);
+    let fits_redo = s.execute(&["redo-workspace", "--workspace-dir", &s.path("fits-draft")]);
+    assert_eq!(fits_redo.0, 0);
+    assert_eq!(text(&fits_redo.1, "outcome"), "workspace_redone");
+    let final_parts = parts(&s.ok("fits-draft", "inspect-elements", &[]));
+    assert_eq!(final_parts.len(), 4);
+    close(volume_of(&final_parts, &survivor), 480_000_000.0);
+    close(volume_of(&final_parts, &web), 2_500_000.0);
+    let web_digest = final_parts
+        .iter()
+        .find(|(element, _, _)| element == web.as_str())
+        .expect("the fitted web is present")
+        .2
+        .clone();
+
+    let fits_published = s.ok(
+        "fits-published",
+        "publish-workspace",
+        &["--workspace-dir", &s.path("fits-draft")],
+    );
+    assert_eq!(text(&fits_published, "outcome"), "workspace_published");
+    let reopened = parts(&s.ok("fits-published", "inspect-elements", &[]));
+    assert_eq!(reopened.len(), 4);
+    close(volume_of(&reopened, &survivor), 480_000_000.0);
+    close(volume_of(&reopened, &web), 2_500_000.0);
+    let reopened_web = reopened
+        .iter()
+        .find(|(element, _, _)| element == web.as_str())
+        .expect("the fitted web is present");
+    assert_eq!(
+        reopened_web.2, web_digest,
+        "the fitted mesh must survive the round trip"
+    );
+}
+
+/// The hole record story (A04): authored plate holes update and remove through their
+/// owned records, in their own published store so the numbered frame keeps the counts
+/// the manual runbook records, and in its own test for the per-test budget. The update
+/// replaces one record's geometry, the identical retry replays, and the removal frees
+/// the record while the survivors keep their exact quantities.
+#[test]
+fn hole_records_update_remove_and_survive_publication() {
+    let s = Story::new();
+    s.ok(
+        "holes-published",
+        "define-material",
+        &["--grade", "Q01-steel", "--density", "7850"],
+    );
+    s.ok(
+        "holes-published",
+        "create-workspace",
+        &["--workspace-dir", &s.path("holes-draft"), "--user-id", USER],
+    );
+
+    // The authored creation hole rides on the plate; the exact quantity carries it.
+    let holed = s.ok(
+        "holes-draft",
+        "create-plate",
+        &[
+            "--name",
+            "Q01 holed gusset",
+            "--new-id",
+            "019a7bf0-0000-7000-8000-00000000a141",
+            "--width",
+            "1000",
+            "--length",
+            "1000",
+            "--thickness",
+            "20",
+            "--hole-rect",
+            "500,500,200,100",
+        ],
+    );
+    let gusset = text(at(&holed, &["plate"]), "element_id");
+    close(
+        at(at(&holed, &["plate"]), &["quantities", "volume", "mm3"])
+            .float()
+            .unwrap(),
+        19_600_000.0,
+    );
+
+    // A second record joins, then the update replaces its geometry in place.
+    s.ok(
+        "holes-draft",
+        "add-hole",
+        &[
+            "--id",
+            &gusset,
+            "--operation-id",
+            "019a7bf0-0000-7000-8000-00000000a142",
+            "--hole-rect",
+            "100,100,100,100",
+        ],
+    );
+    let updated = s.ok(
+        "holes-draft",
+        "update-hole",
+        &[
+            "--id",
+            &gusset,
+            "--operation-id",
+            "019a7bf0-0000-7000-8000-00000000a142",
+            "--hole-rect",
+            "100,100,300,300",
+            "--op-id",
+            "019a7bf0-0000-7000-8000-00000000a144",
+        ],
+    );
+    assert_eq!(text(&updated, "outcome"), "hole_updated");
+    close(
+        at(at(&updated, &["element"]), &["quantities", "volume", "mm3"])
+            .float()
+            .unwrap(),
+        17_800_000.0,
+    );
+    let holes_head = s.head("holes-draft");
+    let replay = s.ok(
+        "holes-draft",
+        "update-hole",
+        &[
+            "--id",
+            &gusset,
+            "--operation-id",
+            "019a7bf0-0000-7000-8000-00000000a142",
+            "--hole-rect",
+            "100,100,300,300",
+            "--op-id",
+            "019a7bf0-0000-7000-8000-00000000a144",
+        ],
+    );
+    assert_eq!(text(&replay, "outcome"), "hole_update_replayed");
+    assert_eq!(at(&replay, &["revision"]), at(&updated, &["revision"]));
+    assert_eq!(s.head("holes-draft"), holes_head);
+
+    // A third record joins and its removal restores its exact share; the two survivors
+    // keep their records.
+    s.ok(
+        "holes-draft",
+        "add-hole",
+        &[
+            "--id",
+            &gusset,
+            "--operation-id",
+            "019a7bf0-0000-7000-8000-00000000a143",
+            "--hole-rect",
+            "700,100,100,100",
+        ],
+    );
+    let removed = s.ok(
+        "holes-draft",
+        "remove-hole",
+        &[
+            "--id",
+            &gusset,
+            "--operation-id",
+            "019a7bf0-0000-7000-8000-00000000a143",
+            "--op-id",
+            "019a7bf0-0000-7000-8000-00000000a145",
+        ],
+    );
+    assert_eq!(text(&removed, "outcome"), "hole_removed");
+    close(
+        at(at(&removed, &["element"]), &["quantities", "volume", "mm3"])
+            .float()
+            .unwrap(),
+        17_800_000.0,
+    );
+    let removed_inspection = s.ok("holes-draft", "inspect-elements", &[]);
+    let records = at(
+        at(&removed_inspection, &["plates"])
+            .array()
+            .unwrap()
+            .iter()
+            .find(|p| text(p, "element_id") == gusset)
+            .expect("the gusset entry is present"),
+        &["hole_records"],
+    )
+    .array()
+    .unwrap();
+    assert_eq!(
+        records.len(),
+        1,
+        "the authored contour hole is geometry, not a record; one record survives"
+    );
+
+    // The removal is one undo unit: the record returns, and the redo removes it again.
+    let holes_undo = s.execute(&["undo-workspace", "--workspace-dir", &s.path("holes-draft")]);
+    assert_eq!(holes_undo.0, 0);
+    let undone = parts(&s.ok("holes-draft", "inspect-elements", &[]));
+    close(volume_of(&undone, &gusset), 17_600_000.0);
+    let holes_redo = s.execute(&["redo-workspace", "--workspace-dir", &s.path("holes-draft")]);
+    assert_eq!(holes_redo.0, 0);
+    assert_eq!(text(&holes_redo.1, "outcome"), "workspace_redone");
+    let final_parts = parts(&s.ok("holes-draft", "inspect-elements", &[]));
+    close(volume_of(&final_parts, &gusset), 17_800_000.0);
+    let gusset_digest = final_parts
+        .iter()
+        .find(|(element, _, _)| element == gusset.as_str())
+        .expect("the gusset is present")
+        .2
+        .clone();
+
+    let holes_published = s.ok(
+        "holes-published",
+        "publish-workspace",
+        &["--workspace-dir", &s.path("holes-draft")],
+    );
+    assert_eq!(text(&holes_published, "outcome"), "workspace_published");
+    let reopened = parts(&s.ok("holes-published", "inspect-elements", &[]));
+    close(volume_of(&reopened, &gusset), 17_800_000.0);
+    let reopened_gusset = reopened
+        .iter()
+        .find(|(element, _, _)| element == gusset.as_str())
+        .expect("the gusset is present");
+    assert_eq!(
+        reopened_gusset.2, gusset_digest,
+        "the holed mesh must survive the round trip"
+    );
+    let reopened_inspection = s.ok("holes-published", "inspect-elements", &[]);
+    let reopened_records = at(
+        at(&reopened_inspection, &["plates"])
+            .array()
+            .unwrap()
+            .iter()
+            .find(|p| text(p, "element_id") == gusset)
+            .expect("the gusset entry is present"),
+        &["hole_records"],
+    )
+    .array()
+    .unwrap();
+    assert_eq!(
+        reopened_records.len(),
+        1,
+        "the record survives the round trip"
+    );
+}
+
+/// The storey assignment story (D2): levels are elements with their own identity and no
+/// body, and assignment is authored metadata — a level never touches a mesh. The story
+/// runs in its own published store so the numbered frame keeps the counts the manual
+/// runbook records, and in its own test for the per-test budget.
+#[test]
+fn storey_assignment_rides_levels_across_publication() {
+    let s = Story::new();
+    s.ok(
+        "storeys-published",
+        "define-material",
+        &["--grade", "Q01-steel", "--density", "7850"],
+    );
+    s.ok(
+        "storeys-published",
+        "define-profile",
+        &[
+            "--designation",
+            "Q01-STOREY-BAR",
+            "--width",
+            "100",
+            "--height",
+            "100",
+        ],
+    );
+    s.ok(
+        "storeys-published",
+        "create-workspace",
+        &[
+            "--workspace-dir",
+            &s.path("storeys-draft"),
+            "--user-id",
+            USER,
+        ],
+    );
+    let ground_level = s.ok(
+        "storeys-draft",
+        "create-level",
+        &[
+            "--name",
+            "Q01 ground",
+            "--new-id",
+            "019a7bf0-0000-7000-8000-00000000a151",
+            "--elevation",
+            "0",
+        ],
+    );
+    let ground_id = text(&ground_level, "element_id");
+    let storey_level = s.ok(
+        "storeys-draft",
+        "create-level",
+        &[
+            "--name",
+            "Q01 storey",
+            "--new-id",
+            "019a7bf0-0000-7000-8000-00000000a152",
+            "--elevation",
+            "3000",
+        ],
+    );
+    let storey_id = text(&storey_level, "element_id");
+    let plated = s.ok(
+        "storeys-draft",
+        "create-plate",
+        &[
+            "--name",
+            "Q01 storey plate",
+            "--new-id",
+            "019a7bf0-0000-7000-8000-00000000a153",
+            "--width",
+            "200",
+            "--length",
+            "300",
+            "--thickness",
+            "10",
+        ],
+    );
+    let plate = text(at(&plated, &["plate"]), "element_id");
+    let beamed = s.ok(
+        "storeys-draft",
+        "create-member",
+        &[
+            "--kind",
+            "beam",
+            "--start",
+            "0,0,0",
+            "--end",
+            "1000,0,0",
+            "--profile",
+            "Q01-STOREY-BAR",
+            "--name",
+            "Q01 storey beam",
+            "--new-id",
+            "019a7bf0-0000-7000-8000-00000000a154",
+        ],
+    );
+    let beam = text(at(&beamed, &["member"]), "element_id");
+    let before = parts(&s.ok("storeys-draft", "inspect-elements", &[]));
+
+    // The assignment is authored metadata: the meshes stay byte-identical while the
+    // levels carry their elements.
+    let assigned = s.ok(
+        "storeys-draft",
+        "update-element",
+        &["--id", &plate, "--level", &storey_id],
+    );
+    assert_eq!(text(&assigned, "outcome"), "element_updated");
+    s.ok(
+        "storeys-draft",
+        "update-element",
+        &["--id", &beam, "--level", &ground_id],
+    );
+    let after = parts(&s.ok("storeys-draft", "inspect-elements", &[]));
+    for (found, was) in after.iter().zip(before.iter()) {
+        assert_eq!(found.2, was.2, "{} mesh is untouched", was.0);
+        close(found.1, was.1);
+    }
+    let storeys = s.ok("storeys-draft", "levels", &[]);
+    let listed = at(&storeys, &["levels"]).array().unwrap();
+    assert_eq!(listed.len(), 2);
+    let ground = listed
+        .iter()
+        .find(|l| text(l, "name") == "Q01 ground")
+        .expect("the ground level is present");
+    let storey = listed
+        .iter()
+        .find(|l| text(l, "name") == "Q01 storey")
+        .expect("the storey level is present");
+    assert_eq!(
+        at(ground, &["elements"]).array().unwrap().len(),
+        1,
+        "the beam sits on the ground level"
+    );
+    assert_eq!(
+        at(storey, &["elements"]).array().unwrap().len(),
+        1,
+        "the plate sits on the storey level"
+    );
+
+    // Reassignment moves the element between storeys; an unknown level refuses and
+    // writes nothing.
+    s.ok(
+        "storeys-draft",
+        "update-element",
+        &["--id", &beam, "--level", &storey_id],
+    );
+    let moved = s.ok("storeys-draft", "levels", &[]);
+    let moved_listed = at(&moved, &["levels"]).array().unwrap();
+    let moved_ground = moved_listed
+        .iter()
+        .find(|l| text(l, "name") == "Q01 ground")
+        .expect("the ground level is present");
+    let moved_storey = moved_listed
+        .iter()
+        .find(|l| text(l, "name") == "Q01 storey")
+        .expect("the storey level is present");
+    assert_eq!(at(moved_ground, &["elements"]).array().unwrap().len(), 0);
+    assert_eq!(at(moved_storey, &["elements"]).array().unwrap().len(), 2);
+    let storeys_head = s.head("storeys-draft");
+    let unknown = s.run(
+        "storeys-draft",
+        "update-element",
+        &[
+            "--id",
+            &beam,
+            "--level",
+            "019a7bf0-0000-7000-8000-00000000ffff",
+        ],
+        2,
+    );
+    assert_eq!(text(&unknown, "outcome"), "rejected");
+    assert_eq!(s.head("storeys-draft"), storeys_head);
+
+    // The reassignment is one undo unit: the beam returns to the ground level.
+    let storeys_undo = s.execute(&[
+        "undo-workspace",
+        "--workspace-dir",
+        &s.path("storeys-draft"),
+    ]);
+    assert_eq!(storeys_undo.0, 0);
+    let undone = s.ok("storeys-draft", "levels", &[]);
+    let undone_listed = at(&undone, &["levels"]).array().unwrap();
+    let undone_ground = undone_listed
+        .iter()
+        .find(|l| text(l, "name") == "Q01 ground")
+        .expect("the ground level is present");
+    assert_eq!(at(undone_ground, &["elements"]).array().unwrap().len(), 1);
+    let storeys_redo = s.execute(&[
+        "redo-workspace",
+        "--workspace-dir",
+        &s.path("storeys-draft"),
+    ]);
+    assert_eq!(storeys_redo.0, 0);
+    assert_eq!(text(&storeys_redo.1, "outcome"), "workspace_redone");
+
+    let storeys_published = s.ok(
+        "storeys-published",
+        "publish-workspace",
+        &["--workspace-dir", &s.path("storeys-draft")],
+    );
+    assert_eq!(text(&storeys_published, "outcome"), "workspace_published");
+    let reopened = s.ok("storeys-published", "levels", &[]);
+    let reopened_listed = at(&reopened, &["levels"]).array().unwrap();
+    assert_eq!(reopened_listed.len(), 2);
+    let reopened_storey = reopened_listed
+        .iter()
+        .find(|l| text(l, "name") == "Q01 storey")
+        .expect("the storey level is present");
+    assert_eq!(
+        at(reopened_storey, &["elements"]).array().unwrap().len(),
+        2,
+        "both elements ride the storey across publication"
+    );
+    let reopened_parts = parts(&s.ok("storeys-published", "inspect-elements", &[]));
+    assert_eq!(reopened_parts.len(), 2);
+    close(volume_of(&reopened_parts, &plate), 600_000.0);
+    close(volume_of(&reopened_parts, &beam), 10_000_000.0);
 }

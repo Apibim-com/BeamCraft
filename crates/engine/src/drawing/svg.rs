@@ -138,11 +138,11 @@ pub(super) fn glyph(digit: char) -> Option<&'static [[[f64; 2]; 2]]> {
         ]),
         'B' => Some(&[
             [[0.0, 3.5], [0.0, 0.0]],
-            [[0.0, 3.5], [1.8, 3.5]],
-            [[1.8, 3.5], [1.8, 1.75]],
-            [[0.0, 1.75], [1.8, 1.75]],
-            [[1.8, 1.75], [1.8, 0.0]],
-            [[0.0, 0.0], [1.8, 0.0]],
+            [[0.0, 3.5], [1.4, 3.5]],
+            [[1.4, 3.5], [1.4, 1.75]],
+            [[0.0, 1.75], [1.4, 1.75]],
+            [[0.0, 0.0], [1.1, 0.0]],
+            [[1.1, 0.0], [1.1, 1.75]],
         ]),
         'C' => Some(&[
             [[2.0, 3.5], [0.0, 3.5]],
@@ -204,10 +204,14 @@ pub(super) fn glyph(digit: char) -> Option<&'static [[[f64; 2]; 2]]> {
             [[2.0, 0.0], [2.0, 3.5]],
         ]),
         'O' => Some(&[
-            [[0.0, 3.5], [2.0, 3.5]],
-            [[2.0, 3.5], [2.0, 0.0]],
-            [[2.0, 0.0], [0.0, 0.0]],
-            [[0.0, 0.0], [0.0, 3.5]],
+            [[0.6, 3.5], [1.4, 3.5]],
+            [[1.4, 3.5], [2.0, 2.9]],
+            [[2.0, 2.9], [2.0, 0.6]],
+            [[2.0, 0.6], [1.4, 0.0]],
+            [[1.4, 0.0], [0.6, 0.0]],
+            [[0.6, 0.0], [0.0, 0.6]],
+            [[0.0, 0.6], [0.0, 2.9]],
+            [[0.0, 2.9], [0.6, 3.5]],
         ]),
         'P' => Some(&[
             [[0.0, 3.5], [0.0, 0.0]],
@@ -229,12 +233,15 @@ pub(super) fn glyph(digit: char) -> Option<&'static [[[f64; 2]; 2]]> {
             [[1.8, 1.75], [0.0, 1.75]],
             [[1.0, 1.75], [2.0, 0.0]],
         ]),
+        // The S carries a diagonal spine and two short verticals, so it cannot read as the
+        // digit 5, whose horizontal middle bar and full-length verticals it used to share
+        // with only an offset (#490 finding 2). Straight strokes only, like every capital.
         'S' => Some(&[
-            [[2.0, 3.5], [0.0, 3.5]],
-            [[0.0, 3.5], [0.0, 1.75]],
-            [[0.0, 1.75], [2.0, 1.75]],
-            [[2.0, 1.75], [2.0, 0.0]],
-            [[2.0, 0.0], [0.0, 0.0]],
+            [[1.8, 3.5], [0.3, 3.5]],
+            [[0.3, 3.5], [0.3, 2.2]],
+            [[0.3, 2.2], [1.7, 1.3]],
+            [[1.7, 1.3], [1.7, 0.0]],
+            [[1.7, 0.0], [0.2, 0.0]],
         ]),
         'T' => Some(&[[[0.0, 3.5], [2.0, 3.5]], [[1.0, 3.5], [1.0, 0.0]]]),
         'U' => Some(&[
@@ -260,18 +267,21 @@ pub(super) fn glyph(digit: char) -> Option<&'static [[[f64; 2]; 2]]> {
             [[2.0, 3.5], [0.0, 0.0]],
             [[0.0, 0.0], [2.0, 0.0]],
         ]),
-        ':' => Some(&[[[1.0, 2.4], [1.0, 2.0]]]),
+        ':' => Some(&[[[1.0, 2.4], [1.0, 2.0]], [[1.0, 1.5], [1.0, 1.1]]]),
         '-' => Some(&[[[0.3, 1.75], [1.7, 1.75]]]),
         _ => None,
     }
 }
 
-/// Positions the label glyphs centred on the dimension line, on the side the line is offset to.
+/// Positions the label glyphs past the dimension line, along the line's own normal on
+/// the side away from the anchors.
 pub(super) fn label_strokes(
     label: &str,
-    line_mid: [f64; 2],
+    line: [[f64; 2]; 2],
     anchor_mid: [f64; 2],
 ) -> Vec<[[f64; 2]; 2]> {
+    let [la, lb] = line;
+    let line_mid = [(la[0] + lb[0]) / 2.0, (la[1] + lb[1]) / 2.0];
     let width: f64 = label
         .chars()
         .map(|ch| {
@@ -283,16 +293,30 @@ pub(super) fn label_strokes(
         })
         .sum::<f64>()
         - GLYPH_GAP;
-    // Above the line when the line sits above the anchors, else below; glyphs keep their own
-    // upright direction on both sides.
-    let above = line_mid[1] >= anchor_mid[1];
-    let bottom = if above {
-        line_mid[1] + LABEL_GAP_MM
+    // The label sits at the label gap past the line, along the line's own normal, on
+    // the side away from the anchors, and the box is offset by half its extent along
+    // that normal — so every line direction, the horizontal main frame and the 45
+    // degree knee brace alike, keeps its glyphs clear of the strokes (visual audit
+    // finding 4). Glyphs keep their own upright direction on every side.
+    let (dx, dy) = (lb[0] - la[0], lb[1] - la[1]);
+    let length = dx.hypot(dy);
+    let toward = [anchor_mid[0] - line_mid[0], anchor_mid[1] - line_mid[1]];
+    let normal = if length > 0.0 {
+        let mut n = [-dy / length, dx / length];
+        if n[0] * toward[0] + n[1] * toward[1] > 0.0 {
+            n = [-n[0], -n[1]];
+        }
+        n
+    } else if line_mid[1] >= anchor_mid[1] {
+        [0.0, 1.0]
     } else {
-        line_mid[1] - LABEL_GAP_MM - GLYPH_HEIGHT
+        [0.0, -1.0]
     };
+    let extent = width * normal[0].abs() + GLYPH_HEIGHT * normal[1].abs();
+    let offset = LABEL_GAP_MM + extent / 2.0;
+    let mut x = line_mid[0] + normal[0] * offset - width / 2.0;
+    let bottom = line_mid[1] + normal[1] * offset - GLYPH_HEIGHT / 2.0;
     let mut strokes = Vec::new();
-    let mut x = line_mid[0] - width / 2.0;
     for ch in label.chars() {
         let advance = if ch == '.' {
             DOT_ADVANCE
@@ -397,17 +421,31 @@ pub(super) fn normalized(strokes: Vec<[[f64; 2]; 2]>) -> Result<Vec<[[f64; 2]; 2
         .collect()
 }
 
-/// Renders one stroke list as absolute-move/line subpath data at fixed four-decimal precision.
+/// Renders one stroke list as path data at fixed four-decimal precision. A stroke whose
+/// start continues the previous stroke's end joins it into one polyline subpath, so a dash
+/// pattern runs along a tessellated circle or arc instead of restarting at every chord and
+/// painting the circle solid (#490 finding 1); a break in the chain starts a new `M`.
 pub(super) fn path(strokes: &[[[f64; 2]; 2]]) -> String {
     let mut text = String::new();
+    let mut pen: Option<String> = None;
     for [[sx, sy], [ex, ey]] in strokes {
-        text.push_str(&format!(
-            "M {sx:.4} {sy:.4} L {ex:.4} {ey:.4} ",
-            sx = sx,
-            sy = sy,
-            ex = ex,
-            ey = ey
-        ));
+        let start = format!("{sx:.4} {sy:.4}");
+        let end = format!("{ex:.4} {ey:.4}");
+        // A closing stroke that only repeats the point the run already reached (a ring's
+        // last chord ends at its first point again) adds nothing to the picture and would
+        // print a duplicated point.
+        if pen.as_deref() == Some(start.as_str()) && start == end {
+            continue;
+        }
+        if pen.as_deref() == Some(start.as_str()) {
+            text.push_str(&format!(" L {end}"));
+        } else {
+            if !text.is_empty() {
+                text.push(' ');
+            }
+            text.push_str(&format!("M {start} L {end}"));
+        }
+        pen = Some(end);
     }
     text
 }
@@ -452,9 +490,8 @@ pub(super) fn stroke_groups(
             .chain(arrow_strokes(lb, [-inward[0], -inward[1]]))
             .collect(),
     )?;
-    let line_mid = [(la[0] + lb[0]) / 2.0, (la[1] + lb[1]) / 2.0];
     let anchor_mid = [(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0];
-    let label = normalized(label_strokes(label_mm, line_mid, anchor_mid))?;
+    let label = normalized(label_strokes(label_mm, *line_paper_mm, anchor_mid))?;
     Ok((
         [body, extension, line, arrows, label],
         (*label_mm).to_owned(),
@@ -622,13 +659,12 @@ fn geometry_strokes(geometry: &DraftingGeometry) -> Vec<[[f64; 2]; 2]> {
             let line_length = (lb[0] - la[0]).hypot(lb[1] - la[1]);
             let inward = [(lb[0] - la[0]) / line_length, (lb[1] - la[1]) / line_length];
             let label = format!("{:.*}", usize::from(*decimal_places), length);
-            let line_mid = [(la[0] + lb[0]) / 2.0, (la[1] + lb[1]) / 2.0];
             let anchor_mid = [(from[0] + to[0]) / 2.0, (from[1] + to[1]) / 2.0];
             vec![[*from, la], [*to, lb], [la, lb]]
                 .into_iter()
                 .chain(arrow_strokes(la, inward))
                 .chain(arrow_strokes(lb, [-inward[0], -inward[1]]))
-                .chain(label_strokes(&label, line_mid, anchor_mid))
+                .chain(label_strokes(&label, [la, lb], anchor_mid))
                 .collect()
         }
     }
@@ -962,6 +998,21 @@ mod tests {
     }
 
     fn drawing_with_drafting(name: &str) -> Drawing {
+        drawing_with_strokes(
+            name,
+            DraftingGeometry::Line {
+                a: [10.0, 500.0],
+                b: [20.0, 510.0],
+            },
+            LineType::Continuous,
+        )
+    }
+
+    fn drawing_with_strokes(
+        name: &str,
+        geometry: DraftingGeometry,
+        line_type: LineType,
+    ) -> Drawing {
         let layer = DraftingEntityId::parse("01900000-0000-7000-8000-000000000005").unwrap();
         Drawing::admit(DrawingSpec {
             id: DrawingId::parse(A).unwrap(),
@@ -990,12 +1041,9 @@ mod tests {
             },
             drafting: vec![DraftingSpec {
                 id: DraftingEntityId::parse("01900000-0000-7000-8000-000000000006").unwrap(),
-                geometry: DraftingGeometry::Line {
-                    a: [10.0, 500.0],
-                    b: [20.0, 510.0],
-                },
+                geometry,
                 layer,
-                line_type: LineType::Continuous,
+                line_type,
             }],
             layers: vec![LayerSpec {
                 id: layer,
@@ -1008,6 +1056,148 @@ mod tests {
             sheet: None,
         })
         .unwrap()
+    }
+
+    /// The drawn object's path data from an export: the segment after its `data-drafting`
+    /// key up to the element's close.
+    fn drafting_path_data(text: &str) -> String {
+        text.split("data-drafting=\"01900000-0000-7000-8000-000000000006\"")
+            .nth(1)
+            .unwrap_or_default()
+            .split(" d=\"")
+            .nth(1)
+            .unwrap_or_default()
+            .split("\"/>")
+            .next()
+            .unwrap_or_default()
+            .to_owned()
+    }
+
+    #[test]
+    fn a_vertical_dimension_label_sits_beside_the_line() {
+        // Finding 4: the label always centred on the line's midpoint and its offset rule
+        // only handled a horizontal line, so a vertical dimension line ran through its
+        // own label ("25|00"). Every glyph must clear the line on the side away from the
+        // anchors.
+        let drawing = drawing("Member projection");
+        let version = DocumentVersionId::parse(C).unwrap();
+        let mut projected = projection("2500");
+        if let DimensionProjection::Resolved(geometry) = &mut projected.dimension {
+            geometry.anchors_paper_mm = [[10.1, 0.05], [10.1, 125.05]];
+            geometry.line_paper_mm = [[0.1, 0.05], [0.1, 125.05]];
+        }
+        let bytes = export(&drawing, version, &projected).unwrap();
+        let text = std::str::from_utf8(&bytes).unwrap();
+        let label = text
+            .split("<path class=\"label\" d=\"")
+            .nth(1)
+            .unwrap_or_default();
+        let label = label.split("\"/>").next().unwrap_or_default();
+        // Path data alternates x and y; the line runs at paper x 0.1, so the label's
+        // rightmost glyph point must stay at least the 1.5 mm label gap left of it.
+        let numbers: Vec<f64> = label
+            .split_whitespace()
+            .filter_map(|token| token.parse::<f64>().ok())
+            .collect();
+        let highest_x = numbers
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| index % 2 == 0)
+            .fold(f64::NEG_INFINITY, |max, (_, value)| max.max(*value));
+        assert!(highest_x <= 0.1 - 1.5, "{label}");
+    }
+
+    #[test]
+    fn an_inclined_dimension_label_clears_its_line() {
+        // The inclined half of finding 4: the steep-line rule left a 45-degree
+        // knee-brace dimension on the above/below path, where the shallow line crosses
+        // the glyph box of a wide label. Every glyph point must sit at least the label
+        // gap away from the line, measured across it.
+        let label = label_strokes("2500", [[0.0, 0.0], [100.0, 100.0]], [65.35, 35.3]);
+        for stroke in &label {
+            for point in stroke {
+                let distance = (point[1] - point[0]).abs() / std::f64::consts::SQRT_2;
+                assert!(
+                    distance + 1e-6 >= 1.5,
+                    "{point:?} sits {distance} from the line"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn letters_b_s_and_o_have_shapes_of_their_own() {
+        // Finding 7: S shared 5's strokes exactly, O shared 0's, and B differed from 8
+        // only by a 0.2 mm narrower box, so a mark B1 was indistinguishable from 81.
+        // Every letter draws a shape of its own on the shared glyph box.
+        let canonical = |ch: char| -> Vec<[[f64; 2]; 2]> {
+            let segments = glyph(ch).unwrap_or(&[]);
+            let min_x = segments
+                .iter()
+                .flat_map(|[[ax, _], [bx, _]]| [*ax, *bx])
+                .fold(f64::INFINITY, f64::min);
+            let min_y = segments
+                .iter()
+                .flat_map(|[[_, ay], [_, by]]| [*ay, *by])
+                .fold(f64::INFINITY, f64::min);
+            segments
+                .iter()
+                .map(|[[ax, ay], [bx, by]]| [[ax - min_x, ay - min_y], [bx - min_x, by - min_y]])
+                .collect()
+        };
+        // Shifted to a common corner the letter and the digit it resembled must not
+        // become the same shape.
+        assert_ne!(canonical('S'), canonical('5'), "S must differ from 5");
+        assert_ne!(canonical('O'), canonical('0'), "O must differ from 0");
+        // B draws visibly inside the box: its right-side strokes sit well left of the
+        // full-width digits, not merely 0.2 mm inside.
+        let right_edge = glyph('B')
+            .unwrap_or(&[])
+            .iter()
+            .flat_map(|[[ax, _], [bx, _]]| [*ax, *bx])
+            .fold(f64::NEG_INFINITY, f64::max);
+        assert!(right_edge <= 1.4, "B's right side at {right_edge}");
+        // The shape test above passed while S still drew the digit 5 shifted: a corner
+        // alignment cannot catch a same-shape glyph on a differently sized box. What makes
+        // an S an S is the diagonal spine (#490 finding 2): it has a stroke that is neither
+        // horizontal nor vertical, and neither 5 nor 2 — the digits it is mistaken for —
+        // carries one; and its horizontal strokes never span the full box the way 5's
+        // middle bar does.
+        let diagonal = |ch: char| -> bool {
+            glyph(ch)
+                .unwrap_or(&[])
+                .iter()
+                .any(|[[ax, ay], [bx, by]]| (ax - bx).abs() > 0.05 && (ay - by).abs() > 0.05)
+        };
+        assert!(diagonal('S'), "S carries a diagonal spine");
+        assert!(!diagonal('5'), "5 has no diagonal");
+        assert!(!diagonal('2'), "2 has no diagonal");
+    }
+
+    #[test]
+    fn the_colon_draws_two_dots_not_one() {
+        // Finding 9: the colon was one short stroke, so every scale read "1·20". A colon
+        // is two dots: two strokes whose vertical bands are disjoint and straddle the
+        // glyph box's midline, inside the box the digits use.
+        let strokes = glyph(':').unwrap_or(&[]);
+        assert_eq!(strokes.len(), 2, "a colon is two dots, got {strokes:?}");
+        let mut bands: Vec<[f64; 2]> = strokes
+            .iter()
+            .map(
+                |[[_, ay], [_, by]]| {
+                    if ay <= by { [*ay, *by] } else { [*by, *ay] }
+                },
+            )
+            .collect();
+        bands.sort_by(|a, b| a[0].total_cmp(&b[0]));
+        assert!(
+            bands[1][0] > bands[0][1],
+            "the dots must not touch: {bands:?}"
+        );
+        assert!(
+            bands[0][0] > 0.0 && bands[1][1] < 3.5,
+            "both dots stay inside the glyph box: {bands:?}"
+        );
     }
 
     #[test]
@@ -1055,12 +1245,100 @@ mod tests {
         assert!(text.contains("a&lt;b&gt;&amp;&quot;c&#39;"));
         assert!(!text.contains("a<b>"));
         // "10.5" draws digit, point and digit glyphs as 2+6+1+5 original stroke subpaths,
-        // never font text.
+        // never font text; the digit segments touch but never follow each other, so none
+        // of them chain.
         let label = text
             .split("<path class=\"label\" d=\"")
             .nth(1)
             .unwrap_or_default();
         assert_eq!(label.matches("M ").count(), 14);
+    }
+
+    #[test]
+    fn connected_strokes_chain_into_one_polyline_subpath() {
+        // The rectangle's four sides run into each other, so they draw as one `M` with
+        // three continuing `L`, while a disconnected pair keeps its own `M` each.
+        let chained = path(&[
+            [[1.0, 1.0], [5.0, 1.0]],
+            [[5.0, 1.0], [5.0, 4.0]],
+            [[5.0, 4.0], [1.0, 4.0]],
+            [[1.0, 4.0], [1.0, 1.0]],
+        ]);
+        assert_eq!(chained.matches("M ").count(), 1, "{chained}");
+        assert_eq!(chained.matches(" L ").count(), 4, "{chained}");
+        let broken = path(&[[[1.0, 1.0], [5.0, 1.0]], [[2.0, 2.0], [6.0, 2.0]]]);
+        assert_eq!(broken.matches("M ").count(), 2, "{broken}");
+    }
+
+    #[test]
+    fn a_dashed_circle_draws_one_subpath_so_its_pattern_runs() {
+        // #490 finding 1: every ~1 mm chord of the tessellated ring started its own
+        // subpath, and SVG restarts the dash pattern per subpath, so dashed and dash-dot
+        // circles exported solid and a dotted circle showed fine dashes. The chords now
+        // join one polyline, and the whole dashed circle carries a single `M`.
+        let drawing = drawing_with_strokes(
+            "Ring",
+            DraftingGeometry::Circle {
+                center: [45.0, 160.0],
+                radius: 12.0,
+            },
+            LineType::Dashed,
+        );
+        let version = DocumentVersionId::parse(C).unwrap();
+        let bytes = export(&drawing, version, &projection("2500")).unwrap();
+        let text = std::str::from_utf8(&bytes).unwrap();
+        assert!(text.contains("stroke-dasharray=\"3 3\""), "{text}");
+        let data = drafting_path_data(text);
+        assert_eq!(
+            data.matches("M ").count(),
+            1,
+            "the ring is one polyline subpath: {data}"
+        );
+        // The tessellation stays: a 12 mm radius keeps at least its 16-chord floor, and
+        // the closing stroke chains into the run.
+        assert!(data.matches(" L ").count() >= 16, "{data}");
+    }
+
+    #[test]
+    fn an_arc_chains_its_chords_and_a_rect_keeps_one_run() {
+        let drawing = drawing_with_strokes(
+            "Arc",
+            DraftingGeometry::Arc {
+                center: [30.0, 160.0],
+                radius: 12.0,
+                start: 0.0,
+                end: 1.5,
+            },
+            LineType::DashDot,
+        );
+        let version = DocumentVersionId::parse(C).unwrap();
+        let bytes = export(&drawing, version, &projection("2500")).unwrap();
+        let text = std::str::from_utf8(&bytes).unwrap();
+        assert!(
+            text.contains("stroke-dasharray=\"3 1.5 0.5 1.5\""),
+            "{text}"
+        );
+        let data = drafting_path_data(text);
+        assert_eq!(
+            data.matches("M ").count(),
+            1,
+            "the arc's chords are one run: {data}"
+        );
+        let drawing = drawing_with_strokes(
+            "Rectangle",
+            DraftingGeometry::Rectangle {
+                a: [30.0, 95.0],
+                b: [60.0, 125.0],
+            },
+            LineType::Dashed,
+        );
+        let bytes = export(&drawing, version, &projection("2500")).unwrap();
+        let data = drafting_path_data(std::str::from_utf8(&bytes).unwrap());
+        assert_eq!(
+            data.matches("M ").count(),
+            1,
+            "the four sides run into each other: {data}"
+        );
     }
 
     #[test]
