@@ -29,7 +29,8 @@ use beamcraft_ui::{Error, command, source};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-fn gpu() -> Option<Gpu> {
+/// The required native/software adapter: a missing one fails the test, it never skips.
+fn gpu() -> Gpu {
     match pollster::block_on(Gpu::headless()) {
         Ok(gpu) => {
             let info = gpu.adapter.get_info();
@@ -37,7 +38,7 @@ fn gpu() -> Option<Gpu> {
                 "render test adapter: {} / {:?} / {:?}",
                 info.name, info.device_type, info.backend
             );
-            Some(gpu)
+            gpu
         }
         Err(Error::NoAdapter) => {
             panic!("required native/software GPU adapter is missing")
@@ -98,7 +99,7 @@ fn an_engine_snapshot_renders_lit_geometry_on_a_background() {
     let snapshot =
         ViewSnapshot::build(pin, plate_scene(1, false).unwrap(), &Limits::default()).unwrap();
     let scene = Scene::from_snapshot(&snapshot, Representation::Full).unwrap();
-    let Some(gpu) = gpu() else { return };
+    let gpu = gpu();
     let (corner, centre, _) = render(&gpu, &scene);
     assert!(is_background(corner), "background {corner:?}");
     assert!(is_lit(centre), "lit plate {centre:?}");
@@ -111,7 +112,7 @@ fn an_orthographic_camera_renders_lit_geometry_on_a_background() {
     let snapshot =
         ViewSnapshot::build(pin, plate_scene(1, false).unwrap(), &Limits::default()).unwrap();
     let scene = Scene::from_snapshot(&snapshot, Representation::Full).unwrap();
-    let Some(gpu) = gpu() else { return };
+    let gpu = gpu();
     let (target, extent) = scene.framing();
     let mut camera = Camera::new(target, extent, 1.0).unwrap();
     camera.set_projection(true);
@@ -154,7 +155,7 @@ fn the_five_render_modes_draw_five_different_pictures_of_one_scene() {
     let snapshot =
         ViewSnapshot::build(pin, plate_scene(1, false).unwrap(), &Limits::default()).unwrap();
     let scene = Scene::from_snapshot(&snapshot, Representation::Full).unwrap();
-    let Some(gpu) = gpu() else { return };
+    let gpu = gpu();
     let (target, extent) = scene.framing();
     let view = Camera::new(target, extent, 1.0).unwrap().view(1.0).unwrap();
     let stats = Stats::default();
@@ -247,7 +248,7 @@ fn a_refresh_reuses_the_meshes_on_the_device_and_still_draws_them() {
     let pin = ViewPin::new(Sha256::digest(b"revision").unwrap(), 2);
     let second =
         ViewSnapshot::build(pin, plate_scene(16, false).unwrap(), &Limits::default()).unwrap();
-    let Some(gpu) = gpu() else { return };
+    let gpu = gpu();
     let old = Uploaded::upload(&gpu.device, &gpu.queue, &before, None).unwrap();
     let resident = old.resident();
     let after =
@@ -374,7 +375,7 @@ fn the_accepted_revision_of_a_store_is_the_viewport_scene() {
         Err(Error::NoRevision) => (),
         other => panic!("expected the empty-store state, got {other:?}"),
     }
-    let Some(gpu) = gpu() else { return };
+    let gpu = gpu();
     let (corner, _, lit) = render(&gpu, &scene);
     assert!(is_background(corner), "background {corner:?}");
     // Seven plates framed in a 128 x 128 target cover a visible share of it.
@@ -455,7 +456,7 @@ fn an_attached_reference_is_uploaded_and_renders_visible_pixels() {
     assert_eq!(moved.origin_mm, [9000.0, 2000.0, 3000.0]);
     assert_eq!(std::fs::read(&file).unwrap(), bytes);
     let _ = std::fs::remove_dir_all(&root);
-    let Some(gpu) = gpu() else { return };
+    let gpu = gpu();
     let (corner, centre, lit) = render(&gpu, &scene);
     eprintln!("reference render: {lit} lit pixels in the 128 x 128 target");
     assert!(is_background(corner), "background {corner:?}");
@@ -574,10 +575,7 @@ fn an_oriented_beam_created_through_the_ui_renders_a_rotated_silhouette() {
         assert!((f64::from(*got) - want).abs() < 1.0, "max {got} != {want}");
     }
 
-    let Some(gpu) = gpu() else {
-        let _ = std::fs::remove_dir_all(&base);
-        return;
-    };
+    let gpu = gpu();
     let rolled = Scene::from_snapshot(
         &source::load(&cli, &rolled_store, &stats).unwrap(),
         Representation::Full,
@@ -602,6 +600,273 @@ fn an_oriented_beam_created_through_the_ui_renders_a_rotated_silhouette() {
     let _ = std::fs::remove_dir_all(&base);
 }
 
+/// Issue 512: a committed bolt group reaches the picture through the real viewport input —
+/// the framed `export-view` stdout — and shows its fasteners stacked through the joined
+/// plates, with nothing re-modelled and no invented size.
+#[test]
+fn a_bolt_group_shows_its_fasteners_in_the_viewport() {
+    let Some(cli) = cli() else { return };
+    let root = Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join("v03-tests")
+        .join(format!("bolt-group-{}", crate::support::boot_nonce()));
+    let _ = std::fs::remove_dir_all(&root);
+    let store = root.join("store");
+    std::fs::create_dir_all(&store).unwrap();
+    let store = store.to_str().unwrap().to_owned();
+    let low = "019a7bf0-0000-7000-8000-0000007100f1";
+    let high = "019a7bf0-0000-7000-8000-0000007100f2";
+    let group = "019a7bf0-0000-7000-8000-000000710001";
+    run(
+        &cli,
+        &[
+            "create-plate",
+            "--store",
+            &store,
+            "--width",
+            "1000",
+            "--length",
+            "500",
+            "--thickness",
+            "10",
+            "--new-id",
+            low,
+        ],
+    );
+    run(
+        &cli,
+        &[
+            "create-plate",
+            "--store",
+            &store,
+            "--width",
+            "1000",
+            "--length",
+            "500",
+            "--thickness",
+            "10",
+            "--translation",
+            "0,0,10",
+            "--new-id",
+            high,
+        ],
+    );
+    let library = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../assets/libraries/synthetic-fasteners.usda"
+    );
+    run(
+        &cli,
+        &[
+            "create-bolt-group",
+            "--store",
+            &store,
+            "--name",
+            "G1",
+            "--new-id",
+            group,
+            "--parts",
+            &format!("{low},{high}"),
+            "--fastener-library",
+            library,
+            "--designation",
+            "SYN-BOLT-12x50",
+            "--point1",
+            "0,250,0",
+            "--point2",
+            "600,250,0",
+            "--plane-normal",
+            "0,0,1",
+            "--offset-start",
+            "100",
+            "--spacings",
+            "150",
+        ],
+    );
+    let snapshot = source::load(&cli, &root.join("store"), &Stats::default()).unwrap();
+    let scene = Scene::from_snapshot(&snapshot, Representation::Full).unwrap();
+    // Two plates share one mesh; the group adds its merged fastener mesh.
+    assert_eq!(scene.elements, 3);
+    assert_eq!(scene.counts(), (2, 3));
+    // The stack of the two 40 mm fasteners reaches z = 53 over the plates' z = 20: only the
+    // group's geometry reaches that high, at the bearing points x = 100 and 250. The scene
+    // bounds are relative to the model origin, the centre of the union.
+    assert_eq!(scene.origin_mm, [500.0, 250.0, 26.5]);
+    assert_eq!(scene.min, [-500.0, -250.0, -26.5]);
+    assert_eq!(scene.max, [500.0, 250.0, 26.5]);
+    let size = [0, 1, 2].map(|a| scene.max[a] - scene.min[a]);
+    assert!((size[2] - 53.0).abs() < 1e-6, "{size:?}");
+    let gpu = gpu();
+    let (corner, _, lit) = render(&gpu, &scene);
+    assert!(is_background(corner), "background {corner:?}");
+    assert!(lit > 200, "the joined model with its bolts is visible");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Issue 519, defect A: a committed DIN bolt group on the knee-brace demo joint reaches the
+/// real viewport input with the full fastener stack at the library's own dimensions — washer
+/// under head, hex head, shank, nut, washer under nut — so the head geometry reaches past the
+/// plate faces instead of the bare shank the issue captured, and the picture renders.
+#[test]
+fn a_din_bolt_group_on_the_knee_brace_joint_shows_the_full_stack_in_the_viewport() {
+    let Some(cli) = cli() else { return };
+    let root = Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join("v03-tests")
+        .join(format!("knee-bolt-{}", crate::support::boot_nonce()));
+    let _ = std::fs::remove_dir_all(&root);
+    let store = root.join("store");
+    std::fs::create_dir_all(&store).unwrap();
+    let store = store.to_str().unwrap().to_owned();
+    let brace = "019a7bf0-0000-7000-8000-000000710101";
+    let gusset = "019a7bf0-0000-7000-8000-000000710102";
+    let group = "019a7bf0-0000-7000-8000-000000710103";
+    // The knee-brace demo joint: a 60x60 brace turned 40 degrees off the vertical stands
+    // against a 12 mm gusset stood up in the XZ plane (x 450..850, y -12..0, z 1400..1800).
+    let profile = run(
+        &cli,
+        &[
+            "define-profile",
+            "--store",
+            &store,
+            "--width",
+            "60",
+            "--height",
+            "60",
+        ],
+    );
+    let digest = beamcraft_json::decode(profile.as_bytes(), &beamcraft_json::Limits::DEFAULT)
+        .unwrap()
+        .get("definition")
+        .unwrap()
+        .get("digest")
+        .unwrap()
+        .string()
+        .unwrap()
+        .to_owned();
+    run(
+        &cli,
+        &[
+            "create-member",
+            "--store",
+            &store,
+            "--kind",
+            "beam",
+            "--name",
+            "B1",
+            "--new-id",
+            brace,
+            "--start",
+            "0,0,0",
+            "--end",
+            "0,0,800",
+            "--orientation-xyzw",
+            "0,0.3420201433256687,0,0.9396926207859084",
+            "--translation",
+            "100,0,1100",
+            "--profile-digest",
+            &digest,
+        ],
+    );
+    run(
+        &cli,
+        &[
+            "create-plate",
+            "--store",
+            &store,
+            "--name",
+            "PL1",
+            "--new-id",
+            gusset,
+            "--width",
+            "400",
+            "--length",
+            "400",
+            "--thickness",
+            "12",
+            "--orientation-xyzw",
+            "0.7071067811865476,0,0,0.7071067811865476",
+            "--translation",
+            "450,0,1400",
+        ],
+    );
+    // The row runs along `x` with the bearing plane on the gusset's near face (`y = -12`),
+    // so the stack drives through the plate: the library M20 dimensions put the head tip
+    // 3.5 mm past the far face and the nut stack 102 mm past it. The length is fixed at a
+    // standard 90 mm, so the pin reads the stack, not the box-conservative grip of defect B.
+    let library = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../assets/libraries/din-fasteners.usda"
+    );
+    run(
+        &cli,
+        &[
+            "create-bolt-group",
+            "--store",
+            &store,
+            "--name",
+            "BG1",
+            "--new-id",
+            group,
+            "--parts",
+            &format!("{brace},{gusset}"),
+            "--fastener-library",
+            library,
+            "--designation",
+            "M20",
+            "--point1",
+            "500,-12,1600",
+            "--point2",
+            "650,-12,1600",
+            "--plane-normal",
+            "0,1,0",
+            "--offset-start",
+            "25",
+            "--pitch",
+            "100",
+            "--count",
+            "2",
+            "--length-mode",
+            "fixed",
+            "--length",
+            "90",
+            "--hole-mode",
+            "none",
+        ],
+    );
+    let stats = Stats::default();
+    let snapshot = source::load(&cli, &root.join("store"), &stats).unwrap();
+    let scene = Scene::from_snapshot(&snapshot, Representation::Full).unwrap();
+    assert_eq!(scene.elements, 3);
+    // The merged stack of both fasteners, by hand from the library definition (head across
+    // flats 30, head height 12.5, nut height 18, washer 37/21/3, shank 20, length 90): the
+    // stack from each bearing runs washer 0..3, head 3..15.5, shank 3..93, nut 93..111,
+    // washer nut 111..114 along the plane normal. The bearings sit at x = 525 and 625 on
+    // y = -12, so the mesh spans x 506.5..643.5 (the washer's 37 mm is the widest part),
+    // y -12..102 and z 1581.5..1618.5.
+    let id = beamcraft_engine::ElementId::parse(group).unwrap();
+    let element = snapshot.element(&id).unwrap();
+    assert_eq!(element.kind, beamcraft_engine::ElementKind::Connection);
+    let bounds = snapshot.element_bounds(&id).unwrap();
+    let want = [[506.5, -12.0, 1581.5], [643.5, 102.0, 1618.5]];
+    for (got, should) in bounds.min.iter().zip(want[0]) {
+        assert!((got - should).abs() <= 1e-6, "min {got} != {should}");
+    }
+    for (got, should) in bounds.max.iter().zip(want[1]) {
+        assert!((got - should).abs() <= 1e-6, "max {got} != {should}");
+    }
+    // The head reaches past the plate's far face: washer 3 + head 12.5 from the bearing on
+    // `y = -12` puts the head tip at `y = 3.5`, and the nut stack tops out 102 mm past it —
+    // geometry a shank-only mesh (to `y = 81`) cannot produce.
+    assert!(
+        bounds.max[1] - 81.0 > 1.0,
+        "the nut stack must pass the shank end"
+    );
+    let gpu = gpu();
+    let (corner, _, lit) = render(&gpu, &scene);
+    assert!(is_background(corner), "background {corner:?}");
+    assert!(lit > 200, "the joint with its fasteners is visible");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// V15: a display cut hides pixels in the image only. The masked picture keeps the bodies
 /// that straddle the plane (conservative), an empty work area hides everything, and the cut
 /// leaves the snapshot and its token untouched.
@@ -611,7 +876,7 @@ fn a_cut_plane_hides_pixels_without_touching_the_scene() {
     let snapshot =
         ViewSnapshot::build(pin, plate_scene(12, false).unwrap(), &Limits::default()).unwrap();
     let scene = Scene::from_snapshot(&snapshot, Representation::Full).unwrap();
-    let Some(gpu) = gpu() else { return };
+    let gpu = gpu();
     let whole = render_pixels(&gpu, &scene, &ClipGpu::none());
     let lit = |pixels: &[u8]| {
         pixels

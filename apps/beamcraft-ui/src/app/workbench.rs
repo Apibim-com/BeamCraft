@@ -443,7 +443,7 @@ impl App {
             Bench::CutPlane => {}
             Bench::Colour => {}
             Bench::Weld => {}
-            Bench::Bolt => {}
+            Bench::Bolt => self.bolt_load(),
             Bench::Annotations => {}
             Bench::View => {}
             Bench::Grid => {
@@ -942,6 +942,17 @@ impl App {
                                 );
                                 if ui.button("Open sheet editor").clicked() {
                                     self.sheet_editor.open = true;
+                                }
+                            });
+                        egui::CollapsingHeader::new("Drawing document")
+                            .default_open(false)
+                            .show(ui, |ui| {
+                                ui.label(
+                                    "Publish a drawing document version and export one, bound \
+                                     to its archived model source.",
+                                );
+                                if ui.button("Open drawing document").clicked() {
+                                    self.drawing_manager.open = true;
                                 }
                             });
                     });
@@ -1564,20 +1575,27 @@ impl App {
                     }
                     ui.spacing_mut().item_spacing.y = 0.0;
                     for label in self.menu_section.commands() {
+                        // The IFC row belongs to the Export page only: the Import page lists the
+                        // same label and its import command does not exist yet.
                         let enabled = matches!(
                             *label,
                             "Profile catalog" | "Material catalog" | "About BeamCraft"
-                        );
+                        ) || *label == "IFC"
+                            && self.menu_section == MenuSection::Export;
                         if menu_command(ui, label, enabled).clicked() {
                             match *label {
                                 "Profile catalog" => self.menu_section = MenuSection::Profiles,
                                 "Material catalog" => self.menu_section = MenuSection::Materials,
+                                "IFC" => self.open_menu_export(),
                                 "About BeamCraft" => {
                                     self.menu_section = MenuSection::About;
                                 }
                                 _ => {}
                             }
                         }
+                    }
+                    if self.menu_section == MenuSection::Export && self.menu_export_open() {
+                        self.menu_export_ui(ui, self.other_command_running());
                     }
                     let definitions = match self.menu_section {
                         MenuSection::Profiles => Some(&self.tools.definitions.profiles),

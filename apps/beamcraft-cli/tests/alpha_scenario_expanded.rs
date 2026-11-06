@@ -78,6 +78,8 @@ impl Story {
         fs::create_dir(root.join("fits-published")).unwrap();
         fs::create_dir(root.join("holes-published")).unwrap();
         fs::create_dir(root.join("storeys-published")).unwrap();
+        fs::create_dir(root.join("numbering-published")).unwrap();
+        fs::create_dir(root.join("instances-published")).unwrap();
         fs::create_dir(root.join("empty-store")).unwrap();
         Self(root)
     }
@@ -4345,4 +4347,342 @@ fn storey_assignment_rides_levels_across_publication() {
     assert_eq!(reopened_parts.len(), 2);
     close(volume_of(&reopened_parts, &plate), 600_000.0);
     close(volume_of(&reopened_parts, &beam), 10_000_000.0);
+}
+
+/// The renumbering story (A08): the preview goes stale exactly when an edit changes the
+/// numbering, the approval follows the fresh token, and the marks survive publication —
+/// in its own published store so the numbered frame keeps the counts the manual runbook
+/// records, and in its own test for the per-test budget.
+#[test]
+fn renumbering_goes_stale_exactly_when_the_numbering_changes() {
+    let s = Story::new();
+    s.ok(
+        "numbering-published",
+        "define-material",
+        &["--grade", "Q01-steel", "--density", "7850"],
+    );
+    s.ok(
+        "numbering-published",
+        "define-profile",
+        &[
+            "--designation",
+            "Q01-NUM-BAR",
+            "--width",
+            "100",
+            "--height",
+            "50",
+        ],
+    );
+    s.ok(
+        "numbering-published",
+        "create-workspace",
+        &[
+            "--workspace-dir",
+            &s.path("numbering-draft"),
+            "--user-id",
+            USER,
+        ],
+    );
+    let numbered = |id: &str, name: &str| -> String {
+        let created = s.ok(
+            "numbering-draft",
+            "create-member",
+            &[
+                "--kind",
+                "beam",
+                "--start",
+                "0,0,0",
+                "--end",
+                "2000,0,0",
+                "--profile",
+                "Q01-NUM-BAR",
+                "--name",
+                name,
+                "--new-id",
+                id,
+            ],
+        );
+        text(at(&created, &["member"]), "element_id")
+    };
+    let first = numbered("019a7bf0-0000-7000-8000-00000000a161", "Q01 numbered beam");
+    numbered("019a7bf0-0000-7000-8000-00000000a162", "Q01 numbered beam");
+    let plated = s.ok(
+        "numbering-draft",
+        "create-plate",
+        &[
+            "--name",
+            "Q01 numbered plate",
+            "--new-id",
+            "019a7bf0-0000-7000-8000-00000000a163",
+            "--width",
+            "100",
+            "--length",
+            "100",
+            "--thickness",
+            "10",
+        ],
+    );
+    let plate = text(at(&plated, &["plate"]), "element_id");
+
+    // The first preview is fresh, and a preview never writes the store.
+    let numbering_head = s.head("numbering-draft");
+    let first_preview = s.ok("numbering-draft", "preview-numbering", &[]);
+    let token = text(&first_preview, "preview_token");
+    assert_eq!(s.head("numbering-draft"), numbering_head);
+    let fresh = s.ok(
+        "numbering-draft",
+        "preview-numbering",
+        &["--previous", &token],
+    );
+    assert!(matches!(fresh.get("stale").unwrap(), Json::Bool(false)));
+
+    // A rename does not change the numbering; a thickness edit that splits the plate
+    // from its group does.
+    s.ok(
+        "numbering-draft",
+        "update-element",
+        &["--id", &first, "--name", "Q01 renamed beam"],
+    );
+    let after_rename = s.ok(
+        "numbering-draft",
+        "preview-numbering",
+        &["--previous", &token],
+    );
+    assert!(matches!(
+        after_rename.get("stale").unwrap(),
+        Json::Bool(false)
+    ));
+    s.ok(
+        "numbering-draft",
+        "update-element",
+        &["--id", &plate, "--thickness", "20"],
+    );
+    let after_edit = s.ok(
+        "numbering-draft",
+        "preview-numbering",
+        &["--previous", &token],
+    );
+    assert!(matches!(after_edit.get("stale").unwrap(), Json::Bool(true)));
+    let token_two = text(
+        &s.ok("numbering-draft", "preview-numbering", &[]),
+        "preview_token",
+    );
+    assert_ne!(token_two, token);
+    let approved = s.ok(
+        "numbering-draft",
+        "approve-numbering",
+        &["--preview-token", &token_two],
+    );
+    assert_eq!(approved.get("marks").unwrap().unsigned().unwrap(), 3);
+
+    // A copy is a numbering edit too: stale again, and the second approval adds the mark.
+    s.ok("numbering-draft", "copy-element", &["--id", &plate]);
+    let after_copy = s.ok(
+        "numbering-draft",
+        "preview-numbering",
+        &["--previous", &token_two],
+    );
+    assert!(matches!(after_copy.get("stale").unwrap(), Json::Bool(true)));
+    let token_three = text(
+        &s.ok("numbering-draft", "preview-numbering", &[]),
+        "preview_token",
+    );
+    let approved_again = s.ok(
+        "numbering-draft",
+        "approve-numbering",
+        &["--preview-token", &token_three],
+    );
+    assert_eq!(approved_again.get("marks").unwrap().unsigned().unwrap(), 4);
+
+    let numbering_published = s.ok(
+        "numbering-published",
+        "publish-workspace",
+        &["--workspace-dir", &s.path("numbering-draft")],
+    );
+    assert_eq!(text(&numbering_published, "outcome"), "workspace_published");
+    let still_fresh = s.ok(
+        "numbering-published",
+        "preview-numbering",
+        &["--previous", &token_three],
+    );
+    assert!(
+        matches!(still_fresh.get("stale").unwrap(), Json::Bool(false)),
+        "the published head is exactly the approved numbering"
+    );
+    assert_eq!(
+        at(&still_fresh, &["counts", "parts"]).unsigned().unwrap(),
+        4
+    );
+}
+
+/// The instance story (U11): an instance shares its definition's body — a cut and a
+/// hole applied to the definition ride the whole group with identical local meshes,
+/// records and quantities, while every member keeps its own placement and label. Its own
+/// published store keeps the numbered frame's counts the manual runbook records, and its
+/// own test keeps the per-test budget honest.
+#[test]
+fn instances_share_their_body_across_publication() {
+    let s = Story::new();
+    s.ok(
+        "instances-published",
+        "define-material",
+        &["--grade", "Q01-steel", "--density", "7850"],
+    );
+    s.ok(
+        "instances-published",
+        "create-workspace",
+        &["--workspace-dir", &s.path("inst-draft"), "--user-id", USER],
+    );
+    let definition = {
+        let created = s.ok(
+            "inst-draft",
+            "create-plate",
+            &[
+                "--name",
+                "Q01 gusset definition",
+                "--new-id",
+                "019a7bf0-0000-7000-8000-00000000a171",
+                "--width",
+                "1000",
+                "--length",
+                "500",
+                "--thickness",
+                "10",
+                "--translation",
+                "10,20,30",
+            ],
+        );
+        text(at(&created, &["plate"]), "element_id")
+    };
+    let copied = s.ok(
+        "inst-draft",
+        "copy-instance",
+        &[
+            "--id",
+            &definition,
+            "--new-id",
+            "019a7bf0-0000-7000-8000-00000000a172",
+            "--name",
+            "Q01 gusset instance",
+            "--offset",
+            "1100,0,0",
+        ],
+    );
+    assert_eq!(text(&copied, "outcome"), "element_copied");
+    let instance = text(at(&copied, &["element"]), "element_id");
+
+    // One shared hole and one shared cut on the definition: the group is updated
+    // atomically.
+    s.ok(
+        "inst-draft",
+        "add-hole",
+        &[
+            "--id",
+            &definition,
+            "--operation-id",
+            "019a7bf0-0000-7000-8000-00000000a174",
+            "--hole-rect",
+            "100,100,100,100",
+        ],
+    );
+    let cut = s.ok(
+        "inst-draft",
+        "cut-by-plane",
+        &[
+            "--id",
+            &definition,
+            "--operation-id",
+            "019a7bf0-0000-7000-8000-00000000a175",
+            "--point",
+            "250,0,0",
+            "--normal",
+            "1,0,0",
+            "--keep",
+            "negative",
+        ],
+    );
+    assert_eq!(text(&cut, "outcome"), "cut_applied");
+
+    let inspection = s.ok("inst-draft", "inspect-elements", &[]);
+    let plates = at(&inspection, &["plates"]).array().unwrap();
+    assert_eq!(plates.len(), 2);
+    let defined = plates
+        .iter()
+        .find(|p| text(p, "element_id") == definition)
+        .expect("the definition is present");
+    let instanced = plates
+        .iter()
+        .find(|p| text(p, "element_id") == instance)
+        .expect("the instance is present");
+    // The shared shape: identical local mesh, records and quantities everywhere; the
+    // exact kept half-space minus the hole.
+    close(
+        at(defined, &["quantities", "volume", "mm3"])
+            .float()
+            .unwrap(),
+        1_150_000.0,
+    );
+    assert_eq!(text(instanced, "mesh_digest"), text(defined, "mesh_digest"));
+    assert_eq!(
+        at(instanced, &["cuts"]).array().unwrap().len(),
+        at(defined, &["cuts"]).array().unwrap().len()
+    );
+    assert_eq!(
+        at(instanced, &["hole_records"]).array().unwrap().len(),
+        at(defined, &["hole_records"]).array().unwrap().len()
+    );
+    close(
+        at(instanced, &["quantities", "volume", "mm3"])
+            .float()
+            .unwrap(),
+        1_150_000.0,
+    );
+    // Each member keeps its own identity facts.
+    assert_eq!(text(defined, "name"), "Q01 gusset definition");
+    assert_eq!(text(instanced, "name"), "Q01 gusset instance");
+    assert_eq!(
+        numbers(at(defined, &["placement", "translation_mm"])),
+        [10.0, 20.0, 30.0]
+    );
+    assert_eq!(
+        numbers(at(instanced, &["placement", "translation_mm"])),
+        [1110.0, 20.0, 30.0]
+    );
+    let inst_digest = text(instanced, "mesh_digest");
+
+    let instances_published = s.ok(
+        "instances-published",
+        "publish-workspace",
+        &["--workspace-dir", &s.path("inst-draft")],
+    );
+    assert_eq!(text(&instances_published, "outcome"), "workspace_published");
+    let reopened = s.ok("instances-published", "inspect-elements", &[]);
+    let reopened_plates = at(&reopened, &["plates"]).array().unwrap();
+    assert_eq!(reopened_plates.len(), 2);
+    let reopened_defined = reopened_plates
+        .iter()
+        .find(|p| text(p, "element_id") == definition)
+        .expect("the definition is present");
+    let reopened_instanced = reopened_plates
+        .iter()
+        .find(|p| text(p, "element_id") == instance)
+        .expect("the instance is present");
+    close(
+        at(reopened_defined, &["quantities", "volume", "mm3"])
+            .float()
+            .unwrap(),
+        1_150_000.0,
+    );
+    close(
+        at(reopened_instanced, &["quantities", "volume", "mm3"])
+            .float()
+            .unwrap(),
+        1_150_000.0,
+    );
+    assert_eq!(
+        text(reopened_instanced, "mesh_digest"),
+        text(reopened_defined, "mesh_digest")
+    );
+    assert_eq!(text(reopened_instanced, "mesh_digest"), inst_digest);
+    assert_eq!(text(reopened_instanced, "name"), "Q01 gusset instance");
 }

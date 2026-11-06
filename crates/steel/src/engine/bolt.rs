@@ -26,7 +26,8 @@
 //! union length of the shank axis inside the boxes. A14.4 adds the hole decision
 //! ([`generate_holes`]): with `hole_mode = generate` every connected plate takes one ordinary
 //! A04 hole record per crossing fastener, owned by the group; a member part refuses until the
-//! G14 contract lands, and `hole_mode = none` writes no part.
+//! G14 contract lands, a plate with a rotated placement refuses with it, and `hole_mode = none`
+//! writes no part.
 
 use crate::model::command::{
     BoltGroupInputs, BoltLength, BoltSpacing, CreateBolt, CreateBoltGroup, UpdateBoltGroup,
@@ -36,6 +37,7 @@ use beamcraft_engine::footprint::Footprint;
 use beamcraft_geom::tolerance::ABSOLUTE_FLOOR_MM;
 use beamcraft_geom::tolerance::DIMENSION_CAP_MM;
 use beamcraft_model::command::CommandError;
+use beamcraft_model::command::Placement;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::ElementId;
 use std::collections::{BTreeMap, BTreeSet};
@@ -179,6 +181,36 @@ fn expand_spacings(
     }
 }
 
+/// The committed placement values of an A14.3 group (bolt amendment section 4) that the view
+/// snapshot re-derives its fasteners from (issue 512). The layer's structural read has already
+/// validated them against the pinned definition; this re-derivation refuses any row it cannot
+/// place rather than drawing a guess.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StoredPlacement {
+    /// World start of the row in millimetres.
+    pub point1_mm: [f64; 3],
+    /// World end of the row.
+    pub point2_mm: [f64; 3],
+    /// Unit normal of the reference plane at zero rotation.
+    pub plane_normal_mm: [f64; 3],
+    /// Rotation about the row in radians.
+    pub rotation_rad: f64,
+    /// Offset of the whole group along the plane axis in millimetres.
+    pub on_plane_mm: f64,
+    /// Offset of the whole group along the shank axis in millimetres.
+    pub depth_mm: f64,
+    /// Distance from `point1` to the first fastener in millimetres.
+    pub offset_start_mm: f64,
+    /// The authoritative distances between neighbouring fasteners.
+    pub spacings_mm: Vec<f64>,
+    /// The resolved shank length in millimetres.
+    pub length_mm: f64,
+    /// Whether a washer sits under the head.
+    pub washer_under_head: bool,
+    /// Whether a washer sits under the nut.
+    pub washer_under_nut: bool,
+}
+
 /// Unit frame of the group (bolt amendment section 4): `x` along the row, `z` the plane
 /// normal's component perpendicular to `x` turned by the rotation about `x`, and `y = z × x`.
 /// A normal parallel to the row gives no plane and is `INVALID_ARGUMENT`.
@@ -291,6 +323,43 @@ fn grip_of(mut intervals: Vec<(f64, f64)>) -> f64 {
     total
 }
 
+/// The frame of a group and the bearing point of every fastener: the shared placement
+/// arithmetic of [`place_bolt_group`] and of a committed group's stored values
+/// ([`BoltGroupPlaced::from_stored`]). The bearings start at `offset_start` along the row from
+/// the slid first point and step one spacing at a time.
+#[allow(clippy::too_many_arguments)]
+fn frame_and_bearings(
+    point1_mm: [f64; 3],
+    point2_mm: [f64; 3],
+    plane_normal_mm: [f64; 3],
+    rotation_rad: f64,
+    on_plane_mm: f64,
+    depth_mm: f64,
+    offset_start_mm: f64,
+    spacings_mm: &[f64],
+) -> Result<(Frame, Vec<[f64; 3]>), CommandError> {
+    let (x, y, z) = frame_of(point1_mm, point2_mm, plane_normal_mm, rotation_rad)?;
+    let first = [
+        point1_mm[0] + on_plane_mm * y[0] + depth_mm * z[0],
+        point1_mm[1] + on_plane_mm * y[1] + depth_mm * z[1],
+        point1_mm[2] + on_plane_mm * y[2] + depth_mm * z[2],
+    ];
+    let mut bearings = Vec::with_capacity(spacings_mm.len() + 1);
+    let mut along = offset_start_mm;
+    for _ in 0..=spacings_mm.len() {
+        bearings.push([
+            first[0] + along * x[0],
+            first[1] + along * x[1],
+            first[2] + along * x[2],
+        ]);
+        let Some(next) = spacings_mm.get(bearings.len() - 1) else {
+            break;
+        };
+        along += *next;
+    }
+    Ok(((x, y, z), bearings))
+}
+
 /// Places the group (bolt amendment section 4): the frame, the authoritative spacings, the
 /// bearing points and the one length for the whole group. The grip of a fastener is the union
 /// length of its axis inside the listed parts; `auto` picks the smallest standard length that
@@ -324,35 +393,21 @@ pub fn place_bolt_group(
             "a washer under the nut needs a washer and a bolt",
         ));
     }
-    let (x, y, z) = frame_of(
-        inputs.point1_mm,
-        inputs.point2_mm,
-        inputs.plane_normal_mm,
-        inputs.rotation_rad,
-    )?;
     let chord = (inputs.point2_mm[0] - inputs.point1_mm[0]).hypot(
         (inputs.point2_mm[1] - inputs.point1_mm[1])
             .hypot(inputs.point2_mm[2] - inputs.point1_mm[2]),
     );
     let spacings = expand_spacings(&inputs.spacing, chord, inputs.offset_start_mm)?;
-    let first = [
-        inputs.point1_mm[0] + inputs.on_plane_mm * y[0] + inputs.depth_mm * z[0],
-        inputs.point1_mm[1] + inputs.on_plane_mm * y[1] + inputs.depth_mm * z[1],
-        inputs.point1_mm[2] + inputs.on_plane_mm * y[2] + inputs.depth_mm * z[2],
-    ];
-    let mut bearings = Vec::with_capacity(spacings.len() + 1);
-    let mut along = inputs.offset_start_mm;
-    for _ in 0..=spacings.len() {
-        bearings.push([
-            first[0] + along * x[0],
-            first[1] + along * x[1],
-            first[2] + along * x[2],
-        ]);
-        let Some(next) = spacings.get(bearings.len() - 1) else {
-            break;
-        };
-        along += *next;
-    }
+    let ((x, y, z), bearings) = frame_and_bearings(
+        inputs.point1_mm,
+        inputs.point2_mm,
+        inputs.plane_normal_mm,
+        inputs.rotation_rad,
+        inputs.on_plane_mm,
+        inputs.depth_mm,
+        inputs.offset_start_mm,
+        &spacings,
+    )?;
     // The grip decides the one length of the group; every part must be crossed by an axis.
     let mut crossed = vec![false; inputs.parts.len()];
     let mut max_grip = 0.0_f64;
@@ -416,6 +471,36 @@ pub fn place_bolt_group(
     })
 }
 
+impl BoltGroupPlaced {
+    /// The placement a committed group's stored values re-derive: the same frame and bearing
+    /// points [`place_bolt_group`] decided at creation, without the part reachability and
+    /// length decision the creation ran (the committed record is authoritative). A row whose
+    /// stored values give no frame — a degenerate row or a normal parallel to it — is refused,
+    /// never guessed.
+    pub fn from_stored(stored: &StoredPlacement) -> Result<Self, CommandError> {
+        let ((x, y, z), bearings) = frame_and_bearings(
+            stored.point1_mm,
+            stored.point2_mm,
+            stored.plane_normal_mm,
+            stored.rotation_rad,
+            stored.on_plane_mm,
+            stored.depth_mm,
+            stored.offset_start_mm,
+            &stored.spacings_mm,
+        )?;
+        Ok(Self {
+            x,
+            y,
+            z,
+            bearings_mm: bearings,
+            spacings_mm: stored.spacings_mm.clone(),
+            length_mm: stored.length_mm,
+            washer_under_head: stored.washer_under_head,
+            washer_under_nut: stored.washer_under_nut,
+        })
+    }
+}
+
 /// One generated hole decision (bolt amendment section 5): the plate that owns the record and
 /// its authoritative clockwise polygon in the plate's local XY. The record itself is an
 /// ordinary A04 hole record; the adapter appends it with a fresh ordinal and replays the
@@ -433,13 +518,14 @@ pub struct GeneratedHole {
 /// plate, of diameter `nominal + clearance` (the group's own clearance, or the definition's),
 /// centred where the shank axis crosses the plate's mid-plane and cut along the plate normal,
 /// like any A04 record. A beam or a column is refused with `UNSUPPORTED_GEOMETRY`:
-/// generated member holes need the kernel slice G14.1. `hole_mode = none` writes no part.
-/// The decision is pure: the same inputs give the same holes.
+/// generated member holes need the kernel slice G14.1; a plate with a rotated placement is
+/// refused with it too, because the world box gives no plate-local frame for the record.
+/// `hole_mode = none` writes no part. The decision is pure: the same inputs give the same holes.
 pub fn generate_holes(
     inputs: &BoltGroupInputs,
     placed: &BoltGroupPlaced,
     bounds: &BTreeMap<ElementId, Bounds>,
-    translations: &BTreeMap<ElementId, [f64; 3]>,
+    placements: &BTreeMap<ElementId, Placement>,
     members: &BTreeSet<ElementId>,
 ) -> Result<Vec<GeneratedHole>, CommandError> {
     if inputs.resolved_hole_mode() == HoleMode::None {
@@ -462,20 +548,28 @@ pub fn generate_holes(
                 "a listed part is unreachable",
             )
         })?;
-        let translation = translations.get(part).ok_or_else(|| {
+        let placement = placements.get(part).ok_or_else(|| {
             CommandError::new(
                 ErrorCode::UnsupportedGeometry,
                 "hole_mode",
                 "the part has no placement this slice can read",
             )
         })?;
+        if !placement.is_identity_rotation() {
+            return Err(CommandError::new(
+                ErrorCode::UnsupportedGeometry,
+                "hole_mode",
+                "a generated hole in a rotated plate is not supported in this slice",
+            ));
+        }
+        let translation = placement.translation_mm;
         for bearing in &placed.bearings_mm {
             let Some((start, exit)) = axis_interval(bearing, &placed.z, slab) else {
                 continue;
             };
             // The plate-local XY centre: where the shank axis crosses the slab's mid-plane
-            // (a plate's placement rotation is identity in this slice, so world minus
-            // translation is the plate-local frame).
+            // (only identity plates reach here, so world minus translation is the plate-local
+            // frame).
             let mid = (start + exit) / 2.0;
             let centre = [
                 bearing[0] + placed.z[0] * mid - translation[0],
@@ -1019,13 +1113,13 @@ mod tests {
         );
     }
 
-    /// The translations of the standard two-plate test: identity placements.
-    fn hole_args(inputs: &BoltGroupInputs) -> BTreeMap<ElementId, [f64; 3]> {
-        let mut translations = BTreeMap::new();
+    /// The placements of the standard two-plate test: identity placements.
+    fn hole_args(inputs: &BoltGroupInputs) -> BTreeMap<ElementId, Placement> {
+        let mut placements = BTreeMap::new();
         for part in &inputs.parts {
-            translations.insert(*part, [0.0, 0.0, 0.0]);
+            placements.insert(*part, Placement::IDENTITY);
         }
-        translations
+        placements
     }
 
     #[test]
@@ -1056,7 +1150,13 @@ mod tests {
         // The stored records live in the plates' local frames: a translated plate's holes are
         // translated back (the polygon centroid sits on the mapped axis point).
         let mut moved = translations.clone();
-        moved.insert(id(1), [10.0, 20.0, 0.0]);
+        moved.insert(
+            id(1),
+            Placement {
+                translation_mm: [10.0, 20.0, 0.0],
+                ..Placement::IDENTITY
+            },
+        );
         let local = generate_holes(&inputs, &placed, &bounds, &moved, &BTreeSet::new()).unwrap();
         let polygon = &local.first().unwrap().polygon_mm;
         let n = polygon.len() as f64;
@@ -1103,6 +1203,22 @@ mod tests {
         let members = BTreeSet::from([id(2)]);
         assert_eq!(
             generate_holes(&inputs, &placed, &bounds, &translations, &members)
+                .unwrap_err()
+                .code,
+            ErrorCode::UnsupportedGeometry
+        );
+        // A rotated plate is refused wholesale too: the world box gives no plate-local frame
+        // for the record.
+        let mut turned = translations.clone();
+        turned.insert(
+            id(1),
+            Placement {
+                orientation_xyzw: [0.0, 0.0, 1.0, 1.0],
+                ..Placement::IDENTITY
+            },
+        );
+        assert_eq!(
+            generate_holes(&inputs, &placed, &bounds, &turned, &BTreeSet::new())
                 .unwrap_err()
                 .code,
             ErrorCode::UnsupportedGeometry
@@ -1212,5 +1328,69 @@ mod tests {
             .count();
         assert_eq!(element_writes, 2);
         assert_eq!(footprint.writes().len(), 3);
+    }
+
+    #[test]
+    fn a_stored_group_re_derives_the_placement_the_creation_decided() {
+        let inputs = group_inputs();
+        let placed = place_bolt_group(&inputs, &group_bounds(1000.0)).unwrap();
+        let stored = crate::engine::bolt::StoredPlacement {
+            point1_mm: inputs.point1_mm,
+            point2_mm: inputs.point2_mm,
+            plane_normal_mm: inputs.plane_normal_mm,
+            rotation_rad: inputs.rotation_rad,
+            on_plane_mm: inputs.on_plane_mm,
+            depth_mm: inputs.depth_mm,
+            offset_start_mm: inputs.offset_start_mm,
+            spacings_mm: placed.spacings_mm.clone(),
+            length_mm: placed.length_mm,
+            washer_under_head: placed.washer_under_head,
+            washer_under_nut: placed.washer_under_nut,
+        };
+        assert_eq!(BoltGroupPlaced::from_stored(&stored).unwrap(), placed);
+        // The arithmetic also agrees for a turned, slid and sunk row with a generator pattern.
+        let turned = place_bolt_group(
+            &BoltGroupInputs {
+                rotation_rad: 1.0,
+                on_plane_mm: 7.0,
+                depth_mm: -3.0,
+                spacing: BoltSpacing::Spacings(vec![40.0, 40.0, 40.0]),
+                ..inputs.clone()
+            },
+            &group_bounds(1000.0),
+        )
+        .unwrap();
+        let stored = crate::engine::bolt::StoredPlacement {
+            point1_mm: inputs.point1_mm,
+            point2_mm: inputs.point2_mm,
+            plane_normal_mm: inputs.plane_normal_mm,
+            rotation_rad: 1.0,
+            on_plane_mm: 7.0,
+            depth_mm: -3.0,
+            offset_start_mm: inputs.offset_start_mm,
+            spacings_mm: turned.spacings_mm.clone(),
+            length_mm: turned.length_mm,
+            washer_under_head: turned.washer_under_head,
+            washer_under_nut: turned.washer_under_nut,
+        };
+        assert_eq!(BoltGroupPlaced::from_stored(&stored).unwrap(), turned);
+        // A committed row that gives no frame is refused, never guessed: a degenerate row and
+        // a normal parallel to the row are the creation's own refusals.
+        let degenerate = crate::engine::bolt::StoredPlacement {
+            point2_mm: inputs.point1_mm,
+            ..stored.clone()
+        };
+        assert_eq!(
+            BoltGroupPlaced::from_stored(&degenerate).unwrap_err().field,
+            "point2_mm"
+        );
+        let parallel = crate::engine::bolt::StoredPlacement {
+            plane_normal_mm: [1.0, 0.0, 0.0],
+            ..stored
+        };
+        assert_eq!(
+            BoltGroupPlaced::from_stored(&parallel).unwrap_err().field,
+            "plane_normal_mm"
+        );
     }
 }
