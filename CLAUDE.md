@@ -38,13 +38,11 @@ The recorded gate runs unfiltered nextest 0.9.149 **and mandatory doctests**, fo
 Clippy and documentation with warnings denied. It enforces execution budgets, serializes heavy
 checks across worktrees and requires the committed source to stay unchanged. Independent
 CLI-only changes may use `--scope cli --ui-independent-reason "..."` when no shared code,
-dependencies, build settings or UI-consumed commands/options/JSON change. CI validates the
-receipt and runs the quality lanes on the two other operating systems; the complete workspace
-runs in the parallel platform track on integration pushes, nightly and dispatch; missing or
-stale local evidence fails CI.
+dependencies, build settings or UI-consumed commands/options/JSON change. CI then tests the
+whole workspace on the two other operating systems; missing or stale local evidence fails CI.
 Publish the report explicitly with the runner's `publish --report PATH --pr NUMBER` command.
-New head/base snapshots require a new report. See `tools/test-gate/README.md` and the owner
-policy in `docs/plan/test-gate.md`; this supersedes the literal-Cargo rule from #346.
+New head/base snapshots require a new report. See the `tools/test-gate/README.md`
+guide; this supersedes the literal-Cargo rule.
 
 Targeted Cargo/nextest commands remain iteration tools. A quick smoke after a build:
 `cargo run -p beamcraft-cli -- --version`. CI also checks WASM compatibility, dependencies,
@@ -61,6 +59,4 @@ fixtures and module boundaries. Release packaging is unchanged.
 - Match the surrounding code's style; keep PRs small and focused. Commit messages: imperative
   mood, explain the why.
 - Branch from the verified current `origin/master`; follow `AGENTS.md` section 6 for naming
-  (`feat/`, `bug/`, `docs/`, `chore/`, `refactor/`, `test/`). Open a PR using the template —
-  except an upstream-sync merge, which lands as a direct push to `master` through the gate's
-  no-PR flow (`AGENTS.md` §7).
+  (`feat/`, `bug/`, `docs/`, `chore/`, `refactor/`, `test/`). Open a PR using the template.

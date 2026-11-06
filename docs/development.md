@@ -13,7 +13,7 @@ cargo run -p beamcraft-cli -- --version
 
 ### The full gate
 
-The [recorded gate policy](plan/test-gate.md) supersedes the literal-Cargo rule from #346.
+The recorded gate supersedes the literal-Cargo rule.
 Commit the source, fetch the integration base, and run:
 
 ```sh
@@ -46,13 +46,10 @@ Publish the successful report explicitly:
 cargo run --locked -p beamcraft-test-gate -- publish --report target/test-gate/RUN/report.json --pr NUMBER
 ```
 
-CI validates the current head/base/tree and runs the quality lanes on the two other OSes;
-the complete workspace runs in the separate platform track on integration pushes, nightly
-and dispatch.
+CI validates the current head/base/tree and checks the whole workspace on the two other OSes.
 A CLI-only receipt explicitly means UI was omitted locally. Missing/stale reports fail the
-aggregate `CI verdict`. Integration reuses a PR result only for the identical source tree; a
-sync merge binds its full native gate to the merge tree and lands as a direct push to `master`
-(`AGENTS.md` §7). Release packaging is unchanged.
+aggregate `CI verdict`. Integration reuses a PR result only for the identical source tree;
+upstream sync binds its full native gate to the merge tree. Release packaging is unchanged.
 
 ### Iteration runs
 
@@ -74,8 +71,7 @@ final result, including doctests and source identity.
 The `fast`
 profile (`.config/nextest.toml`) skips the IO-heavy integration suites that keep the inner
 loop's remaining serial mass near ~800 s — about 80 s of wall clock warm on the reference
-Apple M5 (re-measured 2026-11-01 with interleaved A/B runs,
-[issue #285](https://github.com/axisrow/BeamCraft/issues/285)): in `beamcraft-cli`
+Apple M5 (re-measured 2026-11-01 with interleaved A/B runs): in `beamcraft-cli`
 `export_ifc`, `numbering_approval`, `numbering`, `libraries`, `environments` and `pick`; in
 `beamcraft-host` `recovery`, `revision` and `compaction`. `environments` stays out for its
 30-64 s tail even at a ~38 s median. The kernel's `g09_budget_fuzz` and `g05_profile_extrusion`
@@ -131,8 +127,8 @@ real screenshot, an interactive element by a real click, a CLI change by the com
 stderr and exit code, business logic by a behavioural test of the new effect. Tests cover
 behaviour and refusals, not a getter beside its setter; invalid input produces an error, never
 a panic, and the tests assert that. Fixtures stay deterministic: seed the RNG before creating
-the workspace, keep temporary names unique per process (the fixture-name collision fix,
-PR #157), and never wait with sleeps — wait on the condition.
+the workspace, keep temporary names unique per process (the fixture-name collision fix);
+never wait with sleeps — wait on the condition.
 
 ## Faster test execution
 
@@ -143,7 +139,7 @@ at level 3 because every CLI/store command re-parses the whole revision layer st
 per-element cost of that parse (SDF path validation and friends) dominated the write-path
 profile — ~16 ms per stored element per command at level 1 against ~3.7 ms at level 3, which
 took the full unfiltered workspace run from ~200 s to ~115–130 s warm on the reference Apple
-M5 ([#285](https://github.com/axisrow/BeamCraft/issues/285), 2026-11-01). Other workspace
+M5 (measured 2026-11-01). Other workspace
 packages, GUI dependencies and host
 build tools keep Cargo's default optimization settings. Debug assertions and overflow
 checks remain enabled, and the test cases, fuzz seeds, iteration counts and independent oracles
@@ -253,9 +249,7 @@ Apple M5 run described above.
 ## Everything CI checks
 
 CI (`.github/workflows/ci.yml`) runs on pull requests, pushes to `master` and manual dispatches.
-A fresh local report chooses the two other operating systems for the quality lanes; the separate
-platform track (`ci-platform.yml`) runs the whole workspace on all three operating systems on
-every integration push, nightly and manual dispatch.
+A fresh local report chooses the two other operating systems; both test the whole workspace.
 The first selected quality lane runs format/docs checks, with WASM, licences, fixtures and
 boundaries retained. New commits/base snapshots need a new local report. The commands below
 show the component checks; use the recorded runner for an eligible final result. To run the
@@ -292,8 +286,8 @@ deviations are in [K1 acceptance evidence](design/k1-contract-acceptance.md).
 
 ## CI wall time and Windows runner queues
 
-Recent successful runs in the [axisrow/BeamCraft fork](https://github.com/axisrow/BeamCraft/actions/workflows/ci.yml)
-give the following wall times. The sample is every successful `ci.yml` run created between
+Recent successful `ci.yml` runs
+give the following wall times. The sample is every successful run created between
 2026-10-30T00:00Z and 2026-11-01T00:00Z, measured from `run_started_at` to `updated_at`
 (sample taken 2026-10-31):
 
@@ -302,18 +296,15 @@ give the following wall times. The sample is every successful `ci.yml` run creat
 | Full `master` CI (push): Linux, macOS, Windows and cold release builds | 16 | 6 min 24 s | 5 min 15 s–9 min 33 s |
 | Pull request CI: Linux and macOS, without Windows or cold release builds | 59 of 62 | 5 min 30 s | 1 min 45 s–51 min 33 s |
 
-Cancelled and failed runs are excluded. Three further successful PR runs (#604, #679, #680)
+Cancelled and failed runs are excluded. Three further successful PR runs
 finished in 9–63 s — too short to include any real check — and are excluded from the PR row.
-The slow tail is runner queueing, not work: on the evening of 2026-10-30, runs #636 (37 min)
-and #639 (52 min) waited out a starved hosted-runner queue. These are observed fork timings,
-not an upstream measurement or a guarantee for cold caches or busy runner queues. For examples,
-see successful full runs [#661](https://github.com/axisrow/BeamCraft/actions/runs/41159116676)
-and [#658](https://github.com/axisrow/BeamCraft/actions/runs/41158212875), and PR run
-[#678](https://github.com/axisrow/BeamCraft/actions/runs/41169951787). Budget about 10 minutes
+The slow tail is runner queueing, not work: on the evening of 2026-10-30, two runs (37 min
+and 52 min) waited out a starved hosted-runner queue. These are observed timings,
+not a guarantee for cold caches or busy runner queues. Budget about 10 minutes
 for a full run, plus any additional runner wait. The earlier 14–17 minute measurement from
 2026-10-22 is historical. A green PR does not establish that the Windows checks pass.
 
-Under the [recorded gate policy](plan/test-gate.md) a run covers the two operating systems
+Under the recorded gate policy a run covers the two operating systems
 other than the locally verified one, so a run's wall time also depends on that pair and on
 queue conditions. These are observations, not execution-budget thresholds: the recorded gate
 enforces runner-only test budgets separately from compilation and queue wait.

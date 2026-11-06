@@ -4,65 +4,7 @@ Decisions that shape the plan, newest first. Each names its date and, where one 
 document that records it in detail. A later decision overrides an earlier one where they differ.
 Open questions are at the end.
 
-## 2026-11-05
-
-- **CI wall time: quality lanes on pull requests, complete-workspace tests in a parallel
-  platform track.** The owner approved the CI wall-time amendments to the
-  [test-gate policy](test-gate.md) and the [CI convergence record](ci-convergence.md)
-  (fork issue for the owner decision: [Apibim-com#239](https://github.com/Apibim-com/BeamCraft/issues/239)).
-  `ci.yml` stays the receipt-gated aggregate of every pull request, push and dispatch:
-  planning validates a current local report, the two selected operating systems run the
-  compile-and-lint quality lanes, and `CI verdict` remains the single required check.
-  Complete-workspace test execution moves to `ci-platform.yml` beside the canonical file,
-  on every integration push, nightly and manual dispatch, on all three operating systems
-  with the same budgets and evidence. Per-PR cross-OS test execution is intentionally
-  moved from the CI wall to that track; the PR's test evidence is the local receipt on
-  its recorded OS. Every partition of a platform's canonical shard count must run: the
-  platform track also restores the macOS sixth partition that the old wall's five-shard
-  tuning silently dropped. The canonical-file change ships upstream in the next wave so
-  the convergence contract holds. This entry authorizes the implementation; the policy
-  takes effect with its implementation PR.
-
-## 2026-11-04
-
-- **Syncs land by direct push to the fork's `master`; upstream receives one batch PR.** Owner
-  decision: an upstream-sync merge commit lands on `master` as a direct push, never as a fork
-  pull request, through the recorded gate's no-PR flow (`check --scope full --staged-merge`,
-  `sync-trailer` before commit, `verify-sync` before push; the receipt binds the merge tree and
-  both merge parents). The upstream repository receives the accumulated fork delta as one batch
-  PR per sync wave, as with #734 and #830. Fork pull requests remain the path for regular
-  feature, fix and docs work; a sync PR like #466 is not opened again.
-
 ## 2026-10-31
-
-- **Recorded local gate and two other CI platforms.** The owner approved the
-  [test-gate policy](test-gate.md), superseding the literal-Cargo rule from fork PR #346
-  and the earlier Windows-on-master-only policy. One runner performs nextest plus mandatory
-  doctests, records the exact tested source and enforces runtime budgets. Independent CLI
-  changes may use a CLI-only local gate with an explicit UI-independence explanation; CI still
-  tests the whole workspace on the other two operating systems. A missing, failed or stale
-  local report fails CI, including after integration. Upstream sync retains its no-PR flow
-  through a full-gate report bound to the merge tree. Release packaging is unchanged.
-  This entry authorizes the implementation; the policy takes effect with its implementation
-  PR, and existing PRs then need fresh local reports.
-
-- **One full test gate, literal `cargo test --workspace`.** Owner decision on
-  [issue #342](https://github.com/axisrow/BeamCraft/issues/342), after the worker survey recorded
-  there (related upstream thread:
-  [Apibim-com/BeamCraft#767](https://github.com/Apibim-com/BeamCraft/issues/767)). Before a pull
-  request is opened or updated, the gate runs once, whole, and its result is read from that run:
-  `cargo fmt --all`; `cargo clippy --workspace --all-targets -- -D warnings`;
-  `cargo test --workspace`; `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps`. The test
-  step is the literal `cargo test --workspace`: nextest never runs doctests, so a nextest run is
-  the iteration tool (targeted `-p <crate>` runs; workspace sweeps with `--no-fail-fast`), not
-  the gate, and the earlier "matching CI" wording is corrected in `CLAUDE.md` and
-  `docs/development.md`. Results are read from the run itself — redirected to a file when the
-  log matters, never through a pipe (`| tail` masks the exit code). While the gate runs, no
-  parallel heavy builds share the machine: the e2e test
-  `reference::a_reply_lists_a_bounded_number_of_foreign_prims_however_many_the_source_has`
-  deadline-cancels under parallel load and passes in isolation. `docs/development.md` records
-  the gate, the load rule, the test pyramid and the
-  acceptance-first rule.
 
 - **`ROADMAP.md` lists no tasks.** Owner decision: it keeps the stage, the acceptance-gate
   verdicts and the MVP scope with its deferrals, and drops the "Next work" list and the per-gate
@@ -486,17 +428,6 @@ Owner answers to [issue #129](https://github.com/Apibim-com/BeamCraft/issues/129
   copied or ported; the kernel is ours. No external math crates either: the scalar types and the
   ordered arithmetic of F06 are BeamCraft's own.
 - **MSRV 1.96** (required by `openusd`).
-
-## M5 CLI delivery decisions (2026-10-27)
-
-The owner approved implementation of M5 with all missing engine/API and CLI dependencies
-from M1 through M4, with a matrix of scenarios rather than only the five-part frame.
-The current plate, fastener and member-hole amendments are accepted with their stated MVP
-limits (including the 0.05 mm curve rule and the restricted generated-hole scope).
-Schedule templates (I05) are shared, owned model USD entities with revisions, footprints,
-commit and undo. Items/import, IFC certification, deferred collaboration, native UI/GPU
-acceptance and release publication are not added to this scope. No automatic merges.
-See [M5 CLI delivery](m5-cli-delivery.md) for dependencies and acceptance.
 
 ## Open questions
 

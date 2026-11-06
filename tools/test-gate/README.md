@@ -60,14 +60,11 @@ delimited machine block in the description; it preserves human text and rechecks
 PR head/base and local clean snapshot. No publication happens during `check`. A new commit or
 base requires another local gate and publication. A PR edit retriggers CI selection.
 
-CI selects exactly the two operating systems other than the one recorded locally for the
-quality lanes of `ci.yml`: format, Clippy, fixtures, boundaries, docs on the first selected
-lane, plus WASM, licences and the cold release gate. The complete workspace runs on all three
-operating systems in the separate platform-track workflow (`ci-platform.yml`) on every
-integration push, nightly and manual dispatch, with the same fixed budgets and evidence; it
-does not wait inside the CI wall. A local CLI-only receipt deliberately omits UI on that
-native OS; the report and CI plan say so explicitly. Missing/stale/incomplete reports fail
-the plan and the aggregate `CI verdict`, instead of silently choosing a default matrix.
+CI selects exactly the two operating systems other than the one recorded locally. Both run
+the complete workspace. A local CLI-only receipt deliberately omits UI on that native OS;
+the report and CI plan say so explicitly. Missing/stale/incomplete reports fail the plan and
+the aggregate `CI verdict`, instead of silently choosing a default matrix. Formatter/docs
+run on the first selected quality lane; WASM, licences, fixtures and boundaries remain checked.
 Manual CI can name a source PR with the `pr_number` workflow input.
 
 A `pull_request` run starts before its receipt exists, because publication follows the push that
@@ -86,11 +83,10 @@ checks. An intentionally omitted OS cannot satisfy an obsolete per-platform requ
 Preserve the repository's existing authorized sync push access when configuring that rule.
 
 On integration, a merged PR's report is reusable only for an identical source tree. The no-PR
-sync — an upstream-sync merge pushed straight to the fork's `master` (owner decision
-2026-11-04), and the same flow toward upstream — uses `check --scope full --staged-merge`,
-`sync-trailer` before commit and `verify-sync` before push. The one-line commit receipt binds
-the staged tree and both actual merge parents. Do not hand-edit receipts. Release packaging and
-cold release coverage remain unchanged.
+upstream sync uses `check --scope full --staged-merge`, `sync-trailer` before commit and
+`verify-sync` before push. The one-line commit receipt binds the staged tree and both actual
+merge parents. Do not hand-edit receipts. Release packaging and cold release coverage remain
+unchanged.
 
 The artifact builder uses `ci-archive --output DIR`; it supervises doctests and ships the
 matching native gate executable beside the archive. `ci-test --archive PATH --partition I/N
