@@ -1404,6 +1404,7 @@ mod tests {
 
     use super::*;
 
+    #[cfg(not(target_os = "macos"))]
     fn controls_frame(
         ctx: &egui::Context,
         maximize: bool,
