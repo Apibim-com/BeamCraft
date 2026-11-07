@@ -1234,20 +1234,20 @@ impl App {
             if theme::icon_toggle(
                 ui,
                 theme::Icon::NewFolder,
-                "New folder in the kind of the selected view",
+                "New folder (inside the selected view's folder)",
                 self.views.new_folder,
             )
             .clicked()
             {
-                let kind = self
+                let parent = self
                     .views
                     .selected
                     .iter()
                     .next()
                     .and_then(|id| self.views.book.get(id))
-                    .map_or(crate::views::ViewKind::Plan, crate::views::view_kind);
+                    .map_or_else(String::new, |view| view.folder.clone());
                 self.views.new_folder = !self.views.new_folder;
-                self.views.folder_parent = (kind, String::new());
+                self.views.folder_parent = parent;
                 self.views.destination.clear();
             }
             let filtering = self.views.quick_access || self.views.favorites_only;
@@ -1289,12 +1289,12 @@ impl App {
             });
         }
         if self.views.new_folder {
-            let (kind, parent) = self.views.folder_parent.clone();
+            let parent = self.views.folder_parent.clone();
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 2.0;
                 theme::icon(ui, theme::Icon::Folder, 16.0, palette.muted);
                 let place = if parent.is_empty() {
-                    kind.label().to_owned()
+                    "the top level".to_owned()
                 } else {
                     parent.clone()
                 };
@@ -1309,7 +1309,7 @@ impl App {
                     || enter
                 {
                     let name = self.views.destination.trim().to_owned();
-                    let folder = crate::views::new_folder_path(kind, &parent, &name);
+                    let folder = crate::views::new_folder_path(&parent, &name);
                     match self.views.book.create_folder(&folder) {
                         Ok(()) => {
                             self.views.new_folder = false;
@@ -1327,10 +1327,7 @@ impl App {
         ui.separator();
         let tree = self.views.browser_tree();
         let home = self.views.browser_home();
-        let order: Vec<Uuid7> = home
-            .into_iter()
-            .chain(tree.iter().flat_map(|(_, node)| node.all_views()))
-            .collect();
+        let order: Vec<Uuid7> = home.into_iter().chain(tree.all_views()).collect();
         let mut actions: Vec<BrowserAction> = Vec::new();
         let mut budget = true;
         let confirm = self.views.confirm_delete;
@@ -1365,14 +1362,37 @@ impl App {
                         });
                     });
                 }
-                for (kind, node) in &tree {
-                    // Like Revit's browser, a kind with nothing in it is left out.
-                    if node.all_views().is_empty() && node.folders.is_empty() {
-                        continue;
-                    }
+                // The top level: the folders, then the views no folder holds, lined up with the
+                // folders' names so a view's icon sits under a folder's icon.
+                for folder in &tree.folders {
                     listed = true;
-                    self.browser_folder(ui, *kind, node, 0, &ctx, &mut actions, &mut budget);
+                    self.browser_folder(ui, folder, &ctx, &mut actions, &mut budget);
                 }
+                for view_id in &tree.views {
+                    if let Some(view) = self.views.book.get(view_id).cloned() {
+                        listed = true;
+                        ui.horizontal(|ui| {
+                            ui.add_space(crate::kit::CHEVRON - ui.spacing().item_spacing.x);
+                            ui.vertical(|ui| {
+                                self.browser_view_row(ui, &view, &ctx, &mut actions, &mut budget);
+                            });
+                        });
+                    }
+                }
+                // The free space under the list takes a dropped view out of its folder.
+                let rest = ui.allocate_response(
+                    egui::vec2(ui.available_width(), ui.available_height().max(24.0)),
+                    egui::Sense::hover(),
+                );
+                if let Some(view) = rest.dnd_release_payload::<Uuid7>() {
+                    actions.push(BrowserAction::Move(*view, String::new()));
+                }
+                rest.context_menu(|ui| {
+                    if ui.button("New folder…").clicked() {
+                        actions.push(BrowserAction::NewFolder(String::new()));
+                        ui.close();
+                    }
+                });
                 if !listed && !self.views.book.views().is_empty() {
                     ui.label(
                         egui::RichText::new("No views match.")
@@ -1406,38 +1426,26 @@ impl App {
             ui.colored_label(palette.error, note);
         }
     }
-    /// One node of the browser tree, collapsible: a view kind at `depth` 0 or a folder below it,
-    /// with its subfolders and its views. A view dropped on the node's header moves into it;
+    /// One folder of the browser tree, collapsible, with its subfolders and its views. A view dropped on the node's header moves into it;
     /// its menu makes a folder inside it, opens or closes everything in it, and deletes it when
     /// it is an empty folder.
     #[allow(clippy::too_many_arguments)]
     fn browser_folder(
         &mut self,
         ui: &mut egui::Ui,
-        kind: crate::views::ViewKind,
         node: &crate::views::FolderNode,
-        depth: usize,
         ctx: &BrowserContext<'_>,
         actions: &mut Vec<BrowserAction>,
         budget: &mut bool,
     ) {
         let palette = theme::Palette::current(ui);
-        let salt = if depth == 0 {
-            format!("view-kind-{}", kind.label())
-        } else {
-            format!("view-folder-{}-{}", kind.label(), node.stored)
-        };
+        let salt = format!("view-folder-{}", node.stored);
         let id = ui.make_persistent_id(salt);
         let all = node.all_views();
         let mut toggle = false;
         let dragging = egui::DragAndDrop::has_payload_of_type::<Uuid7>(ui.ctx());
         let (node_ui, header_row, ()) = crate::kit::TreeNode::header(ui, id, true, |ui| {
-            let icon = if depth == 0 {
-                kind.icon()
-            } else {
-                theme::Icon::Folder
-            };
-            theme::icon(ui, icon, 16.0, palette.text);
+            theme::icon(ui, theme::Icon::Folder, 16.0, palette.muted);
             let name = ui.add(
                 egui::Label::new(
                     egui::RichText::new(node.name.as_str())
@@ -1452,7 +1460,7 @@ impl App {
             toggle = name.clicked();
             name.context_menu(|ui| {
                 if ui.button("New folder…").clicked() {
-                    actions.push(BrowserAction::NewFolder(kind, node.stored.clone()));
+                    actions.push(BrowserAction::NewFolder(node.stored.clone()));
                     ui.close();
                 }
                 if !all.is_empty() {
@@ -1465,7 +1473,7 @@ impl App {
                         ui.close();
                     }
                 }
-                if depth > 0 && all.is_empty() && ui.button("Delete empty folder").clicked() {
+                if all.is_empty() && ui.button("Delete empty folder").clicked() {
                     actions.push(BrowserAction::DeleteFolder(node.stored.clone()));
                     ui.close();
                 }
@@ -1473,9 +1481,9 @@ impl App {
         });
         node_ui.body(ui, |ui| {
             for folder in &node.folders {
-                self.browser_folder(ui, kind, folder, depth + 1, ctx, actions, budget);
+                self.browser_folder(ui, folder, ctx, actions, budget);
             }
-            if depth > 0 && all.is_empty() {
+            if all.is_empty() {
                 ui.label(
                     egui::RichText::new("Empty folder")
                         .size(11.0)
@@ -1610,9 +1618,9 @@ impl App {
                 }
             }
             BrowserAction::Activate(id) => self.open_view_at(id, None),
-            BrowserAction::NewFolder(kind, parent) => {
+            BrowserAction::NewFolder(parent) => {
                 self.views.new_folder = true;
-                self.views.folder_parent = (kind, parent);
+                self.views.folder_parent = parent;
                 self.views.destination.clear();
             }
             BrowserAction::ApplyPreset(id, name) => {
@@ -3414,7 +3422,7 @@ pub(crate) enum BrowserAction {
     Favorite(Uuid7),
     SetDefault(Uuid7),
     Duplicate(Uuid7),
-    NewFolder(crate::views::ViewKind, String),
+    NewFolder(String),
     ApplyPreset(Uuid7, String),
     SavePreset(Uuid7),
     Close(Uuid7),

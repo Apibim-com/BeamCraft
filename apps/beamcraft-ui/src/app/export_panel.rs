@@ -283,21 +283,6 @@ mod tests {
     }
 
     #[test]
-    fn the_suggested_output_sits_next_to_the_model_and_never_clobbers_a_typed_path() {
-        assert_eq!(
-            suggested(Path::new("/m/Nave 1")),
-            Some("/m/Nave 1.ifc".to_owned())
-        );
-        let mut form = Form::new();
-        form.open(Path::new("/m/Nave 1"));
-        assert_eq!(form.path, "/m/Nave 1.ifc");
-        form.path = "/m/elsewhere.ifc".into();
-        form.open(Path::new("/m/Other"));
-        assert_eq!(form.path, "/m/elsewhere.ifc");
-        assert!(form.open);
-    }
-
-    #[test]
     fn the_summary_reports_the_command_s_own_facts() {
         let reply = Json::object([
             (

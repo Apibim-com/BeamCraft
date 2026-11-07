@@ -143,12 +143,12 @@ fn act_step() -> Result<String, String> {
     ))
 }
 
-/// The browser tree lists the kinds and the folders inside them.
+/// The browser tree lists the views in their folders, the default view on its own.
 fn hud_step() -> Result<String, String> {
     let mut views = Views::default();
     let err = |e: beamcraft_model::command::CommandError| e.to_string();
     let mut plan = ModelView::new(id(1)?, "Level 1", WorkPlane::default(), 12_000.0);
-    plan.folder = new_folder_path(ViewKind::Plan, "", "Levels");
+    plan.folder = new_folder_path("", "Levels");
     let mut section = ModelView::new(
         id(2)?,
         "Section A",
@@ -162,30 +162,29 @@ fn hud_step() -> Result<String, String> {
         views.book.insert(view).map_err(err)?;
     }
     let tree = views.browser_tree();
-    let listed: Vec<String> = tree
+    let folders: Vec<&str> = tree.folders.iter().map(|f| f.name.as_str()).collect();
+    let levels = tree
+        .folders
         .iter()
-        .filter(|(_, node)| !node.all_views().is_empty())
-        .map(|(kind, node)| {
-            let folders: Vec<&str> = node.folders.iter().map(|f| f.name.as_str()).collect();
-            if folders.is_empty() {
-                kind.label().to_owned()
-            } else {
-                format!("{} ({})", kind.label(), folders.join(", "))
-            }
-        })
+        .any(|f| f.name == "Levels" && f.views.len() == 1);
+    let kinds: Vec<ViewKind> = tree
+        .all_views()
+        .iter()
+        .filter_map(|id| views.book.get(id))
+        .map(crate::views::view_kind)
         .collect();
-    let plans = tree
-        .iter()
-        .find(|(k, _)| *k == ViewKind::Plan)
-        .map(|(_, n)| {
-            n.folders
-                .iter()
-                .any(|f| f.name == "Levels" && f.views.len() == 1)
-        });
-    if listed.len() != 2 || plans != Some(true) {
-        return Err(format!("the browser lists {listed:?}"));
+    if !levels
+        || tree.views.len() != 1
+        || views.browser_home().is_none()
+        || kinds != [ViewKind::Plan, ViewKind::Vertical]
+    {
+        return Err(format!("the browser lists folders {folders:?}"));
     }
-    Ok(format!("the browser lists {}", listed.join(", ")))
+    Ok(format!(
+        "the browser lists the default view, the folders {} and {} loose view",
+        folders.join(", "),
+        tree.views.len()
+    ))
 }
 
 /// Runs every step and returns the report.

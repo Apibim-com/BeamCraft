@@ -691,23 +691,12 @@ impl FolderNode {
     }
 }
 
-/// The shown folder path of `stored` under `kind`: a path that starts with the kind's own
-/// label (`Plans/Level 1`) is listed without it, as a folder made under that kind.
-fn shown_path(stored: &str, kind: ViewKind) -> Option<&str> {
-    let label = kind.label();
-    if stored == label {
-        return Some("");
-    }
-    stored
-        .strip_prefix(label)
-        .and_then(|rest| rest.strip_prefix('/'))
-}
-
-/// The stored path a new folder `name` gets inside `parent` (a stored path) under `kind`.
-pub fn new_folder_path(kind: ViewKind, parent: &str, name: &str) -> String {
+/// The stored path a new folder `name` gets inside `parent` (a stored path; empty for the top
+/// level of the browser).
+pub fn new_folder_path(parent: &str, name: &str) -> String {
     let name = name.trim();
     if parent.is_empty() {
-        format!("{}/{name}", kind.label())
+        name.to_owned()
     } else {
         format!("{parent}/{name}")
     }
@@ -801,8 +790,8 @@ pub struct Views {
     /// The filter editor: the filter being edited (a working copy) and the name it was saved
     /// under (`None` for a new one).
     pub filter_edit: Option<(beamcraft_engine::views::ViewFilter, Option<String>)>,
-    /// Where the new folder goes: the view kind and the stored path of its parent folder.
-    pub folder_parent: (ViewKind, String),
+    /// Where the new folder goes: the stored path of its parent folder, empty for the top level.
+    pub folder_parent: String,
     /// A delete waiting for confirmation.
     pub confirm_delete: Option<Uuid7>,
     /// A store-backed construction running in the CLI.
@@ -900,57 +889,29 @@ impl Views {
             .map(|view| view.id)
     }
 
-    /// The browser tree: one node per view kind in kind order (plans, elevations and
-    /// sections, inclined views: the orientation of each view's plane), each holding the
-    /// folders of its views and the views; the default view is not in it ([`Self::browser_home`]).
-    /// A folder made under a kind is stored with the kind's label first and listed without it;
-    /// an empty folder is listed under its kind, or under Plans when its path names none. Empty
+    /// The browser tree: the views in their folders, as Revit's project browser lists views
+    /// when it is organised by folder. The kind of a view (plan, elevation or section,
+    /// inclined) shows as its icon, not as a group; the default view is not in the tree
+    /// ([`Self::browser_home`]). Folders come first, then the views, each by name. Empty
     /// folders are hidden while a search or switch filters the list.
-    pub fn browser_tree(&self) -> Vec<(ViewKind, FolderNode)> {
+    pub fn browser_tree(&self) -> FolderNode {
         let filtering = !self.search.trim().is_empty() || self.favorites_only || self.quick_access;
-        let mut out = Vec::new();
-        for kind in ViewKind::ALL {
-            let mut root = FolderNode::new(kind.label(), String::new());
-            for view in self.book.views() {
-                // The default view heads the browser on its own row, above the kinds.
-                if view.is_default || view_kind(view) != kind || !self.listed(view) {
-                    continue;
-                }
-                let (shown, prefix) = match shown_path(&view.folder, kind) {
-                    Some(rest) => (rest, kind.label()),
-                    None => (view.folder.as_str(), ""),
-                };
-                let path: Vec<&str> = shown.split('/').filter(|s| !s.is_empty()).collect();
-                root.place(&path, prefix, Some(view.id));
+        let mut root = FolderNode::new("Views", String::new());
+        for view in self.book.views() {
+            if view.is_default || !self.listed(view) {
+                continue;
             }
-            if !filtering {
-                for folder in self.book.folders() {
-                    let named = ViewKind::ALL
-                        .iter()
-                        .find_map(|k| shown_path(folder, *k).map(|rest| (*k, rest)));
-                    let (shown, prefix) = match named {
-                        Some((k, rest)) if k == kind => (rest, kind.label()),
-                        Some(_) => continue,
-                        // A folder whose path names no kind is listed where its views are; an
-                        // empty one under Plans, so it can still be found and deleted.
-                        None if kind == ViewKind::Plan
-                            && !self.book.views().iter().any(|v| {
-                                beamcraft_engine::views::folder_within(&v.folder, folder)
-                            }) =>
-                        {
-                            (folder, "")
-                        }
-                        None => continue,
-                    };
-                    // Only the folder's own path, not its ancestors already listed.
-                    let path: Vec<&str> = shown.split('/').filter(|s| !s.is_empty()).collect();
-                    root.place(&path, prefix, None);
-                }
-            }
-            root.sort(&self.book);
-            out.push((kind, root));
+            let path: Vec<&str> = view.folder.split('/').filter(|s| !s.is_empty()).collect();
+            root.place(&path, "", Some(view.id));
         }
-        out
+        if !filtering {
+            for folder in self.book.folders() {
+                let path: Vec<&str> = folder.split('/').filter(|s| !s.is_empty()).collect();
+                root.place(&path, "", None);
+            }
+        }
+        root.sort(&self.book);
+        root
     }
 
     /// Applies a browser click: plain selects one, Ctrl toggles, Shift extends from the anchor
@@ -1153,7 +1114,7 @@ mod tests {
     }
 
     #[test]
-    fn the_browser_groups_views_by_plane_with_the_default_on_its_own() {
+    fn the_browser_lists_views_by_name_with_their_kind_and_the_default_on_its_own() {
         use beamcraft_engine::work_plane::WorkPlane;
         let mut views = Views::default();
         let mut home = view(1, "Z home", "");
@@ -1174,33 +1135,30 @@ mod tests {
             views.book.insert(v).unwrap();
         }
         let tree = views.browser_tree();
-        let names: Vec<(&str, Vec<String>)> = tree
+        // No grouping by kind: one list by name, each view's kind shown by its icon.
+        let names: Vec<(String, ViewKind)> = tree
+            .views
             .iter()
-            .map(|(kind, node)| {
-                (
-                    kind.label(),
-                    node.views
-                        .iter()
-                        .map(|id| views.book.get(id).unwrap().name.clone())
-                        .collect(),
-                )
+            .map(|id| {
+                let view = views.book.get(id).unwrap();
+                (view.name.clone(), view_kind(view))
             })
             .collect();
         assert_eq!(
             names,
             [
-                ("Plans", vec!["A plan".to_owned(), "B spatial".into()]),
-                (
-                    "Elevations & sections",
-                    vec!["Elevation".to_owned(), "Section A".into()]
-                ),
-                ("Inclined", vec!["Roof".to_owned()]),
+                ("A plan".to_owned(), ViewKind::Plan),
+                ("B spatial".to_owned(), ViewKind::Plan),
+                ("Elevation".to_owned(), ViewKind::Vertical),
+                ("Roof".to_owned(), ViewKind::Inclined),
+                ("Section A".to_owned(), ViewKind::Vertical),
             ]
         );
+        assert_eq!(views.browser_home(), Some(id(1)));
     }
 
     #[test]
-    fn the_browser_tree_nests_folders_under_their_kind_filters_and_selects() {
+    fn the_browser_tree_nests_folders_filters_and_selects() {
         let mut views = Views::default();
         views
             .book
@@ -1212,14 +1170,14 @@ mod tests {
         views.book.insert(fav).unwrap();
         views
             .book
-            .create_folder(&new_folder_path(ViewKind::Plan, "", "Level 2"))
+            .create_folder(&new_folder_path("Plans", "Level 2"))
             .unwrap();
         views
             .book
-            .create_folder(&new_folder_path(ViewKind::Vertical, "", "Grid A"))
+            .create_folder(&new_folder_path("", "Grid A"))
             .unwrap();
         let tree = views.browser_tree();
-        let plans = &tree[0].1;
+        let plans = &tree.folders[2];
         let folders: Vec<(&str, &str, usize)> = plans
             .folders
             .iter()
@@ -1228,24 +1186,22 @@ mod tests {
         assert_eq!(
             folders,
             [
-                ("Archive", "Archive", 1),
                 ("Level 1", "Plans/Level 1", 1),
                 ("Level 2", "Plans/Level 2", 0),
             ]
         );
-        assert_eq!(plans.views, [id(2)]);
-        assert_eq!(plans.all_views().len(), 3);
-        // The empty folder made under the vertical kind is listed there only.
-        assert_eq!(tree[1].1.folders.len(), 1);
-        assert!(tree[2].1.folders.is_empty());
+        let top: Vec<&str> = tree.folders.iter().map(|f| f.name.as_str()).collect();
+        assert_eq!(top, ["Archive", "Grid A", "Plans"], "folders by name");
+        assert_eq!(tree.views, [id(2)]);
+        assert_eq!(tree.all_views().len(), 3);
         views.favorites_only = true;
-        assert_eq!(views.browser_tree()[0].1.all_views(), [id(3)]);
+        assert_eq!(views.browser_tree().all_views(), [id(3)]);
         views.favorites_only = false;
         views.search = "PLAN".into();
         let found = views.browser_tree();
-        assert_eq!(found[0].1.all_views().len(), 3);
+        assert_eq!(found.all_views().len(), 3);
         assert!(
-            found[0].1.folders.iter().all(|f| !f.all_views().is_empty()),
+            found.folders.iter().all(|f| !f.all_views().is_empty()),
             "empty folders hide"
         );
         // Plain, Ctrl and Shift clicks.

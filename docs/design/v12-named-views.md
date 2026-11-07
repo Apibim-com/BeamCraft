@@ -104,19 +104,20 @@ leave the view's scene and cannot be picked (`views::pick_visible_except`).
 
 ## Window
 
-* The project browser is a tree by the orientation of each view's plane: Plans (horizontal),
-  Elevations & sections (vertical; a section is one with a limited depth) and Inclined. Every
-  view can be orbited in 3D, so 3D is a way of looking, not a kind, and a view keeps its kind
-  while it is orbited. The default view heads the tree on its own row, with a house icon.
-  Each kind holds its folders and views; a kind with nothing in it is left out. A folder made under a kind (its menu's New folder…, or the toolbar for the selected
-  view's kind) is stored as `<kind label>/<name>` and listed inside the kind without the label;
-  an empty folder whose path names no kind is listed under Plans. A click selects a view and
-  shows its properties, a double click opens it as a tab, Ctrl and Shift extend the selection,
-  and a view dragged onto a kind or folder moves there; dragged into the work area it opens
+* The project browser is a tree of folders, as Revit's browser organised by folder: the
+  default view heads it on its own row with a house icon, then the folders and the views, each
+  by name. A view's kind is the orientation of its plane, shown by its icon: plan
+  (horizontal), elevation or section (vertical; a section has a limited depth) or inclined.
+  Every view can be orbited in 3D, so 3D is a way of looking, not a kind. A new folder (a
+  folder's menu, the free space's menu, or the toolbar inside the selected view's folder) is
+  stored as `<parent>/<name>`. A click selects a view and shows its properties, a double click
+  opens it as a tab, Ctrl and Shift extend the selection, a view dragged onto a folder moves
+  into it and onto the free space under the list moves out to the top level; dragged into the
+  work area it opens
   where it is dropped. A view's menu: Open, Open beside, Properties, Duplicate, Apply view
   preset, Save as view preset, favourite, Make default, Close, Delete with confirmation; a
   folder's: New folder…, Open all, Close all, Delete empty folder. Search, quick access,
-  favourites only and previews filter the tree; the default view is marked with a house.
+  favourites only and previews (the filter menu) filter the tree.
 * The View tab: Create view (an icon dropdown of every construction),
   3D / plane (Ctrl+P, shown in its tooltip),
   Direction (top, bottom, front, back, left, right: the camera turns, the input plane stays),
