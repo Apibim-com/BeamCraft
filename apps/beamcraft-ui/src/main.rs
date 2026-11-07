@@ -14,8 +14,19 @@
 //! `beamcraft-ui --synthetic COUNT --metrics FRAMES [--width W] [--height H]` measures the engine
 //! snapshot of COUNT synthetic kernel plates instead of a store (labelled `synthetic` in the
 //! output); it exists for scale baselines a store cannot reach yet.
+//! `beamcraft-ui --store ROOT --screenshot FILE [--width W] [--height H] [--yaw RAD]
+//! [--pitch RAD] [--projection perspective|ortho] [--zoom F32] [--pan X,Y]
+//! [--colour-set TEXT] [--background light|dark] [--cli PATH]` renders the
+//! store's published head once offscreen with the camera fitted over the whole scene and writes
+//! `FILE` as a PNG (created new, never overwritten), printing one JSON summary; `--yaw` and
+//! `--pitch` (radians, `pitch` above the horizon) point the fitted camera from another
+//! direction, `--projection ortho` switches to the orthographic projection, `--zoom` is the
+//! logarithmic zoom and `--pan X,Y` shifts the fitted target in screen-plane millimetres;
+//! `--colour-set` names a built-in set (`Catalogue`, the default, or `Part classes`) or a
+//! colour-sets file holding exactly one set of its own, and `--background light` renders over
+//! a light paper tone instead of the dark clear colour (issue 537).
 //! `--samples 1|4` overrides the viewport's MSAA default (4x on a hardware adapter that supports
-//! it, 1x on a software one) in the window and in `--metrics`.
+//! it, 1x on a software one) in the window, in `--metrics` and in `--screenshot`.
 //! `... --perf-run PLAN` opens the window as above, runs the scripted measurement `PLAN` in it
 //! (see `beamcraft_ui::perf`), prints its report as one JSON object and closes; the exit status
 //! is 1 when a phase failed.
@@ -27,25 +38,27 @@ use beamcraft_ui::app::{App, Source, load_icon};
 use beamcraft_ui::scene::Scene;
 use beamcraft_ui::shell::Shell;
 use beamcraft_ui::stats::Stats;
-use beamcraft_ui::{Error, json_string, metrics, perf, source};
+use beamcraft_ui::{Error, colour_sets, json_string, metrics, perf, screenshot, source};
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 fn usage() -> Error {
     Error::Input(
-        "usage: beamcraft-ui [--cli PATH] [--config-dir DIR] [--samples 1|4] (start page) | beamcraft-ui (--store ROOT | --workspace DIR [--published ROOT]) [--actor-id UUID] [--cli PATH] [--config-dir DIR] [--samples 1|4] [--metrics FRAMES [--width W] [--height H] | --perf-run PLAN | --screenshot FILE.png] | --self-test FILE.json | --synthetic COUNT --metrics FRAMES [--samples 1|4]",
+        "usage: beamcraft-ui [--cli PATH] [--config-dir DIR] [--samples 1|4] (start page) | beamcraft-ui (--store ROOT | --workspace DIR [--published ROOT]) [--actor-id UUID] [--cli PATH] [--config-dir DIR] [--samples 1|4] [--metrics FRAMES [--width W] [--height H] | --screenshot FILE [--width W] [--height H] [--yaw RAD] [--pitch RAD] [--projection perspective|ortho] [--zoom F32] [--pan X,Y] [--colour-set TEXT] [--background light|dark] | --window-shot FILE.png | --perf-run PLAN] | --self-test FILE.json | --synthetic COUNT --metrics FRAMES [--samples 1|4]",
     )
 }
 
 fn options() -> Result<BTreeMap<String, String>, Error> {
     let args: Vec<String> = std::env::args_os()
         .skip(1)
-        .take(17)
+        .take(29)
         .map(|a| a.into_string().map_err(|_| usage()))
         .collect::<Result<_, _>>()?;
-    if !args.len().is_multiple_of(2) || args.len() > 16 {
+    if !args.len().is_multiple_of(2) || args.len() > 28 {
         return Err(usage());
     }
     let mut map = BTreeMap::new();
@@ -65,9 +78,17 @@ fn options() -> Result<BTreeMap<String, String>, Error> {
                 | "--synthetic"
                 | "--perf-run"
                 | "--samples"
+                | "--screenshot"
+                | "--yaw"
+                | "--pitch"
+                | "--projection"
+                | "--zoom"
+                | "--pan"
+                | "--colour-set"
+                | "--background"
                 | "--config-dir"
                 | "--actor-id"
-                | "--screenshot"
+                | "--window-shot"
                 | "--self-test"
         );
         if !known || value.len() > 4096 || map.insert(key.clone(), value.clone()).is_some() {
@@ -105,8 +126,13 @@ fn run() -> Result<Option<(String, u8)>, Error> {
             if passed { 0 } else { 1 },
         )));
     }
-    if let Some(path) = map.get("--screenshot") {
-        if map.contains_key("--metrics") || map.contains_key("--perf-run") {
+    // The window's own picture after it settled (the start page or a model), unlike
+    // `--screenshot`, which renders the model alone.
+    if let Some(path) = map.get("--window-shot") {
+        if map.contains_key("--metrics")
+            || map.contains_key("--perf-run")
+            || map.contains_key("--screenshot")
+        {
             return Err(usage());
         }
         let _ = SHOT.set((
@@ -169,6 +195,7 @@ fn run() -> Result<Option<(String, u8)>, Error> {
         (None, None)
             if !map.contains_key("--metrics")
                 && !map.contains_key("--perf-run")
+                && !map.contains_key("--screenshot")
                 && !map.contains_key("--actor-id") =>
         {
             start_page(
@@ -182,7 +209,12 @@ fn run() -> Result<Option<(String, u8)>, Error> {
         _ => return Err(usage()),
     };
     if map.contains_key("--metrics") {
-        if map.contains_key("--perf-run") || config_dir.is_some() {
+        if map.contains_key("--perf-run")
+            || map.contains_key("--screenshot")
+            || map.contains_key("--yaw")
+            || map.contains_key("--pitch")
+            || config_dir.is_some()
+        {
             return Err(usage());
         }
         let frames = number(&map, "--metrics", 300)?;
@@ -196,6 +228,135 @@ fn run() -> Result<Option<(String, u8)>, Error> {
             metrics::measure(&scene, frames, size, samples, &stats)?.to_json(),
             0,
         )));
+    }
+    if let Some(out) = map.get("--screenshot") {
+        if map.contains_key("--perf-run")
+            || map.contains_key("--actor-id")
+            || config_dir.is_some()
+            || workspace.is_some()
+            || published.is_some()
+        {
+            return Err(usage());
+        }
+        let size = [
+            number(&map, "--width", 1280)?,
+            number(&map, "--height", 800)?,
+        ];
+        let angles = match (map.get("--yaw"), map.get("--pitch")) {
+            (None, None) => None,
+            (yaw, pitch) => {
+                let yaw: f32 = yaw
+                    .map(|v| v.parse())
+                    .transpose()
+                    .map_err(|_| usage())?
+                    .unwrap_or(0.0);
+                let pitch: f32 = pitch
+                    .map(|v| v.parse())
+                    .transpose()
+                    .map_err(|_| usage())?
+                    .unwrap_or(0.0);
+                if !yaw.is_finite()
+                    || !pitch.is_finite()
+                    || !(0.0..=1.52).contains(&pitch)
+                    || yaw.abs() > 1e6
+                {
+                    return Err(usage());
+                }
+                Some((yaw, pitch))
+            }
+        };
+        let ortho = match map.get("--projection").map(String::as_str) {
+            None => false,
+            Some("perspective") => false,
+            Some("ortho") => true,
+            Some(_) => return Err(usage()),
+        };
+        let zoom: f32 = map
+            .get("--zoom")
+            .map(|v| v.parse())
+            .transpose()
+            .map_err(|_| usage())?
+            .unwrap_or(0.0);
+        let pan = match map.get("--pan") {
+            None => [0.0; 2],
+            Some(text) => {
+                let parts: Vec<f32> = text
+                    .split(',')
+                    .map(|v| v.parse())
+                    .collect::<Result<_, _>>()
+                    .map_err(|_| usage())?;
+                let [x, y] = parts.as_slice() else {
+                    return Err(usage());
+                };
+                if !x.is_finite() || !y.is_finite() {
+                    return Err(usage());
+                }
+                [*x, *y]
+            }
+        };
+        if !zoom.is_finite() || zoom.abs() > 10.0 {
+            return Err(usage());
+        }
+        let background = match map.get("--background").map(String::as_str) {
+            None | Some("dark") => screenshot::Background::Dark,
+            Some("light") => screenshot::Background::Light,
+            Some(_) => return Err(usage()),
+        };
+        let snapshot = source::load(&cli, &store, &stats)?;
+        // The default catalogue colours ride the screenshot (issue 535): the same tints the
+        // window gives a freshly opened model, evaluated by the window's own path. A
+        // `--colour-set` names a built-in preset or a colour-sets file holding exactly one
+        // set of its own (issue 537); the set is evaluated by the same path the window uses,
+        // and a headless screenshot reads no colour-sets file on its own.
+        let set = match map.get("--colour-set").map(String::as_str) {
+            None | Some(colour_sets::CATALOGUE_SET_NAME) => colour_sets::catalogue_set(),
+            Some(colour_sets::CLASS_SET_NAME) => colour_sets::class_set(),
+            Some(path) => {
+                let bytes = std::fs::read(path)
+                    .map_err(|_| Error::Input("the colour-sets file could not be read"))?;
+                let sets = colour_sets::Sets::decode(&bytes).map_err(Error::Input)?;
+                let mut own = sets.list().iter().filter(|set| {
+                    set.name != colour_sets::CATALOGUE_SET_NAME
+                        && set.name != colour_sets::CLASS_SET_NAME
+                });
+                let Some(set) = own.next().cloned() else {
+                    return Err(Error::Input(
+                        "a colour-sets file must hold exactly one set of its own",
+                    ));
+                };
+                if own.next().is_some() {
+                    return Err(Error::Input(
+                        "a colour-sets file must hold exactly one set of its own",
+                    ));
+                }
+                set
+            }
+        };
+        let overlay = colour_sets::evaluate(&cli, &store, &set, &AtomicBool::new(false), &stats)
+            .map_err(Error::Cli)?;
+        let scene = Scene::from_snapshot_showing(
+            &snapshot,
+            Representation::Full,
+            &BTreeSet::new(),
+            Some(&overlay),
+            beamcraft_engine::KindFilter::SHOW_ALL,
+        )?;
+        let saved = screenshot::capture(
+            &scene,
+            Path::new(out),
+            size,
+            samples,
+            &screenshot::CameraPose {
+                angles,
+                ortho,
+                zoom,
+                pan,
+            },
+            background,
+            &stats,
+        )?
+        .to_json();
+        return Ok(Some((saved, 0)));
     }
     let plan = map.get("--perf-run").map(|p| perf::parse(p)).transpose()?;
     let (report, reports) = std::sync::mpsc::channel();
@@ -243,11 +404,11 @@ fn start_page(
     Ok(None)
 }
 
-/// The `--screenshot FILE` of this run: the file and where its outcome lands.
+/// The `--window-shot FILE` of this run: the file and where its outcome lands.
 static SHOT: std::sync::OnceLock<(PathBuf, beamcraft_ui::capture::Outcome)> =
     std::sync::OnceLock::new();
 
-/// The reply of a `--screenshot` run once its window closed.
+/// The reply of a `--window-shot` run once its window closed.
 fn shot_reply() -> Result<Option<(String, u8)>, Error> {
     let Some((path, outcome)) = SHOT.get() else {
         return Ok(None);
