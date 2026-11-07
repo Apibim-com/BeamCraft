@@ -708,7 +708,7 @@ impl App {
                                 pick = Some(b);
                             }
                         }
-                        tool_button(ui, Icon::Beam, "Brace", false, false);
+                        tool_button(ui, Icon::Brace, "Brace", false, false);
                     });
                     group(ui, "Connect", &mut |ui| {
                         if tool_button(ui, Icon::Bolt, "Bolts", bench == Bench::Bolt, true).clicked() {
@@ -869,7 +869,7 @@ impl App {
                     }
                     if matches!(self.ribbon_tab, RibbonTab::Steel | RibbonTab::View) {
                         group(ui, "Inspect", &mut |ui| {
-                            tool_button(ui, Icon::Plate, "Measure", false, false);
+                            tool_button(ui, Icon::Measure, "Measure", false, false);
                             if tool_button(ui, Icon::Fit, "Fit model", false, has_pane).clicked() {
                                 self.pending_fit = true;
                             }
