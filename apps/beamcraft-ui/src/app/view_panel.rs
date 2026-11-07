@@ -2516,7 +2516,7 @@ impl App {
             .is_some_and(|v| v.is_default);
         // The action bar keeps one height: the outcome goes to the status bar, so the buttons
         // stay pinned at the bottom whatever was said.
-        let footer = 90.0;
+        let footer = 40.0;
         let header = {
             let shown = self.views.form.id.and_then(|id| self.views.book.get(&id));
             let kind = shown.map(crate::views::view_kind);
@@ -3116,7 +3116,7 @@ impl App {
             d.insert_temp(display_id, display_open);
             d.insert_temp(scheme_id, scheme_open);
         });
-        ui.add_space(8.0);
+        ui.add_space(4.0);
         let mut cancel = false;
         // A saved view changes only on Apply; the buttons wake up with the first edit.
         let dirty = self
