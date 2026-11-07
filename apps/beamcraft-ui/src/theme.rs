@@ -569,6 +569,22 @@ pub enum Icon {
     InclinedView,
     /// A funnel: filter what a list shows.
     Filter,
+    /// A box with its hidden edges dashed: the transparent display.
+    Transparent,
+    /// A box filled in one flat tone: the grey display.
+    GreyShaded,
+    /// A box with lit and shadowed faces: the shaded display.
+    Shaded,
+    /// A dashed box around one solid part: only the selection is drawn.
+    SelectedOnly,
+    /// A palette with three paint wells: colour by a colour set.
+    Palette,
+    /// A box with a plane slicing through it: the cut plane.
+    CutPlane,
+    /// Two frames side by side: open a view beside the active one.
+    Beside,
+    /// A frame with a cross and a frame behind it: close the other views.
+    CloseOthers,
     /// A page with a folded corner and text lines: a drawing sheet.
     Sheet,
     /// A table of rows and columns: a schedule.
@@ -940,6 +956,166 @@ pub fn paint_icon(painter: &Painter, rect: Rect, icon: Icon, line: Color32) {
             polyline(&[[6.0, 19.0], [6.0, 5.0], [18.0, 5.0], [18.0, 19.0]]);
             polyline(&[[3.0, 19.0], [21.0, 19.0]]);
             polyline(&[[6.0, 12.0], [18.0, 12.0]]);
+        }
+        Icon::Transparent => {
+            painter.add(egui::Shape::closed_line(
+                [
+                    [12.0, 3.0],
+                    [20.0, 7.5],
+                    [20.0, 16.5],
+                    [12.0, 21.0],
+                    [4.0, 16.5],
+                    [4.0, 7.5],
+                ]
+                .map(at)
+                .to_vec(),
+                stroke,
+            ));
+            polyline(&[[4.0, 7.5], [12.0, 12.0], [20.0, 7.5]]);
+            polyline(&[[12.0, 12.0], [12.0, 21.0]]);
+            // The hidden edges, seen through the faces.
+            painter.extend(egui::Shape::dashed_line(
+                &[at([4.0, 16.5]), at([12.0, 12.5]), at([20.0, 16.5])],
+                Stroke::new(stroke.width * 0.8, stroke.color),
+                2.0 * scale,
+                2.0 * scale,
+            ));
+            painter.extend(egui::Shape::dashed_line(
+                &[at([12.0, 3.0]), at([12.0, 12.5])],
+                Stroke::new(stroke.width * 0.8, stroke.color),
+                2.0 * scale,
+                2.0 * scale,
+            ));
+        }
+        Icon::GreyShaded => {
+            painter.add(egui::Shape::convex_polygon(
+                [
+                    [12.0, 3.0],
+                    [20.0, 7.5],
+                    [20.0, 16.5],
+                    [12.0, 21.0],
+                    [4.0, 16.5],
+                    [4.0, 7.5],
+                ]
+                .map(at)
+                .to_vec(),
+                stroke.color.gamma_multiply(0.3),
+                stroke,
+            ));
+            polyline(&[[4.0, 7.5], [12.0, 12.0], [20.0, 7.5]]);
+            polyline(&[[12.0, 12.0], [12.0, 21.0]]);
+        }
+        Icon::Shaded => {
+            let face = |points: &[[f32; 2]], tone: f32| {
+                painter.add(egui::Shape::convex_polygon(
+                    points.iter().map(|p| at(*p)).collect(),
+                    stroke.color.gamma_multiply(tone),
+                    stroke,
+                ));
+            };
+            face(&[[12.0, 3.0], [20.0, 7.5], [12.0, 12.0], [4.0, 7.5]], 0.15);
+            face(&[[4.0, 7.5], [12.0, 12.0], [12.0, 21.0], [4.0, 16.5]], 0.55);
+            face(
+                &[[12.0, 12.0], [20.0, 7.5], [20.0, 16.5], [12.0, 21.0]],
+                0.35,
+            );
+        }
+        Icon::SelectedOnly => {
+            painter.extend(egui::Shape::dashed_line(
+                &[
+                    [12.0, 3.0],
+                    [20.0, 7.5],
+                    [20.0, 16.5],
+                    [12.0, 21.0],
+                    [4.0, 16.5],
+                    [4.0, 7.5],
+                ]
+                .map(at)
+                .into_iter()
+                .chain([at([12.0, 3.0])])
+                .collect::<Vec<_>>(),
+                Stroke::new(stroke.width * 0.8, stroke.color),
+                2.0 * scale,
+                2.0 * scale,
+            ));
+            painter.add(egui::Shape::convex_polygon(
+                [
+                    [12.0, 8.5],
+                    [16.0, 10.75],
+                    [16.0, 15.25],
+                    [12.0, 17.5],
+                    [8.0, 15.25],
+                    [8.0, 10.75],
+                ]
+                .map(at)
+                .to_vec(),
+                stroke.color.gamma_multiply(0.6),
+                stroke,
+            ));
+        }
+        Icon::Palette => {
+            painter.add(egui::Shape::closed_line(
+                [
+                    [12.0, 3.5],
+                    [19.0, 6.5],
+                    [21.0, 12.5],
+                    [17.5, 18.5],
+                    [13.5, 17.0],
+                    [12.0, 20.5],
+                    [6.0, 19.0],
+                    [3.0, 12.5],
+                    [5.5, 6.5],
+                ]
+                .map(at)
+                .to_vec(),
+                stroke,
+            ));
+            for well in [[8.5, 10.0], [12.5, 7.5], [16.5, 10.5]] {
+                painter.circle_filled(at(well), 1.6 * scale, stroke.color);
+            }
+        }
+        Icon::CutPlane => {
+            painter.add(egui::Shape::closed_line(
+                [
+                    [12.0, 3.0],
+                    [20.0, 7.5],
+                    [20.0, 16.5],
+                    [12.0, 21.0],
+                    [4.0, 16.5],
+                    [4.0, 7.5],
+                ]
+                .map(at)
+                .to_vec(),
+                stroke,
+            ));
+            polyline(&[[4.0, 7.5], [12.0, 12.0], [20.0, 7.5]]);
+            polyline(&[[12.0, 12.0], [12.0, 21.0]]);
+            // The cutting plane, drawn across the box and past it.
+            painter.add(egui::Shape::convex_polygon(
+                [[1.5, 11.0], [12.0, 5.0], [22.5, 11.0], [12.0, 17.0]]
+                    .map(at)
+                    .to_vec(),
+                stroke.color.gamma_multiply(0.25),
+                Stroke::new(stroke.width, stroke.color),
+            ));
+        }
+        Icon::Beside => {
+            for (x0, x1) in [(3.0, 11.0), (13.0, 21.0)] {
+                polyline(&[[x0, 5.0], [x1, 5.0], [x1, 19.0], [x0, 19.0], [x0, 5.0]]);
+                polyline(&[[x0, 8.0], [x1, 8.0]]);
+            }
+        }
+        Icon::CloseOthers => {
+            polyline(&[[8.0, 3.0], [21.0, 3.0], [21.0, 15.0]]);
+            polyline(&[
+                [3.0, 7.0],
+                [17.0, 7.0],
+                [17.0, 21.0],
+                [3.0, 21.0],
+                [3.0, 7.0],
+            ]);
+            polyline(&[[7.0, 11.0], [13.0, 17.0]]);
+            polyline(&[[13.0, 11.0], [7.0, 17.0]]);
         }
         Icon::Filter => {
             polyline(&[

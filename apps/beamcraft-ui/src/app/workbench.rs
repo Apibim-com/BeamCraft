@@ -600,17 +600,58 @@ impl App {
                         }
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui
-                            .add(
-                                egui::Button::new(
-                                    RichText::new("Find a command")
-                                        .size(11.0)
-                                        .color(palette.muted),
-                                )
-                                .frame(false),
+                        // A search field look-alike that opens the command search; the shortcut
+                        // sits at its end, as a CAD command line advertises it.
+                        let shortcut = ui.ctx().format_shortcut(&egui::KeyboardShortcut::new(
+                            egui::Modifiers::COMMAND,
+                            egui::Key::K,
+                        ));
+                        let (rect, response) =
+                            ui.allocate_exact_size(vec2(220.0, 24.0), Sense::click());
+                        let painter = ui.painter();
+                        let hovered = response.hovered();
+                        painter.rect(
+                            rect,
+                            4,
+                            if hovered {
+                                palette.select
+                            } else {
+                                palette.head
+                            },
+                            Stroke::new(1.0, palette.rule),
+                            StrokeKind::Inside,
+                        );
+                        theme::paint_icon(
+                            painter,
+                            Rect::from_center_size(
+                                rect.left_center() + vec2(14.0, 0.0),
+                                vec2(14.0, 14.0),
+                            ),
+                            Icon::Search,
+                            palette.muted,
+                        );
+                        painter.text(
+                            rect.left_center() + vec2(28.0, 0.0),
+                            egui::Align2::LEFT_CENTER,
+                            "Find a command",
+                            egui::FontId::proportional(11.0),
+                            palette.muted,
+                        );
+                        painter.text(
+                            rect.right_center() - vec2(8.0, 0.0),
+                            egui::Align2::RIGHT_CENTER,
+                            shortcut,
+                            egui::FontId::proportional(10.0),
+                            palette.muted,
+                        );
+                        response.widget_info(|| {
+                            egui::WidgetInfo::labeled(
+                                egui::Role::SearchInput,
+                                true,
+                                "Find a command",
                             )
-                            .clicked()
-                        {
+                        });
+                        if response.on_hover_cursor(egui::CursorIcon::Text).clicked() {
                             self.command_search = true;
                             self.command_focus = true;
                         }
@@ -646,17 +687,18 @@ impl App {
                         ui.separator();
                     };
                     let bench = self.bench;
-                    if matches!(self.ribbon_tab, RibbonTab::Steel | RibbonTab::Edit) {
-                    group(ui, "Select", &mut |ui| {
+                                        // Select opens the first group of the Steel and Edit tabs rather than a
+                    // group of one button.
+                    let select = |ui: &mut Ui, pick: &mut Option<Bench>| {
                         if tool_button(ui, Icon::Select, "Select", matches!(bench, Bench::Select | Bench::View), edits_free)
                             .clicked()
                         {
-                            pick = Some(Bench::Select);
+                            *pick = Some(Bench::Select);
                         }
-                    });
-                    }
+                    };
                     if self.ribbon_tab == RibbonTab::Steel {
-                    group(ui, "Members", &mut |ui| {
+                                        group(ui, "Members", &mut |ui| {
+                        select(ui, &mut pick);
                         for (b, icon, label) in [
                             (Bench::Column, Icon::Column, "Column"),
                             (Bench::Beam, Icon::Beam, "Beam"),
@@ -678,7 +720,8 @@ impl App {
                     });
                     }
                     if self.ribbon_tab == RibbonTab::Edit {
-                    group(ui, "Modify", &mut |ui| {
+                                        group(ui, "Modify", &mut |ui| {
+                        select(ui, &mut pick);
                         for (b, icon, label) in [
                             (Bench::Move, Icon::Move, "Move"),
                             (Bench::Copy, Icon::Copy, "Copy"),
@@ -714,22 +757,24 @@ impl App {
                         {
                             self.toggle_view_plane();
                         }
-                        ui.add_enabled_ui(has_pane, |ui| {
-                            ui.menu_button("Direction", |ui| {
-                                for (direction, label) in crate::views::Direction::ALL {
-                                    if ui.button(label).clicked() {
-                                        self.orient_view(direction);
-                                        ui.close();
-                                    }
+                                                let mut direction = None;
+                        dropdown_button(ui, Icon::ElevationView, "Direction", has_pane, |ui| {
+                            for (towards, label) in crate::views::Direction::ALL {
+                                if ui.button(label).clicked() {
+                                    direction = Some(towards);
+                                    ui.close();
                                 }
-                            });
+                            }
                         });
+                        if let Some(towards) = direction {
+                            self.orient_view(towards);
+                        }
                     });
                     group(ui, "Windows", &mut |ui| {
-                        if tool_button(ui, Icon::Copy, "Open beside", false, has_pane && self.views.panes.len() < crate::views::MAX_WINDOWS).on_hover_text("Open the active view again in a new group on the right").clicked() {
+                        if tool_button(ui, Icon::Beside, "Open beside", false, has_pane && self.views.panes.len() < crate::views::MAX_WINDOWS).on_hover_text("Open the active view again in a new group on the right").clicked() {
                             self.open_beside(self.views.active());
                         }
-                        if tool_button(ui, Icon::Close, "Close inactive", false, self.views.panes.len() > 1).on_hover_text("Close every view tab but the active one").clicked() {
+                        if tool_button(ui, Icon::CloseOthers, "Close inactive", false, self.views.panes.len() > 1).on_hover_text("Close every view tab but the active one").clicked() {
                             self.close_inactive();
                         }
                         if tool_button(ui, Icon::ViewFrame, "Tab views", false, has_pane).on_hover_text("Every open view as a tab of one group").clicked() {
@@ -757,17 +802,33 @@ impl App {
                             }
                         });
                     });
-                    group(ui, "Display", &mut |ui| {
-                        for (mode, label) in [
-                            (beamcraft_engine::RenderMode::Wireframe, "Wireframe"),
-                            (beamcraft_engine::RenderMode::Transparent, "Transparent"),
-                            (beamcraft_engine::RenderMode::Grey, "Grey"),
-                            (beamcraft_engine::RenderMode::Shaded, "Shaded"),
-                            (beamcraft_engine::RenderMode::SelectedOnly, "Selected only"),
-                        ] {
-                            if tool_button(ui, Icon::Block, label, has_pane && self.active_mode() == mode, has_pane).clicked() {
-                                self.set_active_mode(mode);
+                                        group(ui, "Display", &mut |ui| {
+                        // The display modes in one dropdown, as a CAD view control shows the
+                        // visual style: its icon is the active pane's mode.
+                        let modes = [
+                            (beamcraft_engine::RenderMode::Wireframe, Icon::Wire, "Wireframe"),
+                            (beamcraft_engine::RenderMode::Transparent, Icon::Transparent, "Transparent"),
+                            (beamcraft_engine::RenderMode::Grey, Icon::GreyShaded, "Grey"),
+                            (beamcraft_engine::RenderMode::Shaded, Icon::Shaded, "Shaded"),
+                            (beamcraft_engine::RenderMode::SelectedOnly, Icon::SelectedOnly, "Selected only"),
+                        ];
+                        let active = self.active_mode();
+                        let shown = modes.iter().find(|(m, _, _)| *m == active).map_or(Icon::Shaded, |(_, icon, _)| *icon);
+                        let mut chosen = None;
+                        dropdown_button(ui, shown, "Visual style", has_pane, |ui| {
+                            for (mode, icon, label) in modes {
+                                let row = ui.horizontal(|ui| {
+                                    theme::icon(ui, icon, 16.0, Palette::current(ui).text);
+                                    ui.selectable_label(has_pane && active == mode, label)
+                                });
+                                if row.inner.clicked() {
+                                    chosen = Some(mode);
+                                    ui.close();
+                                }
                             }
+                        });
+                        if let Some(mode) = chosen {
+                            self.set_active_mode(mode);
                         }
                         if tool_button(ui, Icon::Grid, "Grid guides", self.grids_shown(), has_pane).clicked() {
                             let on = !self.grids_shown();
@@ -776,21 +837,21 @@ impl App {
                         }
                     });
                     group(ui, "Colour", &mut |ui| {
-                        if tool_button(ui, Icon::Select, "Filters", self.views.filter_edit.is_some(), true)
+                        if tool_button(ui, Icon::Filter, "Filters", self.views.filter_edit.is_some(), true)
                             .on_hover_text("Make and edit the filters a view shows, colours or hides")
                             .clicked()
                         {
                             let first = self.filter_choices().first().map(|f| f.name.clone());
                             self.open_filter_editor(first);
                         }
-                        if tool_button(ui, Icon::Block, "Colour", self.bench == Bench::Colour, true)
+                        if tool_button(ui, Icon::Palette, "Colour", self.bench == Bench::Colour, true)
                             .clicked()
                         {
                             pick = Some(Bench::Colour);
                         }
                     });
                     group(ui, "Cut", &mut |ui| {
-                        if tool_button(ui, Icon::Block, "Cut plane", self.bench == Bench::CutPlane, true).clicked() {
+                        if tool_button(ui, Icon::CutPlane, "Cut plane", self.bench == Bench::CutPlane, true).clicked() {
                             pick = Some(Bench::CutPlane);
                         }
                     });
@@ -831,10 +892,11 @@ impl App {
                                 self.drawing_manager.open = true;
                             }
                         });
-                        ui.vertical(|ui| {
-                            ui.label(theme::bold("Workspace", 13.0));
-                            ui.label("Publish from the header; inspect revision and navigation in Details.");
-                            if ui.button("Details").clicked() {
+                                                group(ui, "Workspace", &mut |ui| {
+                            if tool_button(ui, Icon::Recent, "Details", self.details, true)
+                                .on_hover_text("Revision, navigation and display settings; publish from the header")
+                                .clicked()
+                            {
                                 self.details = true;
                             }
                         });

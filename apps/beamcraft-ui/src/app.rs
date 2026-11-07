@@ -6486,11 +6486,13 @@ pub(crate) mod tests {
         assert_eq!(app.active_mode(), RenderMode::SelectedOnly);
         draw(&mut app, press(egui::Key::Num7, true));
         assert_eq!(app.active_mode(), RenderMode::Wireframe);
-        // The View tab's DISPLAY buttons set the same state a key press does.
+        // The View tab's Visual style dropdown sets the same state a key press does.
         let first = draw(&mut app, Vec::new());
         draw(&mut app, click(position(&first, "View")));
         let view_tab = draw(&mut app, Vec::new());
-        draw(&mut app, click(position(&view_tab, "Transparent")));
+        draw(&mut app, click(position(&view_tab, "Visual style")));
+        let menu = draw(&mut app, Vec::new());
+        draw(&mut app, click(position(&menu, "Transparent")));
         assert_eq!(app.active_mode(), RenderMode::Transparent);
     }
 
