@@ -22,12 +22,14 @@
 //! A14.3 extends the same pattern to the placed groups of the bolt amendment: a group is two
 //! points, a reference plane with rotation, position values, offsets and spacings over a pinned
 //! fastener definition. The placement decision ([`place_bolt_group`]) is pure and bounded; the
-//! reachability of a part stays a conservative box test like A05's, with the grip read as the
-//! union length of the shank axis inside the boxes. A14.4 adds the hole decision
-//! ([`generate_holes`]): with `hole_mode = generate` every connected plate takes one ordinary
-//! A04 hole record per crossing fastener, owned by the group; a member part refuses until the
-//! G14 contract lands, a plate with a rotated placement refuses with it, and `hole_mode = none`
-//! writes no part.
+//! reachability of a part stays a conservative box test like A05's, while the grip — the shank
+//! length that decides the bolt length — is read face-exactly from the parts' committed solids
+//! (the world triangles the adapter supplies), exact under any placement rotation (issue 519
+//! defect B): a rotated part no longer inflates the requirement past every real library length.
+//! A14.4 adds the hole decision ([`generate_holes`]): with `hole_mode = generate` every
+//! connected plate takes one ordinary A04 hole record per crossing fastener, owned by the
+//! group; a member part refuses until the G14 contract lands, a plate with a rotated placement
+//! refuses with it, and `hole_mode = none` writes no part.
 
 use crate::model::command::{
     BoltGroupInputs, BoltLength, BoltSpacing, CreateBolt, CreateBoltGroup, UpdateBoltGroup,
@@ -44,6 +46,11 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// Conservative world bounds of one part: componentwise minimum, then maximum, both inclusive.
 pub type Bounds = [[f64; 3]; 2];
+
+/// World-space triangles of one part's committed solid: the face-exact geometry the grip reads
+/// (issue 519 defect B). The adapter derives them from the part's stored scene mesh turned by
+/// its placement; a part without an entry grips per its conservative box instead.
+pub type Faces = Vec<[[f64; 3]; 3]>;
 
 /// The sin of the angle between the plane normal and the row below which the normal counts as
 /// parallel to the row (bolt amendment section 4: parallel is `INVALID_ARGUMENT`).
@@ -125,6 +132,25 @@ impl crate::engine::weld::Parts {
         }
         Footprint::for_bolt(command.new_id, [command.main_id, command.secondary_id])
     }
+}
+
+/// The row geometry of one bolt group (A14.3): the frame, every fastener bearing point and the
+/// authoritative spacings — everything the group's inputs alone decide, before the parts decide
+/// the reachability and the length. Carried whole by [`BoltGroupPlaced`] and re-derived from the
+/// inputs alone by [`preview_row`], which is what a tool preview draws.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BoltRow {
+    /// Unit axis along the row, from `point1` towards `point2`.
+    pub x: [f64; 3],
+    /// Unit plane axis at zero rotation (`y = z × x`), slid by `on_plane`.
+    pub y: [f64; 3],
+    /// Unit shank axis at zero rotation, turned by the rotation about `x`.
+    pub z: [f64; 3],
+    /// Bearing point of every fastener, in group order.
+    pub bearings_mm: Vec<[f64; 3]>,
+    /// The expanded spacings the group stores; they stay authoritative when a generator made
+    /// them (bolt amendment section 4).
+    pub spacings_mm: Vec<f64>,
 }
 
 /// The resolved placement of one bolt group (A14.3): the frame, every fastener bearing point,
@@ -323,6 +349,86 @@ fn grip_of(mut intervals: Vec<(f64, f64)>) -> f64 {
     total
 }
 
+/// The dot product of two 3-vectors.
+fn dot(a: [f64; 3], b: [f64; 3]) -> f64 {
+    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+}
+
+/// The cross product of two 3-vectors.
+fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+    [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    ]
+}
+
+/// The material intervals of one part's solid along the shank half-axis from `origin`: every
+/// triangle is intersected double-sided (Möller–Trumbore), the forward hits are sorted, hits
+/// that land on one boundary within rounding distance are merged (a ray through a shared
+/// triangle edge — the ear-clip diagonal of a cap under a centred bolt, for example — hits
+/// both triangles a few ulps apart, and pairing them as zero-length intervals would collapse
+/// the grip to nothing), and the rest are paired; an odd count — the bearing point sits
+/// inside the part — pairs its first crossing with the bearing face itself. The half-axis
+/// never grips behind the bearing. A triangle parallel to the axis within the parallel floor
+/// is never crossed, and an axis through an opening crosses no material there: the part
+/// simply contributes nothing, like any missed face (the group's own clearance holes are
+/// healed by [`place_bolt_group`]).
+fn face_intervals(origin: &[f64; 3], axis: &[f64; 3], faces: &Faces) -> Vec<(f64, f64)> {
+    let mut hits = Vec::new();
+    for [a, b, c] in faces {
+        let e1 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+        let e2 = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+        let plane = cross(*axis, e2);
+        let det = dot(e1, plane);
+        let edge = (dot(e1, e1) * dot(e2, e2)).sqrt();
+        if !det.is_finite() || det.abs() <= PARALLEL_FLOOR * edge {
+            continue;
+        }
+        let s = [origin[0] - a[0], origin[1] - a[1], origin[2] - a[2]];
+        let u = dot(s, plane) / det;
+        if u < -SLAB_PARALLEL || u > 1.0 + SLAB_PARALLEL {
+            continue;
+        }
+        let v = dot(*axis, cross(s, e1)) / det;
+        if v < -SLAB_PARALLEL || u + v > 1.0 + SLAB_PARALLEL {
+            continue;
+        }
+        let t = dot(e2, cross(s, e1)) / det;
+        if t >= -SLAB_PARALLEL {
+            hits.push(if t < 0.0 { 0.0 } else { t });
+        }
+    }
+    hits.sort_by(f64::total_cmp);
+    // One boundary, one hit: ulp-level neighbours are the same crossing seen through two
+    // triangles. A micron absorbs the rounding at every magnitude the coordinate cap allows,
+    // and no real material face stands within a micron of another.
+    let mut merged: Vec<f64> = Vec::with_capacity(hits.len());
+    for hit in hits {
+        let near = merged
+            .last()
+            .is_some_and(|last| hit - *last <= ABSOLUTE_FLOOR_MM.max(last.abs() * 1e-9));
+        if !near {
+            merged.push(hit);
+        }
+    }
+    let mut intervals = Vec::new();
+    let mut index = 0usize;
+    if merged.len() % 2 == 1 {
+        if let Some(first) = merged.first() {
+            intervals.push((0.0, *first));
+        }
+        index = 1;
+    }
+    while index + 1 < merged.len() {
+        if let (Some(start), Some(end)) = (merged.get(index), merged.get(index + 1)) {
+            intervals.push((*start, *end));
+        }
+        index += 2;
+    }
+    intervals
+}
+
 /// The frame of a group and the bearing point of every fastener: the shared placement
 /// arithmetic of [`place_bolt_group`] and of a committed group's stored values
 /// ([`BoltGroupPlaced::from_stored`]). The bearings start at `offset_start` along the row from
@@ -361,19 +467,29 @@ fn frame_and_bearings(
 }
 
 /// Places the group (bolt amendment section 4): the frame, the authoritative spacings, the
-/// bearing points and the one length for the whole group. The grip of a fastener is the union
-/// length of its axis inside the listed parts; `auto` picks the smallest standard length that
-/// covers the largest grip plus the far washers, the nut and the thread protrusion, so every
-/// fastener of the group is identical. The under-head washer lies outside the grip, before the
-/// shank starts, and adds nothing; the under-nut washer lies between the grip and the nut and
-/// adds its thickness. A fixed length shorter than that same requirement is refused. Every
-/// listed part must be crossed by the axis of at least one fastener; the length choice covers
-/// every crossed part, so the crossing check on the unbounded axis is enough. The parts are
-/// decided by the same conservative boxes as A05; the boxes overlap in mid-air and the grip is
-/// never a face-exact value (see the A05 design note).
+/// bearing points and the one length for the whole group. The crossing admission stays the
+/// conservative box decision of A05: every listed part must be crossed by the axis of at
+/// least one fastener (a box may overlap in mid-air, and a part crossed only by its box adds
+/// no grip). The grip itself is face-exact (issue 519 defect B): the union length of the
+/// shank inside the actual faces of the crossed parts (the axis crossings of their world
+/// triangles, paired into material intervals — exact under any placement rotation), so a
+/// rotated part no longer inflates the requirement past every real library length. A part
+/// whose mesh carries one of the group's own hole records (`own_holes`) grips per its
+/// conservative box wherever the axis crosses no face: the record was cut coaxial with the
+/// shank, so the crossing falls into the group's own clearance hole and the bolt grips the
+/// slab the box bounds — the stored length survives a re-place over the meshes the group
+/// itself rewrote, and a retry replays instead of mismatching. A part without an entry in
+/// `faces` grips per its conservative box, which errs long and never under. `auto` picks the
+/// smallest standard length that covers the largest grip plus the far washers, the nut and
+/// the thread protrusion, so every fastener of the group is identical. The under-head washer
+/// lies outside the grip, before the shank starts, and adds nothing; the under-nut washer
+/// lies between the grip and the nut and adds its thickness. A fixed length shorter than
+/// that same requirement is refused.
 pub fn place_bolt_group(
     inputs: &BoltGroupInputs,
     bounds: &BTreeMap<ElementId, Bounds>,
+    faces: &BTreeMap<ElementId, Faces>,
+    own_holes: &BTreeSet<ElementId>,
 ) -> Result<BoltGroupPlaced, CommandError> {
     inputs.validate_arguments()?;
     let spec = &inputs.fastener;
@@ -393,10 +509,7 @@ pub fn place_bolt_group(
             "a washer under the nut needs a washer and a bolt",
         ));
     }
-    let chord = (inputs.point2_mm[0] - inputs.point1_mm[0]).hypot(
-        (inputs.point2_mm[1] - inputs.point1_mm[1])
-            .hypot(inputs.point2_mm[2] - inputs.point1_mm[2]),
-    );
+    let chord = chord_of(inputs.point1_mm, inputs.point2_mm);
     let spacings = expand_spacings(&inputs.spacing, chord, inputs.offset_start_mm)?;
     let ((x, y, z), bearings) = frame_and_bearings(
         inputs.point1_mm,
@@ -408,17 +521,28 @@ pub fn place_bolt_group(
         inputs.offset_start_mm,
         &spacings,
     )?;
-    // The grip decides the one length of the group; every part must be crossed by an axis.
+    // The grip decides the one length of the group; the crossing stays the box admission, the
+    // length itself follows the faces.
     let mut crossed = vec![false; inputs.parts.len()];
     let mut max_grip = 0.0_f64;
     for bearing in &bearings {
         let mut intervals = Vec::new();
         for (index, part) in inputs.parts.iter().enumerate() {
-            if let Some(found) = bounds.get(part).and_then(|b| axis_interval(bearing, &z, b)) {
+            if let Some(admitted) = bounds.get(part).and_then(|b| axis_interval(bearing, &z, b)) {
                 if let Some(done) = crossed.get_mut(index) {
                     *done = true;
                 }
-                intervals.push(found);
+                match faces.get(part) {
+                    Some(part_faces) => {
+                        let found = face_intervals(bearing, &z, part_faces);
+                        if found.is_empty() && own_holes.contains(part) {
+                            intervals.push(admitted);
+                        } else {
+                            intervals.extend(found);
+                        }
+                    }
+                    None => intervals.push(admitted),
+                }
             }
         }
         max_grip = max_grip.max(grip_of(intervals));
@@ -471,7 +595,25 @@ pub fn place_bolt_group(
     })
 }
 
+/// The distance between the row's two points, in millimetres: the shared chord of the spacing
+/// patterns that fit the row between its ends.
+fn chord_of(point1_mm: [f64; 3], point2_mm: [f64; 3]) -> f64 {
+    (point2_mm[0] - point1_mm[0])
+        .hypot((point2_mm[1] - point1_mm[1]).hypot(point2_mm[2] - point1_mm[2]))
+}
+
 impl BoltGroupPlaced {
+    /// The row this placement places: everything but the length the parts' grip decides.
+    pub fn row(&self) -> BoltRow {
+        BoltRow {
+            x: self.x,
+            y: self.y,
+            z: self.z,
+            bearings_mm: self.bearings_mm.clone(),
+            spacings_mm: self.spacings_mm.clone(),
+        }
+    }
+
     /// The placement a committed group's stored values re-derive: the same frame and bearing
     /// points [`place_bolt_group`] decided at creation, without the part reachability and
     /// length decision the creation ran (the committed record is authoritative). A row whose
@@ -501,6 +643,38 @@ impl BoltGroupPlaced {
     }
 }
 
+/// The preview row of the inputs (bolt amendment section 4): the frame, the bearing points and
+/// the expanded spacings [`place_bolt_group`] would decide, without the parts' reachability and
+/// length decision their geometry decides. A tool preview draws exactly these bearings and the
+/// holes [`generate_holes`] cuts at them; whether the parts admit the row stays the commit's
+/// decision, so what the preview draws is still the command's ask (the member ghost's rule).
+/// The decision is pure, bounded and deterministic, like every engine query.
+pub fn preview_row(inputs: &BoltGroupInputs) -> Result<BoltRow, CommandError> {
+    inputs.validate_arguments()?;
+    let spacings = expand_spacings(
+        &inputs.spacing,
+        chord_of(inputs.point1_mm, inputs.point2_mm),
+        inputs.offset_start_mm,
+    )?;
+    let ((x, y, z), bearings) = frame_and_bearings(
+        inputs.point1_mm,
+        inputs.point2_mm,
+        inputs.plane_normal_mm,
+        inputs.rotation_rad,
+        inputs.on_plane_mm,
+        inputs.depth_mm,
+        inputs.offset_start_mm,
+        &spacings,
+    )?;
+    Ok(BoltRow {
+        x,
+        y,
+        z,
+        bearings_mm: bearings,
+        spacings_mm: spacings,
+    })
+}
+
 /// One generated hole decision (bolt amendment section 5): the plate that owns the record and
 /// its authoritative clockwise polygon in the plate's local XY. The record itself is an
 /// ordinary A04 hole record; the adapter appends it with a fresh ordinal and replays the
@@ -523,7 +697,7 @@ pub struct GeneratedHole {
 /// `hole_mode = none` writes no part. The decision is pure: the same inputs give the same holes.
 pub fn generate_holes(
     inputs: &BoltGroupInputs,
-    placed: &BoltGroupPlaced,
+    row: &BoltRow,
     bounds: &BTreeMap<ElementId, Bounds>,
     placements: &BTreeMap<ElementId, Placement>,
     members: &BTreeSet<ElementId>,
@@ -563,8 +737,8 @@ pub fn generate_holes(
             ));
         }
         let translation = placement.translation_mm;
-        for bearing in &placed.bearings_mm {
-            let Some((start, exit)) = axis_interval(bearing, &placed.z, slab) else {
+        for bearing in &row.bearings_mm {
+            let Some((start, exit)) = axis_interval(bearing, &row.z, slab) else {
                 continue;
             };
             // The plate-local XY centre: where the shank axis crosses the slab's mid-plane
@@ -572,8 +746,8 @@ pub fn generate_holes(
             // frame).
             let mid = (start + exit) / 2.0;
             let centre = [
-                bearing[0] + placed.z[0] * mid - translation[0],
-                bearing[1] + placed.z[1] * mid - translation[1],
+                bearing[0] + row.z[0] * mid - translation[0],
+                bearing[1] + row.z[1] * mid - translation[1],
             ];
             holes.push(GeneratedHole {
                 part: *part,
@@ -631,6 +805,8 @@ impl crate::engine::weld::Parts {
         &self,
         command: &CreateBoltGroup,
         bounds: &BTreeMap<ElementId, Bounds>,
+        faces: &BTreeMap<ElementId, Faces>,
+        own_holes: &BTreeSet<ElementId>,
     ) -> Result<(BoltGroupPlaced, Footprint), CommandError> {
         command.validate_arguments()?;
         if self.kinds.contains_key(&command.new_id) {
@@ -641,7 +817,7 @@ impl crate::engine::weld::Parts {
             ));
         }
         check_parts(&command.inputs.parts, self)?;
-        let placed = place_bolt_group(&command.inputs, bounds)?;
+        let placed = place_bolt_group(&command.inputs, bounds, faces, own_holes)?;
         let footprint = Footprint::for_bolt_group(
             command.new_id,
             &command.inputs.parts,
@@ -657,6 +833,8 @@ impl crate::engine::weld::Parts {
         &self,
         command: &UpdateBoltGroup,
         bounds: &BTreeMap<ElementId, Bounds>,
+        faces: &BTreeMap<ElementId, Faces>,
+        own_holes: &BTreeSet<ElementId>,
     ) -> Result<(BoltGroupPlaced, Footprint), CommandError> {
         command.validate_arguments()?;
         if !self.kinds.contains_key(&command.target_id) {
@@ -667,7 +845,7 @@ impl crate::engine::weld::Parts {
             ));
         }
         check_parts(&command.inputs.parts, self)?;
-        let placed = place_bolt_group(&command.inputs, bounds)?;
+        let placed = place_bolt_group(&command.inputs, bounds, faces, own_holes)?;
         let footprint = Footprint::for_bolt_group_edit(
             command.target_id,
             &command.inputs.parts,
@@ -725,6 +903,48 @@ mod tests {
         map.insert(id(1), [[0.0, 0.0, 0.0], [x, 500.0, 10.0]]);
         map.insert(id(2), [[-60.0, -60.0, -60.0], [3060.0, 60.0, 60.0]]);
         map
+    }
+
+    /// The twelve triangles of one axis-aligned box, outward or inward — the engine pairs the
+    /// crossings either way.
+    fn box_faces(min: [f64; 3], max: [f64; 3]) -> Faces {
+        let corner = |at: [usize; 3]| {
+            [
+                if at[0] == 0 { min[0] } else { max[0] },
+                if at[1] == 0 { min[1] } else { max[1] },
+                if at[2] == 0 { min[2] } else { max[2] },
+            ]
+        };
+        let mut faces = Faces::new();
+        let mut quad = |a, b, c, d: [usize; 3]| {
+            faces.push([corner(a), corner(b), corner(c)]);
+            faces.push([corner(a), corner(c), corner(d)]);
+        };
+        quad([0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]);
+        quad([0, 0, 1], [0, 1, 1], [1, 1, 1], [1, 0, 1]);
+        quad([0, 0, 0], [0, 0, 1], [1, 0, 1], [1, 0, 0]);
+        quad([0, 1, 0], [1, 1, 0], [1, 1, 1], [0, 1, 1]);
+        quad([0, 0, 0], [0, 1, 0], [0, 1, 1], [0, 0, 1]);
+        quad([1, 0, 0], [1, 0, 1], [1, 1, 1], [1, 1, 0]);
+        faces
+    }
+
+    /// The exact box faces of every bounds entry: for the axis-aligned prisms of these tests
+    /// the box is the true geometry, so the face grip equals the box grip.
+    fn box_faces_of(bounds: &BTreeMap<ElementId, Bounds>) -> BTreeMap<ElementId, Faces> {
+        bounds
+            .iter()
+            .map(|(part, slab)| (*part, box_faces(slab[0], slab[1])))
+            .collect()
+    }
+
+    /// [`place_bolt_group`] over the exact box faces of the given bounds and no own holes: the
+    /// default of the axis-aligned tests here. The knee-brace and hole tests supply their own.
+    fn place(
+        inputs: &BoltGroupInputs,
+        bounds: &BTreeMap<ElementId, Bounds>,
+    ) -> Result<BoltGroupPlaced, CommandError> {
+        place_bolt_group(inputs, bounds, &box_faces_of(bounds), &BTreeSet::new())
     }
 
     #[test]
@@ -892,12 +1112,12 @@ mod tests {
         frame.fastener.lengths_mm = vec![2000.0];
         let mut bounds = BTreeMap::new();
         wide(&mut bounds);
-        let placed = place_bolt_group(&frame, &bounds).unwrap();
+        let placed = place(&frame, &bounds).unwrap();
         assert_eq!(placed.x, [1.0, 0.0, 0.0]);
         assert_eq!(placed.y, [0.0, 1.0, 0.0]);
         assert_eq!(placed.z, [0.0, 0.0, 1.0]);
         // Rotation of a quarter turn turns the plane axis up and the shank axis to -y.
-        let turned = place_bolt_group(
+        let turned = place(
             &BoltGroupInputs {
                 rotation_rad: core::f64::consts::FRAC_PI_2,
                 ..frame.clone()
@@ -910,7 +1130,7 @@ mod tests {
         assert!(near(turned.z, [0.0, -1.0, 0.0]));
         assert!(near(turned.y, [0.0, 0.0, 1.0]));
         // on_plane slides across the plane, depth along the shank; both move every bearing.
-        let moved = place_bolt_group(
+        let moved = place(
             &BoltGroupInputs {
                 on_plane_mm: 12.0,
                 depth_mm: -4.0,
@@ -929,7 +1149,7 @@ mod tests {
 
     #[test]
     fn generators_expand_and_offset_end_follows_the_points() {
-        let pitch = place_bolt_group(
+        let pitch = place(
             &BoltGroupInputs {
                 spacing: BoltSpacing::Pitch {
                     count: 3,
@@ -941,7 +1161,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(pitch.spacings_mm, vec![80.0, 80.0]);
-        let offset_end = place_bolt_group(
+        let offset_end = place(
             &BoltGroupInputs {
                 spacing: BoltSpacing::OffsetEnd {
                     count: 3,
@@ -955,7 +1175,7 @@ mod tests {
         // 400 - 50 (start) - 50 (end) over two gaps: the last fastener lies at 350.
         assert_eq!(offset_end.spacings_mm, vec![150.0, 150.0]);
         assert_eq!(offset_end.bearings_mm[2], [350.0, 0.0, 0.0]);
-        let moved = place_bolt_group(
+        let moved = place(
             &BoltGroupInputs {
                 point2_mm: [600.0, 0.0, 0.0],
                 spacing: BoltSpacing::OffsetEnd {
@@ -969,7 +1189,7 @@ mod tests {
         .unwrap();
         assert_eq!(moved.spacings_mm, vec![250.0, 250.0]);
         // A row that does not fit is refused like an explicit spacing.
-        let tight = place_bolt_group(
+        let tight = place(
             &BoltGroupInputs {
                 offset_start_mm: 500.0,
                 spacing: BoltSpacing::OffsetEnd {
@@ -988,11 +1208,11 @@ mod tests {
         // Grip 10 (the two overlapping plates count once) + under-nut washer 3 + nut 14.8 +
         // protrusion 5 = 32.8: the smallest listed length is 35. A wrongly summed grip of 20
         // would pick 45. The under-head washer lies outside the grip and adds nothing.
-        let placed = place_bolt_group(&group_inputs(), &group_bounds(1000.0)).unwrap();
+        let placed = place(&group_inputs(), &group_bounds(1000.0)).unwrap();
         assert_eq!(placed.length_mm, 35.0);
         assert!(placed.washer_under_head && placed.washer_under_nut);
         // Without the far washer the requirement is 29.8, so 30 covers it.
-        let bare = place_bolt_group(
+        let bare = place(
             &BoltGroupInputs {
                 washer_under_nut: Some(false),
                 ..group_inputs()
@@ -1006,7 +1226,7 @@ mod tests {
     #[test]
     fn crossing_and_length_refusals_change_nothing() {
         // A part off the axis is never crossed.
-        let off = place_bolt_group(
+        let off = place(
             &BoltGroupInputs {
                 parts: vec![id(1), id(3)],
                 ..group_inputs()
@@ -1018,29 +1238,23 @@ mod tests {
         let mut short = group_inputs();
         short.fastener.lengths_mm = vec![30.0];
         assert_eq!(
-            place_bolt_group(&short, &group_bounds(1000.0))
-                .unwrap_err()
-                .code,
+            place(&short, &group_bounds(1000.0)).unwrap_err().code,
             ErrorCode::UnsupportedGeometry
         );
         // A fixed length below the requirement is refused; an adequate one is kept.
         let mut fixed = group_inputs();
         fixed.length = BoltLength::Fixed(30.0);
         assert_eq!(
-            place_bolt_group(&fixed, &group_bounds(1000.0))
-                .unwrap_err()
-                .code,
+            place(&fixed, &group_bounds(1000.0)).unwrap_err().code,
             ErrorCode::UnsupportedGeometry
         );
         fixed.length = BoltLength::Fixed(35.0);
         assert_eq!(
-            place_bolt_group(&fixed, &group_bounds(1000.0))
-                .unwrap()
-                .length_mm,
+            place(&fixed, &group_bounds(1000.0)).unwrap().length_mm,
             35.0
         );
         // Degenerate rows and a normal parallel to the row are refused.
-        let same = place_bolt_group(
+        let same = place(
             &BoltGroupInputs {
                 point2_mm: [0.0, 0.0, 0.0],
                 ..group_inputs()
@@ -1048,7 +1262,7 @@ mod tests {
             &group_bounds(1000.0),
         );
         assert_eq!(same.unwrap_err().field, "point2_mm");
-        let parallel = place_bolt_group(
+        let parallel = place(
             &BoltGroupInputs {
                 plane_normal_mm: [1.0, 0.0, 0.0],
                 ..group_inputs()
@@ -1069,17 +1283,13 @@ mod tests {
         let mut head = bare.clone();
         head.washer_under_head = Some(true);
         assert_eq!(
-            place_bolt_group(&head, &group_bounds(1000.0))
-                .unwrap_err()
-                .field,
+            place(&head, &group_bounds(1000.0)).unwrap_err().field,
             "washer_under_head"
         );
         let mut nut = bare.clone();
         nut.washer_under_nut = Some(true);
         assert_eq!(
-            place_bolt_group(&nut, &group_bounds(1000.0))
-                .unwrap_err()
-                .field,
+            place(&nut, &group_bounds(1000.0)).unwrap_err().field,
             "washer_under_nut"
         );
         // A screw has no nut, so no washer under one; absent switches take the defaults.
@@ -1091,26 +1301,19 @@ mod tests {
         let mut asked = screw.clone();
         asked.washer_under_nut = Some(true);
         assert_eq!(
-            place_bolt_group(&asked, &group_bounds(1000.0))
-                .unwrap_err()
-                .field,
+            place(&asked, &group_bounds(1000.0)).unwrap_err().field,
             "washer_under_nut"
         );
         asked.washer_under_nut = None;
         asked.washer_under_head = None;
-        let placed = place_bolt_group(&asked, &group_bounds(1000.0)).unwrap();
+        let placed = place(&asked, &group_bounds(1000.0)).unwrap();
         assert!(!placed.washer_under_head && !placed.washer_under_nut);
         // A screw without a nut needs no nut height in the required length.
         let mut long = screw;
         long.fastener.lengths_mm = vec![14.0, 30.0, 45.0];
         long.fastener.validate().unwrap();
         // Grip 10 + protrusion 5 = 15: the smallest listed length is 30.
-        assert_eq!(
-            place_bolt_group(&long, &group_bounds(1000.0))
-                .unwrap()
-                .length_mm,
-            30.0
-        );
+        assert_eq!(place(&long, &group_bounds(1000.0)).unwrap().length_mm, 30.0);
     }
 
     /// The placements of the standard two-plate test: identity placements.
@@ -1126,10 +1329,16 @@ mod tests {
     fn generate_holes_cut_every_crossed_plate_at_every_fastener() {
         let inputs = group_inputs();
         let bounds = group_bounds(1000.0);
-        let placed = place_bolt_group(&inputs, &bounds).unwrap();
+        let placed = place(&inputs, &bounds).unwrap();
         let translations = hole_args(&inputs);
-        let holes =
-            generate_holes(&inputs, &placed, &bounds, &translations, &BTreeSet::new()).unwrap();
+        let holes = generate_holes(
+            &inputs,
+            &placed.row(),
+            &bounds,
+            &translations,
+            &BTreeSet::new(),
+        )
+        .unwrap();
         // Three fasteners, both plates crossed by every axis: one hole each, 18 mm across,
         // centred on the bearing points' XY in the plate's local frame.
         assert_eq!(holes.len(), 6);
@@ -1157,7 +1366,8 @@ mod tests {
                 ..Placement::IDENTITY
             },
         );
-        let local = generate_holes(&inputs, &placed, &bounds, &moved, &BTreeSet::new()).unwrap();
+        let local =
+            generate_holes(&inputs, &placed.row(), &bounds, &moved, &BTreeSet::new()).unwrap();
         let polygon = &local.first().unwrap().polygon_mm;
         let n = polygon.len() as f64;
         let centroid = [
@@ -1168,8 +1378,14 @@ mod tests {
         // A group's own clearance widens the hole over the definition's.
         let mut wide = inputs.clone();
         wide.hole_clearance_mm = Some(4.0);
-        let widened =
-            generate_holes(&wide, &placed, &bounds, &translations, &BTreeSet::new()).unwrap();
+        let widened = generate_holes(
+            &wide,
+            &placed.row(),
+            &bounds,
+            &translations,
+            &BTreeSet::new(),
+        )
+        .unwrap();
         let radius = widened[0]
             .polygon_mm
             .iter()
@@ -1183,13 +1399,25 @@ mod tests {
         screw.fastener.nut_height_mm = None;
         screw.fastener.washer_under_nut = false;
         screw.fastener.validate().unwrap();
-        let quiet =
-            generate_holes(&screw, &placed, &bounds, &translations, &BTreeSet::new()).unwrap();
+        let quiet = generate_holes(
+            &screw,
+            &placed.row(),
+            &bounds,
+            &translations,
+            &BTreeSet::new(),
+        )
+        .unwrap();
         assert!(quiet.is_empty());
         let mut asked = screw.clone();
         asked.hole_mode = Some(HoleMode::Generate);
-        let forced =
-            generate_holes(&asked, &placed, &bounds, &translations, &BTreeSet::new()).unwrap();
+        let forced = generate_holes(
+            &asked,
+            &placed.row(),
+            &bounds,
+            &translations,
+            &BTreeSet::new(),
+        )
+        .unwrap();
         assert_eq!(forced.len(), 6);
     }
 
@@ -1197,12 +1425,12 @@ mod tests {
     fn a_member_part_or_an_uncrossed_span_refuses_or_skips_holes() {
         let inputs = group_inputs();
         let bounds = group_bounds(1000.0);
-        let placed = place_bolt_group(&inputs, &bounds).unwrap();
+        let placed = place(&inputs, &bounds).unwrap();
         let translations = hole_args(&inputs);
         // A member part is refused wholesale until G14.1 (nothing is written).
         let members = BTreeSet::from([id(2)]);
         assert_eq!(
-            generate_holes(&inputs, &placed, &bounds, &translations, &members)
+            generate_holes(&inputs, &placed.row(), &bounds, &translations, &members)
                 .unwrap_err()
                 .code,
             ErrorCode::UnsupportedGeometry
@@ -1218,7 +1446,7 @@ mod tests {
             },
         );
         assert_eq!(
-            generate_holes(&inputs, &placed, &bounds, &turned, &BTreeSet::new())
+            generate_holes(&inputs, &placed.row(), &bounds, &turned, &BTreeSet::new())
                 .unwrap_err()
                 .code,
             ErrorCode::UnsupportedGeometry
@@ -1226,8 +1454,14 @@ mod tests {
         // A part only partly under the row takes only the holes the axes actually cross.
         let mut short = group_bounds(1000.0);
         short.insert(id(1), [[0.0, 0.0, 0.0], [100.0, 500.0, 10.0]]);
-        let partial =
-            generate_holes(&inputs, &placed, &short, &translations, &BTreeSet::new()).unwrap();
+        let partial = generate_holes(
+            &inputs,
+            &placed.row(),
+            &short,
+            &translations,
+            &BTreeSet::new(),
+        )
+        .unwrap();
         assert_eq!(
             partial.len(),
             4,
@@ -1244,7 +1478,9 @@ mod tests {
             inputs: group_inputs(),
         };
         let bounds = group_bounds(1000.0);
-        let (placed, footprint) = parts.create_bolt_group(&command, &bounds).unwrap();
+        let (placed, footprint) = parts
+            .create_bolt_group(&command, &bounds, &box_faces_of(&bounds), &BTreeSet::new())
+            .unwrap();
         assert_eq!(placed.length_mm, 35.0);
         // The parts' lifecycles and the definition are read; the group is written.
         assert!(
@@ -1264,7 +1500,10 @@ mod tests {
             ..command.clone()
         };
         assert_eq!(
-            parts.create_bolt_group(&taken, &bounds).unwrap_err().code,
+            parts
+                .create_bolt_group(&taken, &bounds, &box_faces_of(&bounds), &BTreeSet::new())
+                .unwrap_err()
+                .code,
             ErrorCode::DuplicateId
         );
         let unknown = CreateBoltGroup {
@@ -1275,7 +1514,10 @@ mod tests {
             ..command.clone()
         };
         assert_eq!(
-            parts.create_bolt_group(&unknown, &bounds).unwrap_err().code,
+            parts
+                .create_bolt_group(&unknown, &bounds, &box_faces_of(&bounds), &BTreeSet::new())
+                .unwrap_err()
+                .code,
             ErrorCode::NotFound
         );
         let assembly = CreateBoltGroup {
@@ -1287,7 +1529,7 @@ mod tests {
         };
         assert_eq!(
             parts
-                .create_bolt_group(&assembly, &bounds)
+                .create_bolt_group(&assembly, &bounds, &box_faces_of(&bounds), &BTreeSet::new())
                 .unwrap_err()
                 .code,
             ErrorCode::UnsupportedGeometry
@@ -1300,7 +1542,10 @@ mod tests {
             ..command.clone()
         };
         assert_eq!(
-            parts.create_bolt_group(&other, &bounds).unwrap_err().code,
+            parts
+                .create_bolt_group(&other, &bounds, &box_faces_of(&bounds), &BTreeSet::new())
+                .unwrap_err()
+                .code,
             ErrorCode::InvalidArgument
         );
         // The update decision reads before it places and names its target.
@@ -1310,14 +1555,19 @@ mod tests {
             inputs: group_inputs(),
         };
         assert_eq!(
-            parts.update_bolt_group(&edit, &bounds).unwrap_err().code,
+            parts
+                .update_bolt_group(&edit, &bounds, &box_faces_of(&bounds), &BTreeSet::new())
+                .unwrap_err()
+                .code,
             ErrorCode::NotFound
         );
         let mut with_group = crate::engine::weld::Parts::default();
         with_group.insert(id(1), PartKind::Part);
         with_group.insert(id(2), PartKind::Part);
         with_group.insert(id(9), PartKind::Other);
-        let (placed, footprint) = with_group.update_bolt_group(&edit, &bounds).unwrap();
+        let (placed, footprint) = with_group
+            .update_bolt_group(&edit, &bounds, &box_faces_of(&bounds), &BTreeSet::new())
+            .unwrap();
         assert_eq!(placed.bearings_mm.len(), 3);
         // The group's shape inputs and record are written; a repin that pins in the same
         // transaction writes the definition's entry as well.
@@ -1330,10 +1580,240 @@ mod tests {
         assert_eq!(footprint.writes().len(), 3);
     }
 
+    /// The knee brace of issue 519, at the dimensions of the CLI joint: a 12 mm gusset stood
+    /// up in the world XZ plane over x in [450, 850], z in [1400, 1800], and a 60 x 60 brace
+    /// swept 800 mm along its local +Z, turned 40 degrees about +Y and set down at
+    /// (100, 0, 1100). The row runs along +X with the shanks along +Y, bearings inside both
+    /// parts at y = -6.5, so the requirement lands strictly inside a length step and no
+    /// rounding can move the pick.
+    fn knee_inputs() -> BoltGroupInputs {
+        let fastener = crate::model::fastener::FastenerSpec {
+            designation: Some("M12".into()),
+            standard: None,
+            grade: None,
+            display_name: None,
+            kind: FastenerKind::Bolt,
+            head_kind: crate::model::fastener::HeadKind::Hex,
+            nominal_diameter_mm: 12.0,
+            head_across_flats_mm: 18.0,
+            head_height_mm: 7.5,
+            nut_across_flats_mm: Some(18.0),
+            nut_height_mm: Some(9.0),
+            washer: Some(crate::model::fastener::WasherSpec {
+                outer_diameter_mm: 24.0,
+                inner_diameter_mm: 13.0,
+                thickness_mm: 2.0,
+            }),
+            hole_clearance_mm: 1.5,
+            // The face grip is 36.5 (36.5 + washer 2 + nut 9 + protrusion 3 = 50.5): the
+            // listed 50 refuses and the listed 55 covers, which pins the grip between them.
+            lengths_mm: vec![30.0, 40.0, 50.0, 55.0, 60.0, 80.0],
+            thread_protrusion_mm: 3.0,
+            washer_under_head: true,
+            washer_under_nut: true,
+            hole_mode: crate::model::fastener::HoleMode::None,
+            mass_each_kg: None,
+        };
+        fastener.validate().unwrap();
+        BoltGroupInputs {
+            parts: vec![id(1), id(2)],
+            fastener_digest: beamcraft_model::digest::ContentDigest::from_bytes([4u8; 32]),
+            fastener,
+            point1_mm: [500.0, -6.5, 1600.0],
+            point2_mm: [650.0, -6.5, 1600.0],
+            plane_normal_mm: [0.0, 1.0, 0.0],
+            rotation_rad: 0.0,
+            on_plane_mm: 0.0,
+            depth_mm: 0.0,
+            offset_start_mm: 25.0,
+            spacing: BoltSpacing::Spacings(vec![100.0]),
+            washer_under_head: None,
+            washer_under_nut: None,
+            length: BoltLength::Auto,
+            hole_mode: None,
+            hole_clearance_mm: None,
+        }
+    }
+
+    /// The same joint as the adapter derives it: the plate's exact contour box and the brace's
+    /// world axis expanded by half the section's bounding-box diagonal, which a 40-degree
+    /// placement inflates far past the solid along the shank.
+    fn knee_bounds() -> BTreeMap<ElementId, Bounds> {
+        let (sin, cos) = (40.0_f64).to_radians().sin_cos();
+        let reach = 0.5 * (60.0f64.hypot(60.0));
+        let end = [100.0 + 800.0 * sin, 0.0, 1100.0 + 800.0 * cos];
+        let mut map = BTreeMap::new();
+        map.insert(
+            id(1),
+            [
+                [
+                    (100.0 - reach).min(end[0] - reach),
+                    -reach,
+                    (1100.0 - reach).min(end[2] - reach),
+                ],
+                [
+                    (100.0 + reach).max(end[0] + reach),
+                    reach,
+                    (1100.0 + reach).max(end[2] + reach),
+                ],
+            ],
+        );
+        map.insert(id(2), [[450.0, -12.0, 1400.0], [850.0, 0.0, 1800.0]]);
+        map
+    }
+
+    /// The world triangles of the knee-brace joint: the gusset is the exact 12 mm slab, the
+    /// brace its square section swept 800 mm along the local +Z turned 40 degrees about +Y.
+    /// The faces are double-sided; the engine pairs the crossings either way.
+    fn knee_faces() -> BTreeMap<ElementId, Faces> {
+        let (sin, cos) = (40.0_f64).to_radians().sin_cos();
+        // The brace's corners in its local frame, turned about +Y and set down at
+        // (100, 0, 1100): x' = x cos + z sin, z' = -x sin + z cos.
+        let at =
+            |x: f64, y: f64, z: f64| [x * cos + z * sin + 100.0, y, -x * sin + z * cos + 1100.0];
+        let mut faces = Faces::new();
+        let mut quad = |a, b, c, d| {
+            faces.push([a, b, c]);
+            faces.push([a, c, d]);
+        };
+        let (w, l) = (30.0_f64, 800.0_f64);
+        quad(
+            at(-w, -w, 0.0),
+            at(w, -w, 0.0),
+            at(w, w, 0.0),
+            at(-w, w, 0.0),
+        );
+        quad(at(-w, -w, l), at(-w, w, l), at(w, w, l), at(w, -w, l));
+        quad(at(-w, -w, 0.0), at(-w, -w, l), at(w, -w, l), at(w, -w, 0.0));
+        quad(at(-w, w, 0.0), at(w, w, 0.0), at(w, w, l), at(-w, w, l));
+        quad(at(-w, -w, 0.0), at(-w, w, 0.0), at(-w, w, l), at(-w, -w, l));
+        quad(at(w, -w, 0.0), at(w, -w, l), at(w, w, l), at(w, w, 0.0));
+        let mut map = BTreeMap::new();
+        map.insert(id(1), faces);
+        map.insert(
+            id(2),
+            box_faces([450.0, -12.0, 1400.0], [850.0, 0.0, 1800.0]),
+        );
+        map
+    }
+
+    #[test]
+    fn a_rotated_knee_brace_requires_its_face_grip_not_its_box_grip() {
+        // The brace's conservative box reaches 48.9 mm along the shank where its solid grips
+        // 36.5 mm (from the bearing inside it to the far face), so the requirement is
+        // 36.5 + washer 2 + nut 9 + protrusion 3 = 50.5 and the smallest covering length is
+        // 55, not the box-driven 80 that exceeds every real library length (issue 519
+        // defect B). The second fastener's axis runs past the brace solid at x = 625: the box
+        // still admits it, it adds no grip, and the first bearing pins the length.
+        let bounds = knee_bounds();
+        let faces = knee_faces();
+        let placed = place_bolt_group(&knee_inputs(), &bounds, &faces, &BTreeSet::new()).unwrap();
+        assert_eq!(placed.length_mm, 55.0);
+        // The grip boundary: a listed 50 refuses, a listed 55 covers the 50.5 requirement.
+        let mut short = knee_inputs();
+        short.length = BoltLength::Fixed(50.0);
+        assert_eq!(
+            place_bolt_group(&short, &bounds, &faces, &BTreeSet::new())
+                .unwrap_err()
+                .code,
+            ErrorCode::UnsupportedGeometry
+        );
+        let mut exact = knee_inputs();
+        exact.length = BoltLength::Fixed(55.0);
+        assert_eq!(
+            place_bolt_group(&exact, &bounds, &faces, &BTreeSet::new())
+                .unwrap()
+                .length_mm,
+            55.0
+        );
+        // A part without faces grips per its conservative box, which errs long: 80, never
+        // under the real grip.
+        let mut without = faces;
+        without.remove(&id(1));
+        assert_eq!(
+            place_bolt_group(&knee_inputs(), &bounds, &without, &BTreeSet::new())
+                .unwrap()
+                .length_mm,
+            80.0
+        );
+    }
+
+    #[test]
+    fn the_grip_merges_the_double_hit_of_a_shared_triangle_edge() {
+        // A bolt centred on the plate: the ear-clip diagonal of each cap passes through the
+        // axis, so both cap triangles of a face hit a few ulps apart and must merge into one
+        // crossing. Pairing them as zero-length intervals would collapse the grip to nothing
+        // and resolve a far too short length (issue 519 review).
+        let mut inputs = group_inputs();
+        inputs.point1_mm = [0.0, 0.0, -5.0];
+        inputs.point2_mm = [400.0, 200.0, -5.0];
+        inputs.offset_start_mm = 400.0;
+        inputs.spacing = BoltSpacing::Spacings(vec![100.0]);
+        // The row runs along the caps' (0,0)-(1000,500) ear-clip diagonal, so both bearings
+        // land on the shared edge of each cap's two triangles, below the plate: grip 10, so
+        // the requirement is 10 + washer 3 + nut 14.8 + protrusion 5 = 32.8 and the length is
+        // 35; collapsed (t, t) pairings would pick 30.
+        let placed = place(&inputs, &group_bounds(1000.0)).unwrap();
+        assert_eq!(placed.length_mm, 35.0);
+    }
+
+    #[test]
+    fn a_generate_group_replaces_over_its_own_holes() {
+        // The meshes a generate group rewrote carry its own clearance holes coaxial with the
+        // shanks: a re-place over them crosses no face where its own hole stands, and without
+        // healing the grip collapses (10 instead of 20) and a plain update stores the shorter
+        // length (issue 519 review). Healing reads the slab the box bounds for the parts
+        // whose holes are the group's own.
+        let mut inputs = group_inputs();
+        inputs.point1_mm = [0.0, 250.0, 0.0];
+        inputs.point2_mm = [400.0, 250.0, 0.0];
+        inputs.offset_start_mm = 50.0;
+        inputs.spacing = BoltSpacing::Spacings(vec![80.0]);
+        let mut bounds = BTreeMap::new();
+        bounds.insert(id(1), [[0.0, 0.0, 0.0], [1000.0, 500.0, 10.0]]);
+        bounds.insert(id(2), [[0.0, 0.0, 10.0], [1000.0, 500.0, 20.0]]);
+        // The first plate is solid; the second carries two rectangular voids around the
+        // bearings (50, 250) and (130, 250), as its own generated holes would.
+        let mut faces = BTreeMap::new();
+        faces.insert(id(1), box_faces([0.0, 0.0, 0.0], [1000.0, 500.0, 10.0]));
+        faces.insert(
+            id(2),
+            box_faces([0.0, 0.0, 10.0], [40.0, 500.0, 20.0])
+                .into_iter()
+                .chain(box_faces([60.0, 0.0, 10.0], [120.0, 500.0, 20.0]))
+                .chain(box_faces([140.0, 0.0, 10.0], [1000.0, 500.0, 20.0]))
+                .chain(box_faces([40.0, 0.0, 10.0], [60.0, 220.0, 20.0]))
+                .chain(box_faces([40.0, 280.0, 10.0], [60.0, 500.0, 20.0]))
+                .chain(box_faces([120.0, 0.0, 10.0], [140.0, 220.0, 20.0]))
+                .chain(box_faces([120.0, 280.0, 10.0], [140.0, 500.0, 20.0]))
+                .collect(),
+        );
+        // Without the healing the second plate contributes nothing: the grip is 10, the
+        // requirement 30.8 and the length 35.
+        let collapsed = place_bolt_group(&inputs, &bounds, &faces, &BTreeSet::new()).unwrap();
+        assert_eq!(collapsed.length_mm, 35.0);
+        // The group's own holes are healed: the grip is 20, the requirement 40.8 and the
+        // length 45 — the record the group committed and every retry of it agrees on.
+        let mut own = BTreeSet::new();
+        own.insert(id(2));
+        let healed = place_bolt_group(&inputs, &bounds, &faces, &own).unwrap();
+        assert_eq!(healed.length_mm, 45.0);
+        // Healing names the parts whose holes are the group's own: the wrong part heals
+        // nothing.
+        let mut wrong = BTreeSet::new();
+        wrong.insert(id(1));
+        assert_eq!(
+            place_bolt_group(&inputs, &bounds, &faces, &wrong)
+                .unwrap()
+                .length_mm,
+            35.0
+        );
+    }
+
     #[test]
     fn a_stored_group_re_derives_the_placement_the_creation_decided() {
         let inputs = group_inputs();
-        let placed = place_bolt_group(&inputs, &group_bounds(1000.0)).unwrap();
+        let placed = place(&inputs, &group_bounds(1000.0)).unwrap();
         let stored = crate::engine::bolt::StoredPlacement {
             point1_mm: inputs.point1_mm,
             point2_mm: inputs.point2_mm,
@@ -1349,7 +1829,7 @@ mod tests {
         };
         assert_eq!(BoltGroupPlaced::from_stored(&stored).unwrap(), placed);
         // The arithmetic also agrees for a turned, slid and sunk row with a generator pattern.
-        let turned = place_bolt_group(
+        let turned = place(
             &BoltGroupInputs {
                 rotation_rad: 1.0,
                 on_plane_mm: 7.0,
@@ -1391,6 +1871,75 @@ mod tests {
         assert_eq!(
             BoltGroupPlaced::from_stored(&parallel).unwrap_err().field,
             "plane_normal_mm"
+        );
+    }
+
+    #[test]
+    fn the_preview_row_matches_the_placement_the_parts_admit() {
+        // The preview decides the same row the commit decides: the frame, the bearings and the
+        // spacings agree across the plain and the turned, slid and generated placements; the
+        // length and the washers stay the parts' decision.
+        let inputs = group_inputs();
+        let placed = place(&inputs, &group_bounds(1000.0)).unwrap();
+        assert_eq!(preview_row(&inputs).unwrap(), placed.row());
+        let turned = BoltGroupInputs {
+            rotation_rad: 1.0,
+            on_plane_mm: 7.0,
+            depth_mm: -3.0,
+            spacing: BoltSpacing::Pitch {
+                count: 3,
+                pitch_mm: 40.0,
+            },
+            ..inputs.clone()
+        };
+        let placed = place(&turned, &group_bounds(1000.0)).unwrap();
+        assert_eq!(preview_row(&turned).unwrap(), placed.row());
+    }
+
+    #[test]
+    fn the_preview_row_refuses_what_the_command_refuses() {
+        // The argument guard runs first, then the row: the same fields the commit names.
+        let inputs = group_inputs();
+        assert_eq!(
+            preview_row(&BoltGroupInputs {
+                spacing: BoltSpacing::Spacings(vec![0.0]),
+                ..inputs.clone()
+            })
+            .unwrap_err()
+            .field,
+            "spacings_mm"
+        );
+        assert_eq!(
+            preview_row(&BoltGroupInputs {
+                point2_mm: inputs.point1_mm,
+                ..inputs.clone()
+            })
+            .unwrap_err()
+            .field,
+            "point2_mm"
+        );
+        assert_eq!(
+            preview_row(&BoltGroupInputs {
+                plane_normal_mm: [1.0, 0.0, 0.0],
+                ..inputs.clone()
+            })
+            .unwrap_err()
+            .field,
+            "plane_normal_mm"
+        );
+        // An offset-end row that does not fit between the points is refused like the commit's.
+        assert_eq!(
+            preview_row(&BoltGroupInputs {
+                offset_start_mm: 500.0,
+                spacing: BoltSpacing::OffsetEnd {
+                    count: 3,
+                    offset_end_mm: 50.0,
+                },
+                ..inputs
+            })
+            .unwrap_err()
+            .field,
+            "offset_end_mm"
         );
     }
 }
