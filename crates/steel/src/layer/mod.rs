@@ -249,6 +249,15 @@ pub fn roll(id: String, opinion: Opinion<f64>) -> Change {
     Change::Discipline(HookedChange::new(SetRoll { id, opinion }))
 }
 
+/// Replace a straight member's section position whole, or remove it; see
+/// [`SetSectionPlacement`].
+pub fn section_placement(
+    id: String,
+    placement: Option<crate::model::command::SectionPlacement>,
+) -> Change {
+    Change::Discipline(HookedChange::new(SetSectionPlacement { id, placement }))
+}
+
 /// Replace the required immutable member profile; see [`SetProfile`].
 pub fn profile(id: String, digest: ContentDigest) -> Change {
     Change::Discipline(HookedChange::new(SetProfile { id, digest }))
@@ -290,6 +299,22 @@ pub fn patch_changes(
     }
     if let Some(digest) = patch.member.profile {
         changes.push(profile(definition.to_owned(), digest));
+    }
+    // A straight member's roll and section position: a zero roll and the centred default
+    // remove the opinions, so the member stores exactly what a fresh one would.
+    if let Some(rad) = patch.member.roll_rad {
+        let opinion = if rad == 0.0 {
+            Opinion::Remove
+        } else {
+            Opinion::Value(rad)
+        };
+        changes.push(roll(definition.to_owned(), opinion));
+    }
+    if let Some(placement) = patch.member.section_placement {
+        changes.push(section_placement(
+            definition.to_owned(),
+            (!placement.is_default()).then_some(placement),
+        ));
     }
     // A mirror (T03) re-encodes the local body: the plate's side flips, the member's path
     // reflects and the cuts of either part kind reflect, all read back from the patched

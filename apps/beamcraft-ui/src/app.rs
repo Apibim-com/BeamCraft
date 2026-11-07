@@ -1853,6 +1853,67 @@ impl App {
                         field(ui, "Thickness, mm", &mut self.props.form.thickness, 80.0);
                     }
                 });
+                if !details.is_plate() {
+                    // As a CAD position dialog: where the section sits on the axis, how it is
+                    // turned about it, and how far its ends stand off the axis points.
+                    crate::kit::section(ui, "part", "Position", true, |ui| {
+                        let form = &mut self.props.form;
+                        mark(ui, form.plane != base.plane);
+                        crate::kit::prop_row(ui, "On plane", |ui| {
+                            egui::ComboBox::from_id_salt("props-plane")
+                                .width((ui.available_width() - crate::kit::FIT).max(60.0))
+                                .selected_text(match form.plane.as_str() {
+                                    "left" => "Left",
+                                    "right" => "Right",
+                                    _ => "Middle",
+                                })
+                                .show_ui(ui, |ui| {
+                                    for (token, name) in
+                                        [("left", "Left"), ("centre", "Middle"), ("right", "Right")]
+                                    {
+                                        ui.selectable_value(
+                                            &mut form.plane,
+                                            token.to_owned(),
+                                            name,
+                                        );
+                                    }
+                                });
+                        });
+                        mark(ui, form.plane_offset != base.plane_offset);
+                        field(ui, "On plane offset, mm", &mut form.plane_offset, 120.0);
+                        mark(ui, form.roll_deg != base.roll_deg);
+                        field(ui, "Rotation, °", &mut form.roll_deg, 120.0);
+                        mark(ui, form.depth != base.depth);
+                        crate::kit::prop_row(ui, "At depth", |ui| {
+                            egui::ComboBox::from_id_salt("props-depth")
+                                .width((ui.available_width() - crate::kit::FIT).max(60.0))
+                                .selected_text(match form.depth.as_str() {
+                                    "front" => "Front",
+                                    "back" => "Behind",
+                                    _ => "Middle",
+                                })
+                                .show_ui(ui, |ui| {
+                                    for (token, name) in [
+                                        ("front", "Front"),
+                                        ("centre", "Middle"),
+                                        ("back", "Behind"),
+                                    ] {
+                                        ui.selectable_value(
+                                            &mut form.depth,
+                                            token.to_owned(),
+                                            name,
+                                        );
+                                    }
+                                });
+                        });
+                        mark(ui, form.depth_offset != base.depth_offset);
+                        field(ui, "At depth offset, mm", &mut form.depth_offset, 120.0);
+                        mark(ui, form.start_offset != base.start_offset);
+                        field(ui, "Start offset, mm", &mut form.start_offset, 120.0);
+                        mark(ui, form.end_offset != base.end_offset);
+                        field(ui, "End offset, mm", &mut form.end_offset, 120.0);
+                    });
+                }
                 crate::kit::section(ui, "part", "Placement", true, |ui| {
                     let level_label = self.props.form.level.as_ref().map_or_else(
                         || "Not assigned".into(),

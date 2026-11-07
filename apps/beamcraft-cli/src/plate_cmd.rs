@@ -391,6 +391,13 @@ const UPDATE_OPTIONS: &[&str] = &[
     "--contour",
     "--thickness-side",
     "--axis-point",
+    "--roll",
+    "--section-plane",
+    "--section-plane-offset",
+    "--section-depth",
+    "--section-depth-offset",
+    "--start-offset",
+    "--end-offset",
     "--translation",
     "--orientation-xyzw",
     "--level",
@@ -1492,6 +1499,16 @@ fn update_command(
                 None,
                 candidates,
             )?,
+            // A straight member's roll and section position, with the same flags a new
+            // member takes; the section flags replace the position whole (unnamed ones are the
+            // centred default).
+            roll_rad: given("--roll")
+                .map(|text| {
+                    text.parse::<f64>()
+                        .map_err(|_| invalid("a number is malformed"))
+                })
+                .transpose()?,
+            section_placement: section_placement(options)?,
         },
     };
     let updated = update_element(

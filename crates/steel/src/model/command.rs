@@ -3810,17 +3810,78 @@ pub struct MemberPatch {
     /// rebuilt from it). Whether the digest names a profile definition is the engine's
     /// decision.
     pub profile: Option<ContentDigest>,
+    /// A straight member's new roll about its axis in radians (replaces the standing one).
+    /// A polybeam carries no roll, so naming it there is `UNSUPPORTED_PROPERTY`.
+    pub roll_rad: Option<f64>,
+    /// A straight member's new section position about its axis (P14), replacing the standing
+    /// one whole: across the width, through the height, their offsets and the end offsets. The
+    /// centred default clears the opinion. A polybeam carries none (`UNSUPPORTED_PROPERTY`).
+    pub section_placement: Option<SectionPlacement>,
 }
 
 impl MemberPatch {
     /// Whether no member field is named: the patch leaves a member's own fields alone.
     pub const fn is_empty(&self) -> bool {
-        self.axis_points_mm.is_none() && self.profile.is_none()
+        self.axis_points_mm.is_none()
+            && self.profile.is_none()
+            && self.roll_rad.is_none()
+            && self.section_placement.is_none()
     }
 
     /// Whether a named member field is a shape input, so the body is rebuilt.
     pub const fn changes_shape(&self) -> bool {
-        self.axis_points_mm.is_some() || self.profile.is_some()
+        self.axis_points_mm.is_some()
+            || self.profile.is_some()
+            || self.roll_rad.is_some()
+            || self.section_placement.is_some()
+    }
+
+    /// Admits the position fields with the rules a new member's have: a finite roll within
+    /// 2 pi, finite section offsets within the dimension cap.
+    pub(crate) fn validate_position(&self) -> Result<(), CommandError> {
+        if let Some(roll) = self.roll_rad {
+            if !roll.is_finite() {
+                return Err(CommandError::new(
+                    ErrorCode::NonFiniteNumber,
+                    "roll_rad",
+                    "value is not finite",
+                )
+                .with_rule("DV-ATTR-003"));
+            }
+            if roll.abs() > ROLL_CAP_RAD {
+                return Err(CommandError::new(
+                    ErrorCode::LimitExceeded,
+                    "roll_rad",
+                    "roll exceeds 2 pi",
+                )
+                .with_rule("DV-LIM-001"));
+            }
+        }
+        if let Some(placement) = &self.section_placement {
+            let offsets = [
+                placement.plane_offset_mm,
+                placement.depth_offset_mm,
+                placement.start_offset_mm,
+                placement.end_offset_mm,
+            ];
+            if offsets.iter().any(|v| !v.is_finite()) {
+                return Err(CommandError::new(
+                    ErrorCode::NonFiniteNumber,
+                    "section_placement",
+                    "value is not finite",
+                )
+                .with_rule("DV-ATTR-003"));
+            }
+            if offsets.iter().any(|v| v.abs() > DIMENSION_CAP_MM) {
+                return Err(CommandError::new(
+                    ErrorCode::LimitExceeded,
+                    "section_placement",
+                    "offset exceeds the dimension cap",
+                )
+                .with_rule("DV-LIM-001"));
+            }
+        }
+        Ok(())
     }
 
     /// Admits the path: at most [`MAX_MEMBER_PATH_POINTS`] points, all finite and within the
@@ -3921,6 +3982,7 @@ impl UpdateElement {
     /// target's kind and the geometry are the engine's decisions.
     pub fn validate_arguments(&self) -> Result<(), CommandError> {
         let patch = &self.patch;
+        patch.member.validate_position()?;
         patch.plate.validate_corners()?;
         patch.plate.validate_contour()?;
         if patch.plate.is_empty()
@@ -5595,6 +5657,7 @@ mod tests {
                     member: MemberPatch {
                         profile: Some(profile),
                         axis_points_mm: Some(vec![[0.0; 3], [1000.0, 0.0, 0.0]]),
+                        ..MemberPatch::default()
                     },
                     ..ElementPatch::default()
                 },
