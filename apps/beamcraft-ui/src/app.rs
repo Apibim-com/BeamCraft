@@ -7259,9 +7259,9 @@ pub(crate) mod tests {
         let at = |labels: &[(String, egui::Pos2)]| {
             labels
                 .iter()
-                .find(|(t, _)| t == "Visual style")
+                .find(|(t, _)| t == "Projection")
                 .map(|(_, p)| *p)
-                .unwrap_or_else(|| panic!("no Visual style row: {labels:?}"))
+                .unwrap_or_else(|| panic!("no Projection row: {labels:?}"))
         };
         let first = at(&app_frame(&mut app, &ctx, vec![]));
         let mut last = first;

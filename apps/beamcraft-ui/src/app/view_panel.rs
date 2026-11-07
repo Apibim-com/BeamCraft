@@ -2453,6 +2453,10 @@ impl App {
         let mut toggle_preset_field = false;
         let vg_id = egui::Id::unique("view-vg-open");
         let mut vg_open = ui.data(|d| d.get_temp::<bool>(vg_id).unwrap_or(false));
+        let display_id = egui::Id::unique("view-display-open");
+        let mut display_open = ui.data(|d| d.get_temp::<bool>(display_id).unwrap_or(false));
+        let scheme_id = egui::Id::unique("view-scheme-open");
+        let mut scheme_open = ui.data(|d| d.get_temp::<bool>(scheme_id).unwrap_or(false));
         egui::ScrollArea::vertical()
             .id_salt("view-form")
             .max_height((ui.available_height() - footer).max(0.0))
@@ -2618,56 +2622,30 @@ impl App {
                             });
                     }
                     ui.add_space(4.0);
+                    // As Revit's properties palette: the view's graphics are summarised in the table
+                    // and edited in their own windows.
                     section(ui, "Graphics", true, |ui| {
-                        row(ui, "Visual style", |ui| {
-                            egui::ComboBox::from_id_salt("view-mode")
-                                .selected_text(mode_name(form.mode))
-                                .width((ui.available_width() - FIT).max(40.0))
-                                .show_ui(ui, |ui| {
-                                    for mode in RenderMode::ALL {
-                                        ui.selectable_value(&mut form.mode, mode, mode_name(mode));
-                                    }
-                                });
-                        });
-                        row(ui, "Grids", |ui| {
-                            ui.checkbox(&mut form.grids, "Shown");
-                        });
-                        row(ui, "V/G overrides", |ui| {
-                            let hidden = crate::views::listed_kinds()
-                                .filter(|k| !form.hidden.is_visible(*k))
-                                .count();
-                            let summary = match (form.overrides.len(), hidden) {
-                                (0, 0) => "Edit…".to_owned(),
-                                (f, h) => format!("Edit… ({f} filters, {h} hidden)"),
-                            };
-                            if ui.button(summary).clicked() {
-                                vg_open = !vg_open;
-                            }
-                        });
-                        row(ui, "Colour", |ui| {
-                            ui.checkbox(&mut form.color_on, "Override");
-                            if form.color_on {
-                                ui.color_edit_button_rgb(&mut form.color);
-                            }
-                        });
-                        row(ui, "Opacity", |ui| {
-                            ui.add(
-                                egui::Slider::new(&mut form.opacity, 0.0..=1.0).fixed_decimals(2),
-                            );
-                        });
-                        if form.id.is_some() {
-                            row(ui, "", |ui| {
-                                let link = egui::RichText::new("Use in every view")
-                                    .size(11.0)
-                                    .color(theme::Palette::current(ui).link);
-                                if ui
-                                    .add(egui::Button::new(link).frame(false))
-                                    .on_hover_text("Give every view this colour and opacity")
-                                    .clicked()
-                                {
-                                    all_appearance = true;
-                                }
-                            });
+                        let hidden = crate::views::listed_kinds()
+                            .filter(|k| !form.hidden.is_visible(*k))
+                            .count();
+                        let vg = match (form.overrides.len(), hidden) {
+                            (0, 0) => "Edit…".to_owned(),
+                            (f, h) => format!("Edit… ({f} filters, {h} hidden)"),
+                        };
+                        if crate::kit::prop_button(ui, "Visibility/Graphics", &vg) {
+                            vg_open = !vg_open;
+                        }
+                        let display = format!("{} · Edit…", mode_name(form.mode));
+                        if crate::kit::prop_button(ui, "Graphic Display", &display) {
+                            display_open = !display_open;
+                        }
+                        let scheme = if form.color_on {
+                            "Override · Edit…".to_owned()
+                        } else {
+                            "By model · Edit…".to_owned()
+                        };
+                        if crate::kit::prop_button(ui, "Color Scheme", &scheme) {
+                            scheme_open = !scheme_open;
                         }
                     });
                     section(ui, "Camera", true, |ui| {
@@ -2868,45 +2846,113 @@ impl App {
                     // Visibility/Graphics overrides, as Revit edits them in their own dialog:
                     // the element kinds the view shows and its filters.
                     let mut open = vg_open;
-                    egui::Window::new("Visibility / Graphics")
-                        .id(egui::Id::unique("view-vg-window"))
-                        .open(&mut open)
-                        .collapsible(false)
-                        .resizable(true)
-                        .default_width(420.0)
-                        .show(ui.ctx(), |ui| {
-                            crate::kit::section(ui, "vg", "Model categories", true, |ui| {
-                                for kind in crate::views::listed_kinds() {
-                                    let mut visible = form.hidden.is_visible(kind);
-                                    if ui.checkbox(&mut visible, kind.as_token()).changed() {
-                                        form.hidden = if visible {
-                                            form.hidden.showing(kind)
-                                        } else {
-                                            form.hidden.hiding(kind)
-                                        };
-                                    }
+                    crate::kit::dialog(
+                        "Visibility / Graphics",
+                        "view-vg-window",
+                        &mut open,
+                        ui.ctx(),
+                    )
+                    .show(ui.ctx(), |ui| {
+                        crate::kit::section(ui, "vg", "Model categories", true, |ui| {
+                            for kind in crate::views::listed_kinds() {
+                                let mut visible = form.hidden.is_visible(kind);
+                                if ui.checkbox(&mut visible, kind.as_token()).changed() {
+                                    form.hidden = if visible {
+                                        form.hidden.showing(kind)
+                                    } else {
+                                        form.hidden.hiding(kind)
+                                    };
                                 }
-                            });
-                            crate::kit::section(ui, "vg", "Filters", true, |ui| {
-                                filters_table(
-                                    ui,
-                                    &mut form.overrides,
-                                    &filters,
-                                    &overlay_state,
-                                    &mut edit_filter,
-                                );
-                            });
-                            ui.add_space(crate::kit::SPACE_S);
-                            ui.label(
-                                egui::RichText::new("Changes apply to the view with Apply.")
-                                    .size(11.0)
-                                    .color(theme::Palette::current(ui).muted),
+                            }
+                        });
+                        crate::kit::section(ui, "vg", "Filters", true, |ui| {
+                            filters_table(
+                                ui,
+                                &mut form.overrides,
+                                &filters,
+                                &overlay_state,
+                                &mut edit_filter,
                             );
                         });
+                        ui.add_space(crate::kit::SPACE_S);
+                        ui.label(
+                            egui::RichText::new("Changes apply to the view with Apply.")
+                                .size(11.0)
+                                .color(theme::Palette::current(ui).muted),
+                        );
+                    });
                     vg_open = open;
+                    let mut open = display_open;
+                    crate::kit::dialog(
+                        "Graphic Display Options",
+                        "view-display-window",
+                        &mut open,
+                        ui.ctx(),
+                    )
+                    .show(ui.ctx(), |ui| {
+                        crate::kit::section(ui, "display", "Model display", true, |ui| {
+                            row(ui, "Visual style", |ui| {
+                                egui::ComboBox::from_id_salt("view-mode")
+                                    .selected_text(mode_name(form.mode))
+                                    .width((ui.available_width() - FIT).max(40.0))
+                                    .show_ui(ui, |ui| {
+                                        for mode in RenderMode::ALL {
+                                            ui.selectable_value(
+                                                &mut form.mode,
+                                                mode,
+                                                mode_name(mode),
+                                            );
+                                        }
+                                    });
+                            });
+                            row(ui, "Grids", |ui| {
+                                ui.checkbox(&mut form.grids, "Shown");
+                            });
+                        });
+                    });
+                    display_open = open;
+                    let mut open = scheme_open;
+                    crate::kit::dialog("Color Scheme", "view-scheme-window", &mut open, ui.ctx())
+                        .show(ui.ctx(), |ui| {
+                            crate::kit::section(ui, "scheme", "Model colour", true, |ui| {
+                                row(ui, "Colour", |ui| {
+                                    ui.checkbox(&mut form.color_on, "Override");
+                                    if form.color_on {
+                                        ui.color_edit_button_rgb(&mut form.color);
+                                    }
+                                });
+                                row(ui, "Opacity", |ui| {
+                                    ui.add(
+                                        egui::Slider::new(&mut form.opacity, 0.0..=1.0)
+                                            .fixed_decimals(2),
+                                    );
+                                });
+                                if form.id.is_some() {
+                                    row(ui, "", |ui| {
+                                        let link = egui::RichText::new("Use in every view")
+                                            .size(11.0)
+                                            .color(theme::Palette::current(ui).link);
+                                        if ui
+                                            .add(egui::Button::new(link).frame(false))
+                                            .on_hover_text(
+                                                "Give every view this colour and opacity",
+                                            )
+                                            .clicked()
+                                        {
+                                            all_appearance = true;
+                                        }
+                                    });
+                                }
+                            });
+                        });
+                    scheme_open = open;
                 });
             });
-        ui.data_mut(|d| d.insert_temp(vg_id, vg_open));
+        ui.data_mut(|d| {
+            d.insert_temp(vg_id, vg_open);
+            d.insert_temp(display_id, display_open);
+            d.insert_temp(scheme_id, scheme_open);
+        });
         ui.add_space(8.0);
         let mut cancel = false;
         // A saved view changes only on Apply; the buttons wake up with the first edit.

@@ -21,7 +21,7 @@ pub const SPACE_L: f32 = 16.0;
 /// The height of one row of a properties grid, a group bar or a tree row.
 pub const ROW_HEIGHT: f32 = 24.0;
 /// The width of the label column of a properties grid.
-pub const LABEL_WIDTH: f32 = 104.0;
+pub const LABEL_WIDTH: f32 = 120.0;
 /// The square a disclosure chevron is drawn in.
 pub const CHEVRON: f32 = 16.0;
 /// Slack left at the end of a row that fills the panel: a row sized to the exact available
@@ -124,12 +124,12 @@ pub fn section<R>(
     let id = ui.make_persistent_id(("kit-section", salt, title));
     let mut state = CollapsingState::load_with_default_open(ui.ctx(), id, default_open);
     header_row(ui, &mut state, title, true, Some(palette.head));
+    // The rows sit tight under the bar as one table: no gap between the cells.
     let out = state.show_body_unindented(ui, |ui| {
-        ui.add_space(SPACE_XS);
-        let out = add(ui);
-        ui.add_space(SPACE_S);
-        out
+        ui.spacing_mut().item_spacing.y = 0.0;
+        add(ui)
     });
+    ui.add_space(SPACE_XS);
     out.map(|r| r.inner)
 }
 
@@ -236,6 +236,25 @@ pub fn type_box(ui: &mut Ui, icon: crate::theme::Icon, kind: &str) {
     ui.add_space(SPACE_S);
 }
 
+/// A settings window of the properties panel (Visibility/Graphics, Graphic Display, Color
+/// Scheme), as a CAD program opens its dialogs: a plain title, centred on the screen the first
+/// time, resizable, closed by its cross.
+pub fn dialog<'a>(
+    title: &str,
+    id: &str,
+    open: &'a mut bool,
+    ctx: &egui::Context,
+) -> egui::Window<'a> {
+    egui::Window::new(egui::RichText::new(title).size(13.0).strong())
+        .id(egui::Id::unique(id))
+        .open(open)
+        .collapsible(false)
+        .resizable(true)
+        .pivot(Align2::CENTER_CENTER)
+        .default_pos(ctx.content_rect().center())
+        .default_width(380.0)
+}
+
 /// A search field with its magnifier inside the frame, filling the row up to `reserve`
 /// points kept free at its end. Returns the text edit's response.
 pub fn search_field(ui: &mut Ui, text: &mut String, hint: &str, reserve: f32) -> Response {
@@ -263,27 +282,87 @@ pub fn search_field(ui: &mut Ui, text: &mut String, hint: &str, reserve: f32) ->
     edit
 }
 
-/// One row of a properties grid: the label in the fixed label column, muted, and the value
-/// widget beside it taking the rest of the row, with a thin rule under the row.
+/// One row of a properties table, as Revit's properties palette lays them out: the label
+/// cell on the left, a rule between the cells and the value cell on the right, a rule under
+/// the row. The value's widgets are flat until they are hovered or edited, so the table reads
+/// as text.
 pub fn prop_row<R>(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui) -> R) -> R {
     let palette = Palette::current(ui);
+    let width = (ui.available_width() - FIT).max(60.0);
     let row = ui.horizontal(|ui| {
         ui.set_min_height(ROW_HEIGHT);
-        ui.add_space(SPACE_S);
-        ui.add_sized(
-            [LABEL_WIDTH - SPACE_S, ROW_HEIGHT - 4.0],
-            egui::Label::new(egui::RichText::new(label).size(12.0).color(palette.muted)).truncate(),
-        )
-        .on_hover_text(label);
-        add(ui)
+        ui.spacing_mut().item_spacing.x = 0.0;
+        let (label_rect, _) = ui.allocate_exact_size(vec2(LABEL_WIDTH, ROW_HEIGHT), Sense::hover());
+        let painter = ui.painter();
+        let galley = painter.layout(
+            label.to_owned(),
+            FontId::proportional(12.0),
+            palette.text,
+            LABEL_WIDTH - SPACE_S * 1.5,
+        );
+        let shown = if galley.rows.len() > 1 {
+            // A label longer than its cell is cut with an ellipsis, as the palette does.
+            let mut job = egui::text::LayoutJob::simple_singleline(
+                label.to_owned(),
+                FontId::proportional(12.0),
+                palette.text,
+            );
+            job.wrap = egui::text::TextWrapping::truncate_at_width(LABEL_WIDTH - SPACE_S * 1.5);
+            painter.layout_job(job)
+        } else {
+            galley
+        };
+        painter.galley(
+            pos2(
+                label_rect.left() + SPACE_S,
+                label_rect.center().y - shown.size().y / 2.0,
+            ),
+            shown,
+            palette.text,
+        );
+        ui.add_space(SPACE_XS);
+        ui.scope(|ui| {
+            // Flat value cells: no frame or fill until the pointer is on the widget.
+            let w = &mut ui.visuals_mut().widgets;
+            w.inactive.bg_stroke = Stroke::NONE;
+            w.inactive.weak_bg_fill = egui::Color32::TRANSPARENT;
+            w.inactive.bg_fill = egui::Color32::TRANSPARENT;
+            ui.visuals_mut().extreme_bg_color = egui::Color32::TRANSPARENT;
+            ui.set_width((width - LABEL_WIDTH - SPACE_XS).max(30.0));
+            add(ui)
+        })
+        .inner
     });
     let rect = row.response.rect;
-    ui.painter().hline(
-        rect.x_range(),
-        rect.max.y + 1.0,
-        Stroke::new(1.0, palette.rule.gamma_multiply(0.6)),
-    );
+    let line = Stroke::new(1.0, palette.rule.gamma_multiply(0.7));
+    let painter = ui.painter();
+    painter.hline(rect.left()..=rect.left() + width, rect.max.y, line);
+    painter.vline(rect.left() + LABEL_WIDTH, rect.y_range(), line);
+    if row.response.hovered() {
+        painter.rect_filled(
+            Rect::from_min_size(rect.min, vec2(LABEL_WIDTH, rect.height())),
+            0,
+            palette.head.gamma_multiply(0.5),
+        );
+    }
     row.inner
+}
+
+/// A table row whose value is a button filling the cell: the row of a setting edited in its
+/// own window (Visibility/Graphics, Graphic Display, Color Scheme). Returns whether it was
+/// clicked.
+pub fn prop_button(ui: &mut Ui, label: &str, text: &str) -> bool {
+    prop_row(ui, label, |ui| {
+        let palette = Palette::current(ui);
+        let width = (ui.available_width() - SPACE_XS).max(30.0);
+        ui.add_sized(
+            [width, ROW_HEIGHT - 4.0],
+            egui::Button::new(egui::RichText::new(text).size(12.0))
+                .fill(palette.head)
+                .stroke(Stroke::new(1.0, palette.rule)),
+        )
+        .clicked()
+    })
 }
 
 /// A read-only property row: the value right-aligned in the value column, with its unit muted
