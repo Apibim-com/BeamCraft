@@ -96,6 +96,27 @@ fn browser_tab(ui: &mut egui::Ui, icon: theme::Icon, label: &str, active: bool) 
     response.on_hover_text(label)
 }
 
+/// A small icon button of a browser row, shown under the pointer.
+fn small_icon(ui: &mut egui::Ui, icon: theme::Icon, tip: &str) -> egui::Response {
+    let palette = theme::Palette::current(ui);
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::click());
+    if response.hovered() {
+        ui.painter().rect_filled(rect, 3, palette.select);
+    }
+    theme::paint_icon(
+        ui.painter(),
+        rect.shrink(3.0),
+        icon,
+        if response.hovered() {
+            palette.text
+        } else {
+            palette.muted
+        },
+    );
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tip));
+    response.on_hover_text(tip)
+}
+
 /// The number of views under a browser node, as a small rounded count at the end of its row.
 fn count_pill(ui: &mut egui::Ui, count: usize) {
     let palette = theme::Palette::current(ui);
@@ -1442,6 +1463,39 @@ impl App {
         let dragging = egui::DragAndDrop::has_payload_of_type::<Uuid7>(ui.ctx());
         let (node_ui, header_row, ()) = crate::kit::TreeNode::header(ui, id, true, |ui| {
             theme::icon(ui, theme::Icon::Folder, 16.0, palette.muted);
+            let renaming = self
+                .views
+                .folder_rename
+                .as_ref()
+                .is_some_and(|(stored, _)| *stored == node.stored);
+            if renaming {
+                // Renamed in place, as a file browser does: Enter keeps the name, Esc drops it.
+                if let Some((_, typed)) = self.views.folder_rename.as_mut() {
+                    let field = ui.add(
+                        egui::TextEdit::singleline(typed)
+                            .desired_width((ui.available_width() - crate::kit::FIT).max(60.0))
+                            .char_limit(crate::views::FIELD),
+                    );
+                    if !field.has_focus() && !field.lost_focus() {
+                        field.request_focus();
+                    }
+                    let (enter, escape) = ui.input(|i| {
+                        (
+                            i.key_pressed(egui::Key::Enter),
+                            i.key_pressed(egui::Key::Escape),
+                        )
+                    });
+                    if escape {
+                        actions.push(BrowserAction::CancelRename);
+                    } else if field.lost_focus() || enter {
+                        actions.push(BrowserAction::RenameFolder(
+                            node.stored.clone(),
+                            typed.trim().to_owned(),
+                        ));
+                    }
+                }
+                return;
+            }
             let name = ui.add(
                 egui::Label::new(
                     egui::RichText::new(node.name.as_str())
@@ -1454,6 +1508,24 @@ impl App {
             );
             count_pill(ui, all.len());
             toggle = name.clicked();
+            // Rename and delete show on the row under the pointer, as small icons at its end.
+            if ui.ui_contains_pointer() {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.spacing_mut().item_spacing.x = 0.0;
+                    if small_icon(
+                        ui,
+                        theme::Icon::Delete,
+                        "Delete the folder (its views move up)",
+                    )
+                    .clicked()
+                    {
+                        actions.push(BrowserAction::DeleteFolder(node.stored.clone()));
+                    }
+                    if small_icon(ui, theme::Icon::Rename, "Rename the folder").clicked() {
+                        actions.push(BrowserAction::StartRename(node.stored.clone()));
+                    }
+                });
+            }
             name.context_menu(|ui| {
                 if ui.button("New folder…").clicked() {
                     actions.push(BrowserAction::NewFolder(node.stored.clone()));
@@ -1469,7 +1541,11 @@ impl App {
                         ui.close();
                     }
                 }
-                if all.is_empty() && ui.button("Delete empty folder").clicked() {
+                if ui.button("Rename folder").clicked() {
+                    actions.push(BrowserAction::StartRename(node.stored.clone()));
+                    ui.close();
+                }
+                if ui.button("Delete folder").clicked() {
                     actions.push(BrowserAction::DeleteFolder(node.stored.clone()));
                     ui.close();
                 }
@@ -1676,10 +1752,33 @@ impl App {
                 Ok(()) => self.persist_views(),
                 Err(e) => self.view_note(Err(e.to_string())),
             },
-            BrowserAction::DeleteFolder(folder) => match self.views.book.delete_folder(&folder) {
-                Ok(()) => self.persist_views(),
+            // A folder is removed with its contents kept: they move up one level.
+            BrowserAction::DeleteFolder(folder) => match self.views.book.dissolve_folder(&folder) {
+                Ok(moved) => {
+                    self.persist_views();
+                    self.view_note(Ok(match moved {
+                        0 => "Folder deleted.".to_owned(),
+                        n => format!("Folder deleted; its {n} views moved up."),
+                    }));
+                }
                 Err(e) => self.view_note(Err(e.to_string())),
             },
+            BrowserAction::StartRename(folder) => {
+                let name = folder.rsplit('/').next().unwrap_or(&folder).to_owned();
+                self.views.folder_rename = Some((folder, name));
+            }
+            BrowserAction::CancelRename => self.views.folder_rename = None,
+            BrowserAction::RenameFolder(folder, name) => {
+                self.views.folder_rename = None;
+                let parent = folder.rsplit_once('/').map_or("", |(p, _)| p);
+                let target = crate::views::new_folder_path(parent, &name);
+                if target != folder && !name.is_empty() {
+                    match self.views.book.rename_folder(&folder, &target) {
+                        Ok(_) => self.persist_views(),
+                        Err(e) => self.view_note(Err(e.to_string())),
+                    }
+                }
+            }
             BrowserAction::OpenAll(ids) => {
                 for id in ids {
                     self.open_pane(Some(id));
@@ -2069,7 +2168,6 @@ impl App {
                 && theme::button(ui, theme::Kind::Secondary, "Delete", true).clicked();
             back = theme::button(ui, theme::Kind::Secondary, "Back", true).clicked();
         });
-        self.view_panel_note(ui);
         self.views.filter_edit = Some((filter.clone(), previous.clone()));
         if let Some(target) = switch_to {
             self.open_filter_editor(target);
@@ -2416,11 +2514,9 @@ impl App {
             .id
             .and_then(|id| self.views.book.get(&id))
             .is_some_and(|v| v.is_default);
-        let footer = if self.views.note.is_some() {
-            140.0
-        } else {
-            90.0
-        };
+        // The action bar keeps one height: the outcome goes to the status bar, so the buttons
+        // stay pinned at the bottom whatever was said.
+        let footer = 90.0;
         let header = {
             let shown = self.views.form.id.and_then(|id| self.views.book.get(&id));
             let kind = shown.map(crate::views::view_kind);
@@ -3058,7 +3154,6 @@ impl App {
                 ui.spinner();
             }
         });
-        self.view_panel_note(ui);
         if cancel {
             self.views.picking = None;
             self.set_bench(Bench::Select);
@@ -3115,17 +3210,6 @@ impl App {
         }
         if submit {
             self.submit_view();
-        }
-    }
-
-    /// The last view note under the panel's buttons.
-    fn view_panel_note(&self, ui: &mut egui::Ui) {
-        if let Some(note) = &self.views.note {
-            let palette = theme::Palette::current(ui);
-            match note {
-                Ok(t) => ui.label(t.as_str()),
-                Err(t) => ui.colored_label(palette.error, t.as_str()),
-            };
         }
     }
 
@@ -3553,6 +3637,12 @@ pub(crate) enum BrowserAction {
     Delete(Uuid7),
     ConfirmDelete(Uuid7),
     DeleteFolder(String),
+    /// Starts renaming the folder with this stored path in place.
+    StartRename(String),
+    /// Drops the rename in progress.
+    CancelRename,
+    /// Renames the folder (stored path) to the typed name, in the same parent.
+    RenameFolder(String, String),
     OpenAll(Vec<Uuid7>),
     CloseAll(Vec<Uuid7>),
     Move(Uuid7, String),

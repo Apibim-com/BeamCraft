@@ -787,15 +787,6 @@ impl App {
             ui.spinner();
             ui.label("Saving element…");
         }
-        if let Some(note) = &self.tool_note {
-            match note {
-                Ok(message) => {
-                    ui.label(message);
-                }
-                Err(message) => {
-                    ui.colored_label(crate::theme::Palette::current(ui).error, message);
-                }
-            }
-        }
+        // Its outcome is told in the status bar (`App::status_note`).
     }
 }

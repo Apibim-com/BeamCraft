@@ -586,7 +586,9 @@ impl App {
         } else {
             Stroke::new(1.0, palette.rule)
         };
-        painter.rect_stroke(rect, 2, stroke, StrokeKind::Inside);
+        // The frame marks the view itself: it runs round the image, under the tab strip, so
+        // the tabs sit above the view as a CAD window's do.
+        painter.rect_stroke(chrome.body, 0, stroke, StrokeKind::Inside);
         Some(out)
     }
 

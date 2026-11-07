@@ -2125,6 +2125,31 @@ pub const COMMANDS: &[Command] = &[
     entry(
         Route::Views,
         "views",
+        "rename-view-folder",
+        Access::Write,
+        Ids::None,
+        &[
+            req("--file", "FILE"),
+            opt("--store", "ROOT"),
+            req("--from", "PATH"),
+            req("--to", "PATH"),
+        ],
+    ),
+    entry(
+        Route::Views,
+        "views",
+        "remove-view-folder",
+        Access::Write,
+        Ids::None,
+        &[
+            req("--file", "FILE"),
+            opt("--store", "ROOT"),
+            req("--name", "PATH"),
+        ],
+    ),
+    entry(
+        Route::Views,
+        "views",
         "define-preset",
         Access::Write,
         Ids::None,

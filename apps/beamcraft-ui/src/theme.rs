@@ -569,6 +569,8 @@ pub enum Icon {
     InclinedView,
     /// A funnel: filter what a list shows.
     Filter,
+    /// A pencil: rename.
+    Rename,
     /// A box with its hidden edges dashed: the transparent display.
     Transparent,
     /// A box filled in one flat tone: the grey display.
@@ -1116,6 +1118,17 @@ pub fn paint_icon(painter: &Painter, rect: Rect, icon: Icon, line: Color32) {
             ]);
             polyline(&[[7.0, 11.0], [13.0, 17.0]]);
             polyline(&[[13.0, 11.0], [7.0, 17.0]]);
+        }
+        Icon::Rename => {
+            polyline(&[
+                [5.0, 19.0],
+                [5.5, 15.0],
+                [16.0, 4.5],
+                [19.5, 8.0],
+                [9.0, 18.5],
+                [5.0, 19.0],
+            ]);
+            polyline(&[[14.0, 6.5], [17.5, 10.0]]);
         }
         Icon::Filter => {
             polyline(&[

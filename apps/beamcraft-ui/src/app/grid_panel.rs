@@ -350,11 +350,8 @@ impl App {
             });
         }
         ui.add_space(8.0);
-        let footer = if self.grid_note.is_some() {
-            180.0
-        } else {
-            120.0
-        };
+        // The action bar keeps one height; the outcome goes to the status bar.
+        let footer = 120.0;
         egui::ScrollArea::vertical()
             .id_salt("grid-form")
             .max_height((ui.available_height() - footer).max(0.0))
@@ -404,16 +401,7 @@ impl App {
             self.grid_note = None;
             self.set_bench(Bench::Select);
         }
-        if let Some(note) = &self.grid_note {
-            match note {
-                Ok(message) => {
-                    ui.label(message);
-                }
-                Err(message) => {
-                    ui.colored_label(Palette::current(ui).error, message);
-                }
-            }
-        }
+        // Its outcome is told in the status bar (`App::status_note`).
     }
 
     fn start_grid(&mut self) {

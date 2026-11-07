@@ -348,6 +348,8 @@ fn run(args: &[OsString]) -> Run<Json> {
             "--conditions",
         ],
         "remove-view-filter" => &["--file", "--store", "--name"],
+        "rename-view-folder" => &["--file", "--store", "--from", "--to"],
+        "remove-view-folder" => &["--file", "--store", "--name"],
         "define-preset" | "remove-preset" => &["--file", "--name", "--store"],
         "list-presets" => &["--file", "--store"],
         "apply-preset" => &["--file", "--views-file", "--preset", "--view", "--store"],
@@ -408,6 +410,37 @@ fn run(args: &[OsString]) -> Run<Json> {
             book.save_filter(filter, previous).map_err(from_engine)?;
             store(file, &book)?;
             return filters_reply("view_filter_saved", &book);
+        }
+        "rename-view-folder" | "remove-view-folder" => {
+            let mut book = load(file, false)?;
+            let moved = if *command == "rename-view-folder" {
+                let from = options
+                    .get("--from")
+                    .ok_or_else(|| invalid("--from is required"))?;
+                let to = options
+                    .get("--to")
+                    .ok_or_else(|| invalid("--to is required"))?;
+                book.rename_folder(from.trim(), to.trim())
+            } else {
+                book.dissolve_folder(name()?)
+            }
+            .map_err(from_engine)?;
+            store(file, &book)?;
+            return Ok(Json::object([
+                (
+                    "outcome",
+                    Json::text(if *command == "rename-view-folder" {
+                        "view_folder_renamed"
+                    } else {
+                        "view_folder_removed"
+                    }),
+                ),
+                ("views_moved", Json::uint(moved as u64)),
+                (
+                    "folders",
+                    Json::Array(book.folders().map(Json::text).collect()),
+                ),
+            ]));
         }
         "remove-view-filter" => {
             let mut book = load(file, false)?;

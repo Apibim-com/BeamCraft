@@ -437,6 +437,36 @@ fn save_view_names_views_by_default() {
 }
 
 #[test]
+fn a_view_folder_renames_and_removes_without_losing_a_view() {
+    let v = Views::new();
+    v.view(
+        "save-view",
+        &[
+            "--name",
+            "Plan",
+            "--parallel",
+            "xy",
+            "--folder",
+            "Plans/Level 1",
+        ],
+    );
+    let renamed = v.view(
+        "rename-view-folder",
+        &["--from", "Plans/Level 1", "--to", "Plans/Floor 1"],
+    );
+    assert_eq!(text(&renamed, "outcome"), "view_folder_renamed");
+    assert_eq!(at(&renamed, &["views_moved"]).unsigned().unwrap(), 1);
+    let listed = v.view("list-views", &[]);
+    assert_eq!(text(&list(&listed, "views")[0], "folder"), "Plans/Floor 1");
+    let removed = v.view("remove-view-folder", &["--name", "Plans/Floor 1"]);
+    assert_eq!(text(&removed, "outcome"), "view_folder_removed");
+    let listed = v.view("list-views", &[]);
+    assert_eq!(list(&listed, "views").len(), 1, "the view stays");
+    assert_eq!(text(&list(&listed, "views")[0], "folder"), "Plans");
+    v.refuse("remove-view-folder", &["--name", "Missing"]);
+}
+
+#[test]
 fn filters_and_overrides_live_in_the_view_file_and_presets_carry_overrides() {
     let v = Views::new();
     let saved = v.view(

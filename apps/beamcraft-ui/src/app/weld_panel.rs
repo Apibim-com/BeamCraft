@@ -389,14 +389,6 @@ impl App {
                 ],
             );
         });
-        match &self.weld.note {
-            Some(Ok(message)) => {
-                ui.label(message);
-            }
-            Some(Err(message)) => {
-                ui.colored_label(palette.error, message);
-            }
-            None => {}
-        }
+        // Its outcome is told in the status bar (`App::status_note`).
     }
 }

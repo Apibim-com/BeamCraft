@@ -1992,15 +1992,7 @@ impl App {
         if self.props.busy() {
             ui.label("Running…");
         }
-        match &self.props_note {
-            Some(Ok(message)) => {
-                ui.label(message);
-            }
-            Some(Err(message)) => {
-                ui.colored_label(RED, message);
-            }
-            None => {}
-        }
+        // The outcome of an edit is told in the status bar (`App::status_note`).
     }
 
     fn property_actions(&mut self, ui: &mut egui::Ui) {
@@ -2409,15 +2401,7 @@ impl App {
         if self.select_job.is_some() {
             ui.label("Looking up the element…");
         }
-        match &self.edit_note {
-            Some(Ok(message)) => {
-                ui.label(message);
-            }
-            Some(Err(message)) => {
-                ui.colored_label(RED, message);
-            }
-            None => {}
-        }
+        // The outcome of an edit is told in the status bar (`App::status_note`).
     }
 
     fn start_commit(&mut self) {
@@ -7325,6 +7309,41 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_browser_folder_renames_in_place_and_deletes_keeping_its_views() {
+        use super::view_panel::BrowserAction;
+        use beamcraft_engine::views::ModelView;
+        use beamcraft_engine::work_plane::WorkPlane;
+        use beamcraft_model::id::Uuid7;
+        let Some(mut app) = headless() else { return };
+        let mut plan = ModelView::new(
+            Uuid7::parse("019a7bf0-0000-7000-8000-000000000031").unwrap(),
+            "Plan",
+            WorkPlane::default(),
+            5000.0,
+        );
+        plan.folder = "Levlels".into();
+        app.views.book.insert(plan).unwrap();
+        // A wrong name is fixed in place.
+        app.browser_action(BrowserAction::StartRename("Levlels".into()));
+        assert_eq!(
+            app.views.folder_rename,
+            Some(("Levlels".to_owned(), "Levlels".to_owned()))
+        );
+        app.browser_action(BrowserAction::RenameFolder(
+            "Levlels".into(),
+            "Levels".into(),
+        ));
+        assert!(app.views.folder_rename.is_none());
+        let folder_of = |app: &super::App| app.views.book.find("Plan").unwrap().folder.clone();
+        assert_eq!(folder_of(&app), "Levels");
+        // Deleting the folder keeps the view, one level up.
+        app.browser_action(BrowserAction::DeleteFolder("Levels".into()));
+        assert!(app.views.book.find("Plan").is_some(), "the view stays");
+        assert_eq!(folder_of(&app), "");
+        assert!(!app.views.book.folders().any(|f| f == "Levels"));
+    }
+
+    #[test]
     fn the_view_panel_keeps_its_width_from_frame_to_frame() {
         let Some(mut app) = headless() else { return };
         let ctx = egui::Context::default();
@@ -7721,11 +7740,13 @@ pub(crate) mod tests {
         views_frame(&mut app, &ctx, click(inside), &mut labels, &mut rects);
         assert_eq!(app.views.active_pane().unwrap().key, first);
         // The focus is applied after the drawing: the next frame strokes its frame as active.
+        // The frame runs round the view's image, under the tab strip.
         rects.clear();
         views_frame(&mut app, &ctx, vec![], &mut labels, &mut rects);
         let link = crate::theme::Palette::of(ctx.theme()).link;
+        let body = crate::panes::chrome(rect).body;
         assert!(
-            rects.iter().any(|(r, c)| *r == rect && *c == link),
+            rects.iter().any(|(r, c)| *r == body && *c == link),
             "no active frame around {rect:?}: {rects:?}"
         );
         // As tabs of one group only the shown tab takes a click in the body; a click on another

@@ -1037,6 +1037,26 @@ impl App {
             });
     }
 
+    /// What the active editor last has to tell the user (an outcome or a refusal), for the
+    /// status bar: the panel of the bench in use first, then the selection's edits.
+    pub(crate) fn status_note(&self) -> Option<Result<&str, &str>> {
+        let bench_note = match self.bench {
+            Bench::View => self.views.note.as_ref(),
+            Bench::Bolt => self.bolt.note.as_ref(),
+            Bench::Weld => self.weld.note.as_ref(),
+            Bench::Grid => self.grid_note.as_ref(),
+            Bench::Plate | Bench::Beam | Bench::Column => self.tool_note.as_ref(),
+            Bench::Annotations => self.annotation.note.as_ref(),
+            Bench::Move | Bench::Copy | Bench::Delete => self.edit_note.as_ref(),
+            Bench::Select => self.props_note.as_ref().or(self.grid_note.as_ref()),
+            Bench::CutPlane | Bench::Colour => None,
+        };
+        bench_note
+            .or(self.edit_note.as_ref())
+            .or(self.views.note.as_ref())
+            .map(|note| note.as_ref().map(String::as_str).map_err(String::as_str))
+    }
+
     /// The status bar: the selection, snap switches (not available yet) and Details.
     pub(crate) fn status_bar(&mut self, ui: &mut Ui) {
         let palette = Palette::current(ui);
@@ -1090,6 +1110,18 @@ impl App {
                     ui.label(RichText::new(selection).size(10.0).color(palette.muted));
                     if self.select_job.is_some() {
                         ui.label(RichText::new("Looking up…").small().color(palette.muted));
+                    }
+                    // What the active editor has to tell, in one place for every panel.
+                    if let Some(note) = self.status_note() {
+                        ui.separator();
+                        match note {
+                            Ok(message) => {
+                                ui.label(RichText::new(message).size(10.0).color(palette.text));
+                            }
+                            Err(message) => {
+                                ui.label(RichText::new(message).size(10.0).color(palette.error));
+                            }
+                        }
                     }
                     if let Some(error) = &self.error {
                         ui.label(RichText::new(error).small().color(palette.error));

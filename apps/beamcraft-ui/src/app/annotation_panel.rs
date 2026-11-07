@@ -302,12 +302,7 @@ impl App {
                 Tool::None => {}
             }
         }
-        if let Some(note) = &self.annotation.note {
-            match note {
-                Ok(message) => ui.label(message.clone()),
-                Err(message) => ui.colored_label(palette.error, message.clone()),
-            };
-        }
+        // Its outcome is told in the status bar (`App::status_note`).
         ui.add_space(6.0);
         ui.horizontal(|ui| {
             if ui.button("Refresh").clicked() && !self.other_command_running() {

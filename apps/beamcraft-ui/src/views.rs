@@ -785,6 +785,8 @@ pub struct Views {
     pub destination: String,
     /// Whether the new-folder field is shown.
     pub new_folder: bool,
+    /// The folder being renamed in place: its stored path and the name being typed.
+    pub folder_rename: Option<(String, String)>,
     /// The name a "Save as view preset" gets, while its field is shown.
     pub preset_name: Option<String>,
     /// The filter editor: the filter being edited (a working copy) and the name it was saved

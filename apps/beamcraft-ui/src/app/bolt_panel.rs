@@ -1178,15 +1178,7 @@ impl App {
                 kit::prop_text(ui, "Count", &mut self.bolt.count);
             }
         });
-        match &self.bolt.note {
-            Some(Ok(message)) => {
-                ui.label(message);
-            }
-            Some(Err(message)) => {
-                ui.colored_label(palette.error, message);
-            }
-            None => {}
-        }
+        // Its outcome is told in the status bar (`App::status_note`).
     }
 }
 

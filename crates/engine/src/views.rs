@@ -835,6 +835,111 @@ impl ViewBook {
         Ok(())
     }
 
+    /// Renames the folder `from` to `to` (a full path, so a rename may also move it): every
+    /// subfolder and every view inside follows. Refuses the root, a missing folder, an invalid
+    /// target, a target that already exists and a move into the folder's own subtree.
+    pub fn rename_folder(&mut self, from: &str, to: &str) -> Result<usize, CommandError> {
+        if from.is_empty() || !self.folders.contains(from) {
+            return Err(not_found("views.folder", "the folder does not exist"));
+        }
+        if to.is_empty() {
+            return Err(invalid(
+                "views.folder",
+                "the root folder cannot be a target",
+            ));
+        }
+        validate_folder(to)?;
+        if to == from {
+            return Ok(0);
+        }
+        if folder_within(to, from) {
+            return Err(invalid("views.folder", "a folder cannot move into itself"));
+        }
+        if self.folders.contains(to) {
+            return Err(CommandError::new(
+                ErrorCode::DuplicateId,
+                "views.folder",
+                "a folder with that path already exists",
+            ));
+        }
+        let moved = |path: &str| -> String {
+            match path.strip_prefix(from) {
+                Some(rest) => format!("{to}{rest}"),
+                None => path.to_owned(),
+            }
+        };
+        for folder in self.folders.iter().filter(|f| folder_within(f, from)) {
+            validate_folder(&moved(folder))?;
+        }
+        let renamed: Vec<String> = self
+            .folders
+            .iter()
+            .filter(|f| folder_within(f, from))
+            .map(|f| moved(f))
+            .collect();
+        self.folders.retain(|f| !folder_within(f, from));
+        for folder in renamed {
+            self.create_folder_tree(&folder)?;
+        }
+        let mut views = 0usize;
+        for view in &mut self.views {
+            if folder_within(&view.folder, from) {
+                view.folder = moved(&view.folder);
+                views = views.saturating_add(1);
+            }
+        }
+        Ok(views)
+    }
+
+    /// Removes the folder `folder` and keeps what it held: its views and subfolders move up
+    /// into its parent. Returns how many views moved. Refuses the root and a missing folder;
+    /// a subfolder that would collide with one already in the parent is refused whole.
+    pub fn dissolve_folder(&mut self, folder: &str) -> Result<usize, CommandError> {
+        if folder.is_empty() || !self.folders.contains(folder) {
+            return Err(not_found("views.folder", "the folder does not exist"));
+        }
+        let parent = folder.rsplit_once('/').map_or("", |(p, _)| p);
+        let lifted = |path: &str| -> String {
+            let rest = path
+                .strip_prefix(folder)
+                .and_then(|r| r.strip_prefix('/'))
+                .unwrap_or("");
+            match (parent.is_empty(), rest.is_empty()) {
+                (_, true) => parent.to_owned(),
+                (true, false) => rest.to_owned(),
+                (false, false) => format!("{parent}/{rest}"),
+            }
+        };
+        let subfolders: Vec<String> = self
+            .folders
+            .iter()
+            .filter(|f| folder_within(f, folder) && f.as_str() != folder)
+            .map(|f| lifted(f))
+            .collect();
+        if subfolders
+            .iter()
+            .any(|f| self.folders.contains(f) && !folder_within(f, folder))
+        {
+            return Err(CommandError::new(
+                ErrorCode::DuplicateId,
+                "views.folder",
+                "a subfolder has the name of a folder beside it",
+            ));
+        }
+        self.folders.retain(|f| !folder_within(f, folder));
+        for sub in subfolders {
+            self.create_folder_tree(&sub)?;
+        }
+        let mut views = 0usize;
+        for view in &mut self.views {
+            if folder_within(&view.folder, folder) {
+                view.folder = lifted(&view.folder);
+                views = views.saturating_add(1);
+            }
+        }
+        Ok(views)
+    }
+
     /// `base` when no view has that name, else `base (2)`, `base (3)` ... The names in `extra`
     /// count as taken too (a batch's earlier names).
     pub fn unique_name(&self, base: &str, extra: &[String]) -> String {
@@ -1377,6 +1482,45 @@ mod tests {
                 "beam",
             )],
         )
+    }
+
+    #[test]
+    fn a_folder_renames_with_its_contents_and_dissolves_into_its_parent() {
+        let mut book = ViewBook::new();
+        let mut a = view(1, "A");
+        a.folder = "Plans/Level 1".into();
+        let mut b = view(2, "B");
+        b.folder = "Plans/Level 1/Details".into();
+        book.insert(a).unwrap();
+        book.insert(b).unwrap();
+        book.create_folder("Plans/Empty").unwrap();
+        // A rename carries the subfolders and the views.
+        assert_eq!(
+            book.rename_folder("Plans/Level 1", "Plans/Floor 1")
+                .unwrap(),
+            2
+        );
+        assert_eq!(book.get(&id(1)).unwrap().folder, "Plans/Floor 1");
+        assert_eq!(book.get(&id(2)).unwrap().folder, "Plans/Floor 1/Details");
+        assert!(!book.folders().any(|f| f.starts_with("Plans/Level 1")));
+        assert!(
+            book.rename_folder("Plans/Floor 1", "Plans/Empty").is_err(),
+            "taken"
+        );
+        assert!(
+            book.rename_folder("Plans", "Plans/Floor 1/Inner").is_err(),
+            "into itself"
+        );
+        assert!(book.rename_folder("Missing", "X").is_err());
+        // Dissolving keeps everything: the contents move up one level.
+        assert_eq!(book.dissolve_folder("Plans/Floor 1").unwrap(), 2);
+        assert_eq!(book.get(&id(1)).unwrap().folder, "Plans");
+        assert_eq!(book.get(&id(2)).unwrap().folder, "Plans/Details");
+        assert!(book.folders().any(|f| f == "Plans/Details"));
+        assert_eq!(book.len(), 2, "no view is lost");
+        assert_eq!(book.dissolve_folder("Plans").unwrap(), 2);
+        assert_eq!(book.get(&id(1)).unwrap().folder, "");
+        assert_eq!(book.get(&id(2)).unwrap().folder, "Details");
     }
 
     #[test]

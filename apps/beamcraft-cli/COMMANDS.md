@@ -1255,6 +1255,22 @@ write.
 remove-view-filter --file FILE --name NAME [--store ROOT]
 ```
 
+### rename-view-folder
+
+write.
+
+```text
+rename-view-folder --file FILE --from PATH --to PATH [--store ROOT]
+```
+
+### remove-view-folder
+
+write.
+
+```text
+remove-view-folder --file FILE --name PATH [--store ROOT]
+```
+
 ### define-preset
 
 write.
