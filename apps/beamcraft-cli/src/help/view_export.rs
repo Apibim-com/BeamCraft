@@ -13,3 +13,18 @@ pub(super) const HELP: &str = concat!(
     "and the reply as that command prints it, 0 for one not asked, then the bundle; ",
     "--with-grids true uses BCVXFRM2 and adds a third section with pinned grid display data)",
 );
+pub(super) const SCREENSHOT_HELP: &str = concat!(
+    "View screenshot: screenshot-view --store ROOT --out FILE [--width U32] [--height U32] ",
+    "[--samples 1|4] [--yaw RAD] [--pitch RAD] [--projection perspective|ortho] [--zoom F32] ",
+    "[--pan X,Y] [--colour-set TEXT] [--background light|dark] (one viewport render of the ",
+    "verified head through the native renderer in the beamcraft-ui binary, which this command ",
+    "finds next to its own executable; the camera is fitted over the whole scene, --yaw and ",
+    "--pitch, radians, point it from another direction, pitch above the horizon, --projection ",
+    "ortho switches to the orthographic projection, --zoom is the logarithmic zoom and --pan ",
+    "X,Y shifts the fitted target in screen-plane millimetres; --colour-set names a built-in ",
+    "set, Catalogue (the default) or Part classes, or a colour-sets file holding exactly one ",
+    "set of its own, and --background light renders over a light paper tone instead of the ",
+    "dark clear colour; FILE is created new, never overwritten, and one JSON ",
+    "summary is printed; default size is 1280x800; needs a native graphics adapter, so exit ",
+    "code 3 reports that the render backend is unavailable)",
+);
