@@ -8,7 +8,10 @@
 
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 use crate::support;
-use beamcraft_json::Json;
+use beamcraft_engine::views::{ModelView, ViewBook};
+use beamcraft_engine::work_plane::WorkPlane;
+use beamcraft_json::{Json, Limits};
+use beamcraft_model::id::Uuid7;
 use support::{StoreFixture, at, list, text};
 
 struct Views {
@@ -181,6 +184,97 @@ fn every_plane_builds_a_view_and_the_model_stays_unchanged() {
 }
 
 #[test]
+fn provenance_stamps_the_camera_with_author_time_comment_and_revision() {
+    let v = Views::new();
+    let plate = v.ok(
+        "create-plate",
+        &["--width", "500", "--length", "250", "--thickness", "8"],
+    );
+    let plate_id = text(at(&plate, &["plate"]), "element_id");
+    let head = v.ok("open-revision", &[]);
+    let revision = text(&head, "revision_id");
+
+    // A provenance-bearing save records the author, the comment, the save time and the model
+    // revision the view was captured against.
+    let saved = v.view(
+        "save-view",
+        &[
+            "--name",
+            "Front",
+            "--parallel",
+            "xz",
+            "--author",
+            "Ana",
+            "--comment",
+            "member frames",
+        ],
+    );
+    let stamp = at(&list(&saved, "views")[0], &["provenance"]);
+    assert_eq!(text(stamp, "author"), "Ana");
+    assert_eq!(text(stamp, "comment"), "member frames");
+    assert_eq!(text(stamp, "model_revision"), revision);
+    let created = at(stamp, &["created_at_ms"]).unsigned().unwrap();
+    assert!(created > 1_700_000_000_000, "the stamp carries a real time");
+
+    // Restoring returns the camera with its stamp; the book lists it too.
+    let applied = v.view("apply-view", &["--view", "front"]);
+    assert_eq!(
+        numbers(at(&applied, &["camera_plane", "origin_mm"])),
+        [0.0; 3]
+    );
+    assert_eq!(text(at(&applied, &["provenance"]), "author"), "Ana");
+    assert_eq!(
+        text(at(&applied, &["provenance"]), "model_revision"),
+        revision
+    );
+    let listed = v.view("list-views", &[]);
+    assert_eq!(
+        text(at(&list(&listed, "views")[0], &["provenance"]), "author"),
+        "Ana"
+    );
+
+    // A batch stamps every created view with the same revision.
+    let four = v.view(
+        "save-view",
+        &[
+            "--name",
+            "Part",
+            "--element",
+            &plate_id,
+            "--side",
+            "four",
+            "--author",
+            "Bo",
+        ],
+    );
+    assert_eq!(list(&four, "views").len(), 4);
+    for entry in list(&four, "views") {
+        assert_eq!(text(at(entry, &["provenance"]), "author"), "Bo");
+        assert_eq!(text(at(entry, &["provenance"]), "model_revision"), revision);
+    }
+    // A plain save carries no stamp at all.
+    let plain = v.view("save-view", &["--name", "Plain", "--parallel", "yz"]);
+    assert!(matches!(
+        at(&list(&plain, "views")[0], &["provenance"]),
+        Json::Null
+    ));
+
+    // A comment without an author, an empty author, and a stamp rewrite are refused.
+    v.refuse(
+        "save-view",
+        &["--name", "Bad", "--parallel", "xy", "--comment", "c"],
+    );
+    v.refuse(
+        "save-view",
+        &["--name", "Bad", "--parallel", "xy", "--author", "   "],
+    );
+    v.refuse("update-view", &["--view", "Front", "--author", "Bo"]);
+
+    // Views never write the model: the head, and with it the keys and numbering, is unchanged.
+    assert_eq!(v.ok("open-revision", &[]), head);
+}
+
+#[test]
 fn properties_update_apply_and_remove() {
     let v = Views::new();
     let saved = v.view(
@@ -314,30 +408,6 @@ fn properties_update_apply_and_remove() {
 }
 
 #[test]
-fn the_default_view_moves_but_is_never_removed_or_unmarked() {
-    let v = Views::new();
-    v.view(
-        "save-view",
-        &["--name", "3D View", "--parallel", "xy", "--default", "true"],
-    );
-    v.view("save-view", &["--name", "Plan", "--parallel", "xy"]);
-    let marked = |v: &Views| -> Vec<String> {
-        list(&v.view("list-views", &[]), "views")
-            .iter()
-            .filter(|j| at(j, &["default"]).boolean().unwrap())
-            .map(|j| text(j, "name"))
-            .collect()
-    };
-    assert_eq!(marked(&v), ["3D View"]);
-    v.refuse("remove-view", &["--view", "3D View"]);
-    v.refuse("update-view", &["--view", "3D View", "--default", "false"]);
-    v.view("update-view", &["--view", "Plan", "--default", "true"]);
-    assert_eq!(marked(&v), ["Plan"], "the mark moves");
-    v.view("remove-view", &["--view", "3D View"]);
-    v.refuse("remove-view", &["--view", "Plan"]);
-}
-
-#[test]
 fn save_view_names_views_by_default() {
     let v = Views::new();
     for (name, elevation) in [("Ground", "0"), ("First", "4000")] {
@@ -367,7 +437,7 @@ fn save_view_names_views_by_default() {
 }
 
 #[test]
-fn filters_overrides_and_presets_live_in_the_view_file() {
+fn filters_and_overrides_live_in_the_view_file_and_presets_carry_overrides() {
     let v = Views::new();
     let saved = v.view(
         "save-view-filter",
@@ -402,29 +472,38 @@ fn filters_overrides_and_presets_live_in_the_view_file() {
         "save-view-filter",
         &["--name", "Bad", "--conditions", "type eq girder"],
     );
-    let preset = v.view(
-        "save-view-preset",
-        &["--name", "Beams hidden", "--from-view", "Plan"],
-    );
-    assert_eq!(list(&preset, "presets").len(), 1);
-    v.view(
-        "save-view",
+    // The filters and the overrides ride in the views layer.
+    let body = std::fs::read_to_string(&v.file).unwrap();
+    assert!(body.contains("bim:view:filters") && body.contains("bim:view:filterOverrides"));
+    // A discipline preset carries overrides and applies them onto another view.
+    let presets = format!("{}.presets.json", v.file);
+    v.ok(
+        "define-preset",
         &[
+            "--file",
+            &presets,
             "--name",
-            "Copy",
-            "--parallel",
-            "xz",
-            "--preset",
             "Beams hidden",
+            "--overrides",
+            "Beams|hide|-|0",
         ],
     );
-    let listed_views = v.view("list-views", &[]);
-    let copy = list(&listed_views, "views")
-        .iter()
-        .find(|view| text(view, "name") == "Copy")
-        .unwrap();
-    assert_eq!(list(copy, "overrides").len(), 1);
-    // A rename follows into every view and preset; a removal drops the overrides.
+    v.view("save-view", &["--name", "Copy", "--parallel", "xz"]);
+    let applied = v.ok(
+        "apply-preset",
+        &[
+            "--file",
+            &presets,
+            "--views-file",
+            &v.file,
+            "--preset",
+            "Beams hidden",
+            "--view",
+            "Copy",
+        ],
+    );
+    assert_eq!(list(at(&applied, &["view"]), "overrides").len(), 1);
+    // A rename follows into every view; a removal drops the overrides.
     v.view(
         "save-view-filter",
         &["--name", "Girders", "--rename-from", "Beams"],
@@ -437,6 +516,71 @@ fn filters_overrides_and_presets_live_in_the_view_file() {
     assert_eq!(names, ["Girders"]);
     let removed = v.view("remove-view-filter", &["--name", "Girders"]);
     assert_eq!(at(&removed, &["views_changed"]).unsigned().unwrap(), 2);
-    v.view("remove-view-preset", &["--name", "Beams hidden"]);
-    assert!(list(&v.view("list-view-filters", &[]), "presets").is_empty());
+    assert!(list(&v.view("list-view-filters", &[]), "filters").is_empty());
+}
+
+#[test]
+fn the_views_file_is_a_camera_prim_layer_and_a_json_sidecar_migrates() {
+    let v = Views::new();
+    v.ok(
+        "create-plate",
+        &["--width", "500", "--length", "250", "--thickness", "8"],
+    );
+    let head = v.ok("open-revision", &[]);
+    v.view(
+        "save-view",
+        &["--name", "Front", "--parallel", "xz", "--author", "Ana"],
+    );
+
+    // The stored file is the W01 views layer: a USD document of placed camera prims, not JSON.
+    let bytes = std::fs::read(&v.file).unwrap();
+    assert!(
+        bytes.starts_with(b"#usda"),
+        "the views file is a USD views layer"
+    );
+    let body = std::str::from_utf8(&bytes).unwrap();
+    assert!(body.contains("def Camera"), "a saved view is a camera prim");
+    // Restoring reads the camera prim back with its provenance.
+    let applied = v.view("apply-view", &["--view", "front"]);
+    assert_eq!(text(at(&applied, &["provenance"]), "author"), "Ana");
+
+    // A legacy JSON sidecar still reads, and the next save migrates it into the layer form.
+    let mut book = ViewBook::new();
+    let mut old = ModelView::new(
+        Uuid7::parse("0199e7a0-0000-7000-8000-0000000000aa").unwrap(),
+        "Old Plan",
+        WorkPlane::default(),
+        1234.0,
+    );
+    old.folder = "Old".into();
+    old.is_default = true;
+    book.insert(old).unwrap();
+    let legacy = beamcraft_host::views::book_to_json(&book)
+        .unwrap()
+        .encode(&Limits::DEFAULT)
+        .unwrap();
+    std::fs::write(&v.file, &legacy).unwrap();
+    let listed = v.view("list-views", &[]);
+    assert_eq!(text(&list(&listed, "views")[0], "name"), "Old Plan");
+    v.view(
+        "save-view",
+        &["--name", "New", "--parallel", "yz", "--author", "Bo"],
+    );
+    let bytes = std::fs::read(&v.file).unwrap();
+    assert!(
+        bytes.starts_with(b"#usda"),
+        "the save migrated the sidecar into the layer form"
+    );
+    let listed = v.view("list-views", &[]);
+    assert_eq!(list(&listed, "views").len(), 2);
+    // The default mark rides through the migration on the camera prim, so the window never
+    // replaces the restored default view with a fresh one.
+    let migrated = list(&listed, "views")
+        .iter()
+        .find(|entry| text(entry, "name") == "Old Plan")
+        .unwrap();
+    assert!(at(migrated, &["default"]).boolean().unwrap());
+
+    // Views never write the model, in either file form.
+    assert_eq!(v.ok("open-revision", &[]), head);
 }

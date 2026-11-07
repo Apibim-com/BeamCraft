@@ -41,7 +41,10 @@ fn run(args: &[&str]) -> (Option<i32>, String) {
 /// A scratch store directory: with `--store` the generic blob and revision path reaches its command
 /// check, so an undispatched word answers `UNSUPPORTED_COMMAND` instead of an argument refusal.
 fn scratch_store() -> String {
-    let dir = std::env::temp_dir().join(format!("beamcraft-registry-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!(
+        "beamcraft-registry-{}",
+        crate::support::boot_nonce()
+    ));
     std::fs::create_dir_all(&dir).expect("scratch store");
     dir.to_str().expect("utf-8 path").to_owned()
 }
@@ -52,6 +55,24 @@ fn an_unregistered_word_is_unsupported() {
     let (code, out) = run(&["no-such-command", "--store", &store]);
     assert_eq!(code, Some(2));
     assert!(out.contains("UNSUPPORTED_COMMAND"), "{out}");
+}
+
+#[test]
+fn a_command_help_answers_with_help_not_a_refusal() {
+    // Finding 11: `create-plate --help` answered with a JSON INVALID_ARGUMENT refusal
+    // because only the top-level `--help` printed help. A per-command help now answers
+    // with the command family's own sections: exit 0, plain text.
+    let (code, out) = run(&["create-plate", "--help"]);
+    assert_eq!(code, Some(0));
+    assert!(!out.trim_start().starts_with('{'), "{out}");
+    assert!(out.contains("create-plate"), "{out}");
+    let (mid_code, mid_out) = run(&["create-plate", "--thickness", "12", "--help"]);
+    assert_eq!(mid_code, Some(0));
+    assert!(!mid_out.trim_start().starts_with('{'), "{mid_out}");
+    // A `-h` in a value position stays a value: the command refuses it as its argument.
+    let (value_code, value_out) = run(&["create-plate", "--thickness", "-h"]);
+    assert_ne!(value_code, Some(0));
+    assert!(value_out.trim_start().starts_with('{'), "{value_out}");
 }
 
 #[test]

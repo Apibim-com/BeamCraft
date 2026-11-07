@@ -22,9 +22,9 @@ use beamcraft_model::id::Uuid7;
 use std::collections::BTreeSet;
 
 pub use crate::view_filter::{
-    FilterCondition, FilterField, FilterMatch, FilterOverride, ViewFilter, ViewPreset,
+    FilterCondition, FilterField, FilterMatch, FilterOverride, ViewFilter,
 };
-use crate::view_filter::{MAX_FILTERS, MAX_PRESETS, validate_overrides};
+use crate::view_filter::{MAX_FILTERS, validate_overrides};
 
 /// The axis-aligned model box a view works inside, in millimetres. One type serves the views and
 /// the cut plane: V15's [`crate::view_clipping::WorkArea`] is the admission and clipping source
@@ -39,6 +39,10 @@ pub const MAX_FOLDERS: usize = 512;
 pub const MAX_FOLDER_DEPTH: usize = 8;
 /// Most characters in a view name.
 pub const MAX_NAME_CHARS: usize = 128;
+/// Most characters in a provenance author.
+pub const MAX_AUTHOR_CHARS: usize = 128;
+/// Most characters in a provenance comment.
+pub const MAX_COMMENT_CHARS: usize = 512;
 /// Most bytes in a folder path.
 const MAX_FOLDER_BYTES: usize = 512;
 /// Visible height bounds, millimetres.
@@ -162,6 +166,59 @@ pub fn folder_within(folder: &str, parent: &str) -> bool {
             .is_some_and(|rest| rest.starts_with('/'))
 }
 
+/// The W01 provenance of a saved view: who saved the camera, when, why and against which model
+/// revision. It rides on the view in the views layer and is display state only: recording or
+/// restoring it never touches the model, so model keys and numbering stay as they were.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ViewProvenance {
+    /// Who saved the view, 1 to [`MAX_AUTHOR_CHARS`] characters without controls or outer
+    /// spaces.
+    pub author: String,
+    /// Unix time of the save, in milliseconds.
+    pub created_at_ms: u64,
+    /// Free-text comment, at most [`MAX_COMMENT_CHARS`] characters without controls; may be
+    /// empty.
+    pub comment: String,
+    /// The model revision the view was captured against.
+    pub model_revision: Uuid7,
+}
+
+impl ViewProvenance {
+    /// Admits a provenance record; the author is trimmed, the comment is kept as given.
+    pub fn new(
+        author: &str,
+        comment: &str,
+        model_revision: Uuid7,
+        created_at_ms: u64,
+    ) -> Result<Self, CommandError> {
+        let out = Self {
+            author: author.trim().to_owned(),
+            created_at_ms,
+            comment: comment.to_owned(),
+            model_revision,
+        };
+        out.validate()?;
+        Ok(out)
+    }
+
+    /// Admits the record: a bounded, printable author and comment.
+    pub fn validate(&self) -> Result<(), CommandError> {
+        let bounded = |text: &str, max: usize| {
+            text.chars().count() <= max && !text.chars().any(char::is_control)
+        };
+        if !bounded(&self.author, MAX_AUTHOR_CHARS)
+            || self.author.is_empty()
+            || !bounded(&self.comment, MAX_COMMENT_CHARS)
+        {
+            return Err(invalid(
+                "views.provenance",
+                "the provenance needs an author and a comment within their bounds",
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// One named view: its identity, name, view plane and display properties, in model millimetres.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ModelView {
@@ -204,6 +261,15 @@ pub struct ModelView {
     /// The view's filter overrides, in order: the first one whose filter matches an element
     /// decides how it is drawn. Each names a filter of the book.
     pub overrides: Vec<FilterOverride>,
+    /// Representation level (U12) the view loads for every shown part. View display state: it
+    /// changes no snapshot token and no engineering read, which stay on the full body.
+    pub representation: crate::Representation,
+    /// The saved colour set (V17) the view colours by, by name; `None` colours by the model.
+    /// The name resolves against the user's colour sets at display time.
+    pub colour_set: Option<String>,
+    /// The saved view's provenance (W01), when it was saved through a provenance-bearing
+    /// capture; the free view and temporary views carry none.
+    pub provenance: Option<ViewProvenance>,
 }
 
 impl ModelView {
@@ -229,7 +295,28 @@ impl ModelView {
             color: None,
             opacity: 1.0,
             overrides: Vec::new(),
+            representation: crate::Representation::Full,
+            colour_set: None,
+            provenance: None,
         }
+    }
+
+    /// Stamps the provenance of a saved view: who saved it, when, why and against which model
+    /// revision. The camera and display properties stay untouched.
+    pub fn stamp_provenance(
+        &mut self,
+        author: &str,
+        comment: &str,
+        model_revision: Uuid7,
+        created_at_ms: u64,
+    ) -> Result<(), CommandError> {
+        self.provenance = Some(ViewProvenance::new(
+            author,
+            comment,
+            model_revision,
+            created_at_ms,
+        )?);
+        Ok(())
     }
 
     /// Copies the display properties of `source`; identity, name, plane, folder and the
@@ -246,37 +333,8 @@ impl ModelView {
         self.color = source.color;
         self.opacity = source.opacity;
         self.overrides.clone_from(&source.overrides);
-    }
-
-    /// The display properties of this view as a preset named `name`.
-    pub fn to_preset(&self, name: &str) -> ViewPreset {
-        ViewPreset {
-            name: name.trim().to_owned(),
-            projection: self.projection,
-            span_mm: self.span_mm,
-            depth: self.depth,
-            render_mode: self.render_mode,
-            grids_visible: self.grids_visible,
-            hidden_kinds: self.hidden_kinds,
-            color: self.color,
-            opacity: self.opacity,
-            overrides: self.overrides.clone(),
-        }
-    }
-
-    /// Fills the display properties from `preset`; identity, name, plane, folder, work area,
-    /// rotation and the marks stay. No link is kept: a later change of the preset does not
-    /// reach the view.
-    pub fn apply_preset(&mut self, preset: &ViewPreset) {
-        self.projection = preset.projection;
-        self.span_mm = preset.span_mm;
-        self.depth = preset.depth;
-        self.render_mode = preset.render_mode;
-        self.grids_visible = preset.grids_visible;
-        self.hidden_kinds = preset.hidden_kinds;
-        self.color = preset.color;
-        self.opacity = preset.opacity;
-        self.overrides.clone_from(&preset.overrides);
+        self.representation = source.representation;
+        self.colour_set = source.colour_set.clone();
     }
 
     /// Admits the view: name, span, depth, rotation, colour, opacity, folder and work area.
@@ -319,6 +377,16 @@ impl ModelView {
             ));
         }
         validate_folder(&self.folder)?;
+        if let Some(set) = &self.colour_set
+            && (set.is_empty()
+                || set.len() > crate::presets::MAX_NAME_BYTES
+                || set.chars().any(char::is_control))
+        {
+            return Err(invalid(
+                "views.colour_set",
+                "a colour set name is 1 to 64 bytes without controls",
+            ));
+        }
         if let Some(area) = self.work_area {
             WorkArea::new(area.min, area.max)?;
         }
@@ -335,7 +403,11 @@ impl ModelView {
             ));
         }
         WorkPlane::new(self.plane.origin(), self.plane.x(), self.plane.y())?;
-        validate_overrides(&self.overrides)
+        validate_overrides(&self.overrides)?;
+        if let Some(provenance) = &self.provenance {
+            provenance.validate()?;
+        }
+        Ok(())
     }
 
     /// Whether a world point is shown: inside the work area and the depth slab, and the view is
@@ -409,7 +481,6 @@ pub struct ViewBook {
     views: Vec<ModelView>,
     folders: BTreeSet<String>,
     filters: Vec<ViewFilter>,
-    presets: Vec<ViewPreset>,
 }
 
 impl ViewBook {
@@ -423,16 +494,15 @@ impl ViewBook {
         views: Vec<ModelView>,
         folders: impl IntoIterator<Item = String>,
     ) -> Result<Self, CommandError> {
-        Self::from_all(views, folders, Vec::new(), Vec::new())
+        Self::from_all(views, folders, Vec::new())
     }
 
-    /// Admits a whole book with its filters and presets: the filters first, so the views'
-    /// and presets' overrides can name them.
+    /// Admits a whole book with its filters: the filters first, so the views' overrides can
+    /// name them.
     pub fn from_all(
         views: Vec<ModelView>,
         folders: impl IntoIterator<Item = String>,
         filters: Vec<ViewFilter>,
-        presets: Vec<ViewPreset>,
     ) -> Result<Self, CommandError> {
         let mut book = Self::new();
         for folder in folders {
@@ -443,9 +513,6 @@ impl ViewBook {
         }
         for view in views {
             book.insert(view)?;
-        }
-        for preset in presets {
-            book.save_preset(preset)?;
         }
         Ok(book)
     }
@@ -461,19 +528,6 @@ impl ViewBook {
         self.filters
             .iter()
             .find(|f| f.name.to_lowercase() == wanted)
-    }
-
-    /// The presets in book order.
-    pub fn presets(&self) -> &[ViewPreset] {
-        &self.presets
-    }
-
-    /// The preset named `name` (case-insensitively).
-    pub fn preset(&self, name: &str) -> Option<&ViewPreset> {
-        let wanted = name.trim().to_lowercase();
-        self.presets
-            .iter()
-            .find(|p| p.name.to_lowercase() == wanted)
     }
 
     fn check_overrides(&self, overrides: &[FilterOverride]) -> Result<(), CommandError> {
@@ -529,9 +583,6 @@ impl ViewBook {
                     }
                 };
                 self.views.iter_mut().for_each(|v| rename(&mut v.overrides));
-                self.presets
-                    .iter_mut()
-                    .for_each(|p| rename(&mut p.overrides));
             }
             None => {
                 if self.filters.len() >= MAX_FILTERS {
@@ -547,8 +598,7 @@ impl ViewBook {
         Ok(())
     }
 
-    /// Removes the filter named `name` and every override that names it (in views and
-    /// presets), returning how many views lost an override.
+    /// Removes the filter named `name` and every override that names it, returning how many views lost an override.
     pub fn remove_filter(&mut self, name: &str) -> Result<usize, CommandError> {
         let wanted = name.trim().to_lowercase();
         let at = self
@@ -565,49 +615,7 @@ impl ViewBook {
                 touched = touched.saturating_add(1);
             }
         }
-        for preset in &mut self.presets {
-            preset
-                .overrides
-                .retain(|o| o.filter.to_lowercase() != wanted);
-        }
         Ok(touched)
-    }
-
-    /// Adds a preset, or replaces the one with the same name (case-insensitively). Its
-    /// overrides must name filters of the book.
-    pub fn save_preset(&mut self, preset: ViewPreset) -> Result<(), CommandError> {
-        preset.validate()?;
-        self.check_overrides(&preset.overrides)?;
-        let wanted = preset.name.to_lowercase();
-        match self
-            .presets
-            .iter_mut()
-            .find(|p| p.name.to_lowercase() == wanted)
-        {
-            Some(slot) => *slot = preset,
-            None => {
-                if self.presets.len() >= MAX_PRESETS {
-                    return Err(CommandError::new(
-                        ErrorCode::LimitExceeded,
-                        "views.presets",
-                        "the model already has the maximum number of view presets",
-                    ));
-                }
-                self.presets.push(preset);
-            }
-        }
-        Ok(())
-    }
-
-    /// Removes the preset named `name`; views filled from it keep their values.
-    pub fn remove_preset(&mut self, name: &str) -> Result<ViewPreset, CommandError> {
-        let wanted = name.trim().to_lowercase();
-        let at = self
-            .presets
-            .iter()
-            .position(|p| p.name.to_lowercase() == wanted)
-            .ok_or_else(|| not_found("views.preset", "PRESET_UNKNOWN"))?;
-        Ok(self.presets.remove(at))
     }
 
     /// The views in book order.
@@ -1380,42 +1388,13 @@ mod tests {
         book.save_filter(beams(), None).unwrap();
         assert!(book.save_filter(beams(), None).is_err(), "names are unique");
         book.insert(plan.clone()).unwrap();
-        book.save_preset(plan.to_preset("Steel plan")).unwrap();
         let mut renamed = beams();
         renamed.name = "Girders".into();
         book.save_filter(renamed, Some("beams")).unwrap();
         assert_eq!(book.get(&id(1)).unwrap().overrides[0].filter, "Girders");
-        assert_eq!(
-            book.preset("steel plan").unwrap().overrides[0].filter,
-            "Girders"
-        );
         assert_eq!(book.remove_filter("Girders").unwrap(), 1);
         assert!(book.get(&id(1)).unwrap().overrides.is_empty());
-        assert!(book.preset("Steel plan").unwrap().overrides.is_empty());
         assert!(book.remove_filter("Girders").is_err());
-    }
-
-    #[test]
-    fn a_preset_fills_the_display_and_keeps_the_plane() {
-        let mut source = view(1, "Source");
-        source.depth = Some([100.0, 200.0]);
-        source.render_mode = RenderMode::Wireframe;
-        source.opacity = 0.5;
-        let preset = source.to_preset("Thin");
-        let mut target = view(2, "Target");
-        target.folder = "Plans".into();
-        target.apply_preset(&preset);
-        assert_eq!(target.depth, Some([100.0, 200.0]));
-        assert_eq!(target.render_mode, RenderMode::Wireframe);
-        assert_eq!(target.folder, "Plans");
-        assert_eq!(target.name, "Target");
-        let mut book = ViewBook::new();
-        book.save_preset(preset.clone()).unwrap();
-        let mut again = preset;
-        again.opacity = 1.0;
-        book.save_preset(again).unwrap();
-        assert_eq!(book.presets().len(), 1, "same name replaces");
-        assert!(book.remove_preset("THIN").is_ok());
     }
 
     fn grid_a() -> Grid {
@@ -1469,6 +1448,59 @@ mod tests {
         assert!(v.validate().is_err());
         v.name = "x".repeat(129);
         assert!(v.validate().is_err());
+    }
+
+    #[test]
+    fn provenance_stamps_and_validates() {
+        let mut v = view(1, "Section");
+        assert_eq!(v.provenance, None, "a new view carries no provenance");
+        v.stamp_provenance("Ana", "frame front", id(9), 1_760_000_000_000)
+            .unwrap();
+        let stamp = v.provenance.clone().unwrap();
+        assert_eq!(stamp.author, "Ana");
+        assert_eq!(stamp.comment, "frame front");
+        assert_eq!(stamp.model_revision, id(9));
+        assert_eq!(stamp.created_at_ms, 1_760_000_000_000);
+        v.validate().unwrap();
+        // The stamp never moves the camera.
+        let before = v.camera_plane().unwrap();
+        v.stamp_provenance("Bo", "", id(10), 1).unwrap();
+        assert_eq!(v.camera_plane().unwrap(), before);
+        // An author is trimmed; an empty or oversized one is refused, as is an oversized or
+        // control-bearing comment.
+        assert_eq!(
+            ViewProvenance::new("  Ana  ", "", id(9), 0).unwrap().author,
+            "Ana"
+        );
+        assert!(ViewProvenance::new("   ", "", id(9), 0).is_err());
+        assert!(ViewProvenance::new(&"x".repeat(129), "", id(9), 0).is_err());
+        assert!(ViewProvenance::new("Ana", &"x".repeat(513), id(9), 0).is_err());
+        assert!(ViewProvenance::new("A\nB", "", id(9), 0).is_err());
+        assert!(ViewProvenance::new("Ana", "a\tb", id(9), 0).is_err());
+        v.provenance = Some(ViewProvenance {
+            author: "x".repeat(129),
+            created_at_ms: 0,
+            comment: String::new(),
+            model_revision: id(9),
+        });
+        assert!(v.validate().is_err(), "the book validation reads the stamp");
+        v.provenance = None;
+        v.validate().unwrap();
+    }
+
+    #[test]
+    fn a_book_keeps_provenance_through_insert_update_and_find() {
+        let mut book = ViewBook::new();
+        let mut v = view(1, "Section");
+        v.stamp_provenance("Ana", "front", id(9), 42).unwrap();
+        book.insert(v.clone()).unwrap();
+        assert_eq!(book.find("section").unwrap().provenance, v.provenance);
+        let mut updated = v;
+        updated.stamp_provenance("Bo", "", id(10), 43).unwrap();
+        book.update(updated).unwrap();
+        let stored = book.get(&id(1)).unwrap();
+        assert_eq!(stored.provenance.as_ref().unwrap().author, "Bo");
+        assert_eq!(stored.provenance.as_ref().unwrap().model_revision, id(10));
     }
 
     #[test]

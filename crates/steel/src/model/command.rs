@@ -1333,10 +1333,10 @@ pub struct MemberHole {
     /// A point `(u, v, w)` on the hole axis in the member frame, finite, within the coordinate
     /// cap.
     pub axis_point_mm: [f64; 3],
-    /// The unit direction of the hole axis in the member frame. The first slice admits exactly
-    /// one of `(+-1, 0, 0)` or `(0, +-1, 0)`, the section directions; any other direction,
-    /// including one with a component along the member axis, is `UNSUPPORTED_GEOMETRY` until
-    /// G14.2.
+    /// The direction of the hole axis in the member frame: any section-plane direction
+    /// `(u, v, 0)` with a nonzero transverse part (G14.2). The magnitude names nothing — the
+    /// replay normalizes the axis line — and a component along the member axis stays
+    /// `UNSUPPORTED_GEOMETRY` (the kernel cutter is perpendicular to the member axis).
     pub axis_direction: [f64; 3],
     /// How far the cutter reaches.
     pub extent: HoleExtent,
@@ -1359,15 +1359,21 @@ impl MemberHole {
                 "a hole diameter must be positive",
             ));
         }
-        let is_section_direction = matches!(
-            self.axis_direction,
-            [1.0, 0.0, 0.0] | [-1.0, 0.0, 0.0] | [0.0, 1.0, 0.0] | [0.0, -1.0, 0.0]
-        );
-        if !is_section_direction {
+        hole_values_finite(self.axis_direction.iter().copied())?;
+        hole_values_in_cap(self.axis_direction.iter().copied())?;
+        let [u, v, w] = self.axis_direction;
+        if w != 0.0 {
             return Err(CommandError::new(
                 ErrorCode::UnsupportedGeometry,
                 "hole.axis_direction",
-                "only a section direction (+-X_r, +-Y_r) is supported until G14.2",
+                "the hole axis must stay in the member's section plane (no axial component)",
+            ));
+        }
+        if u == 0.0 && v == 0.0 {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "hole.axis_direction",
+                "the hole axis direction needs a nonzero transverse part",
             ));
         }
         self.extent.validate()
@@ -1653,8 +1659,8 @@ pub struct MemberHoleRecord {
     pub ordinal: usize,
     /// A point `(u, v, w)` on the hole axis in the member frame.
     pub axis_point_mm: [f64; 3],
-    /// The unit direction of the hole axis in the member frame: a section direction of the
-    /// first slice (`(+-1, 0, 0)` or `(0, +-1, 0)`).
+    /// The direction of the hole axis in the member frame: any section-plane direction
+    /// `(u, v, 0)` with a nonzero transverse part; the replay normalizes the axis line.
     pub axis_direction: [f64; 3],
     /// How far the cutter reaches.
     pub extent: HoleExtent,
@@ -3511,19 +3517,32 @@ impl CreateBoltGroup {
 /// A14.3 `UpdateBoltGroup`: one atomic edit of an existing group (bolt amendment section 6).
 /// The caller sends the complete new inputs — an edit of one value sends the others unchanged,
 /// and a `repin` sends the digest and definition of the current library entry. A stored A05
-/// group is upgraded by supplying the placement inputs and a fastener.
+/// group is upgraded by supplying the placement inputs and a fastener. A rename travels with
+/// the edit; `None` keeps the stored label.
 #[derive(Debug, Clone, PartialEq)]
 pub struct UpdateBoltGroup {
     /// Identity of the edited group.
     pub target_id: ElementId,
+    /// A new label (`DV-BASE-003`); `None` keeps the stored one.
+    pub name: Option<String>,
     /// The complete new placement inputs.
     pub inputs: BoltGroupInputs,
 }
 
 impl UpdateBoltGroup {
-    /// Admits the request: the inputs and a group that is not one of its own parts
-    /// (`DV-REL-006`).
+    /// Admits the request: the label (`DV-BASE-003`), the inputs and a group that is not one of
+    /// its own parts (`DV-REL-006`).
     pub fn validate_arguments(&self) -> Result<(), CommandError> {
+        if let Some(name) = &self.name
+            && !label_is_valid(name)
+        {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "name",
+                "label must be 1 to 256 bytes without control characters",
+            )
+            .with_rule("DV-BASE-003"));
+        }
         self.inputs.validate_arguments()?;
         if self.inputs.parts.contains(&self.target_id) {
             return Err(CommandError::new(
@@ -3539,9 +3558,17 @@ impl UpdateBoltGroup {
     /// SHA-256 of a versioned, length-prefixed encoding of the validated request.
     pub fn content_fingerprint(&self) -> Result<ContentDigest, CommandError> {
         self.validate_arguments()?;
-        let mut bytes = Vec::with_capacity(64);
-        bytes.extend_from_slice(b"BeamCraft/A14/UpdateBoltGroup/v1\0");
+        let mut bytes = Vec::with_capacity(96 + self.name.as_ref().map_or(0, |n| n.len()));
+        bytes.extend_from_slice(b"BeamCraft/A14/UpdateBoltGroup/v2\0");
         bytes.extend_from_slice(self.target_id.as_bytes());
+        match &self.name {
+            Some(name) => {
+                bytes.push(1);
+                bytes.extend_from_slice(&(name.len() as u64).to_le_bytes());
+                bytes.extend_from_slice(name.as_bytes());
+            }
+            None => bytes.push(0),
+        }
         bytes.extend_from_slice(self.inputs.content_fingerprint()?.as_bytes());
         Sha256::digest(&bytes).map_err(|_| {
             CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
@@ -3641,29 +3668,212 @@ impl ElementMirror {
     }
 }
 
+/// The plate half of an [`ElementPatch`]: the fields only a plate owns. A member
+/// target refuses every field of it (`UNSUPPORTED_PROPERTY`), field by field with the
+/// standing messages.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct PlatePatch {
+    /// Complete replacement of a plate's sparse corner treatment list; empty clears it.
+    pub corners: Option<Vec<PlateCorner>>,
+    /// Complete replacement of a plate's authored contour (A12.3): every point, in order.
+    /// Whether the new contour is a valid plate shape is the engine's decision; the patch
+    /// carries it whole, like a creation.
+    pub contour_points_mm: Option<Vec<[f64; 3]>>,
+    /// New plate thickness in millimetres.
+    pub thickness_mm: Option<f64>,
+    /// New thickness side (A12.1); `Some` names the side to lay the thickness off from the
+    /// contour plane. A plate always has a side (absent means `top`), so there is no clearing.
+    pub thickness_side: Option<PlateSide>,
+}
+
+impl PlatePatch {
+    /// Whether no plate field is named: the patch leaves a plate's own fields alone.
+    pub const fn is_empty(&self) -> bool {
+        self.corners.is_none()
+            && self.contour_points_mm.is_none()
+            && self.thickness_mm.is_none()
+            && self.thickness_side.is_none()
+    }
+
+    /// Whether a named plate field is a shape input, so the body is rebuilt.
+    pub const fn changes_shape(&self) -> bool {
+        self.corners.is_some()
+            || self.contour_points_mm.is_some()
+            || self.thickness_mm.is_some()
+            || self.thickness_side.is_some()
+    }
+
+    /// Admits the corner treatments: at most [`CONTOUR_POINT_CAP`] of them, each valid, no
+    /// duplicate or out-of-range vertex (`LIMIT_EXCEEDED`, `INVALID_ARGUMENT`).
+    pub(crate) fn validate_corners(&self) -> Result<(), CommandError> {
+        let Some(corners) = &self.corners else {
+            return Ok(());
+        };
+        if corners.len() > CONTOUR_POINT_CAP {
+            return Err(CommandError::new(
+                ErrorCode::LimitExceeded,
+                "corner",
+                "too many corner treatments",
+            ));
+        }
+        let mut seen = Vec::new();
+        for corner in corners {
+            corner.validate()?;
+            if corner.vertex >= CONTOUR_POINT_CAP || seen.contains(&corner.vertex) {
+                return Err(CommandError::new(
+                    ErrorCode::InvalidArgument,
+                    "corner",
+                    "duplicate or out-of-range corner vertex",
+                ));
+            }
+            seen.push(corner.vertex);
+        }
+        Ok(())
+    }
+
+    /// Admits the contour: at least [`MIN_CONTOUR_POINTS`] and at most
+    /// [`CONTOUR_POINT_CAP`] points, all finite and within the coordinate cap.
+    pub(crate) fn validate_contour(&self) -> Result<(), CommandError> {
+        let Some(points) = &self.contour_points_mm else {
+            return Ok(());
+        };
+        let count = points.len();
+        if count > CONTOUR_POINT_CAP {
+            return Err(CommandError::new(
+                ErrorCode::LimitExceeded,
+                "contour_points_mm",
+                "contour has more than 1024 points",
+            )
+            .with_rule("DV-LIM-001"));
+        }
+        if count < MIN_CONTOUR_POINTS {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "contour_points_mm",
+                "contour needs at least 3 points",
+            ));
+        }
+        if points.iter().flatten().any(|v| !v.is_finite()) {
+            return Err(CommandError::new(
+                ErrorCode::NonFiniteNumber,
+                "contour_points_mm",
+                "value is not finite",
+            )
+            .with_rule("DV-ATTR-003"));
+        }
+        if points.iter().flatten().any(|v| v.abs() > COORDINATE_CAP_MM) {
+            return Err(CommandError::new(
+                ErrorCode::LimitExceeded,
+                "contour_points_mm",
+                "coordinate exceeds the coordinate cap",
+            )
+            .with_rule("DV-LIM-001"));
+        }
+        Ok(())
+    }
+
+    /// Admits the thickness: finite (`NON_FINITE_NUMBER`) and at most 1,000,000 mm
+    /// (`LIMIT_EXCEEDED`).
+    pub(crate) fn validate_thickness(&self) -> Result<(), CommandError> {
+        let Some(t) = self.thickness_mm else {
+            return Ok(());
+        };
+        if !t.is_finite() {
+            return Err(CommandError::new(
+                ErrorCode::NonFiniteNumber,
+                "thickness_mm",
+                "value is not finite",
+            )
+            .with_rule("DV-ATTR-003"));
+        }
+        if t > DIMENSION_CAP_MM {
+            return Err(CommandError::new(
+                ErrorCode::LimitExceeded,
+                "thickness_mm",
+                "thickness exceeds the dimension cap",
+            )
+            .with_rule("DV-LIM-001"));
+        }
+        Ok(())
+    }
+}
+
+/// The member half of an [`ElementPatch`]: the fields only a member owns. A plate target
+/// refuses every field of it (`UNSUPPORTED_PROPERTY`), field by field with the standing
+/// messages.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct MemberPatch {
+    /// The complete replacement of a member's path points, two for a straight member and at
+    /// least three for a polybeam. The whole path is replaced; there is no per-point setter.
+    pub axis_points_mm: Option<Vec<[f64; 3]>>,
+    /// A member's new pinned profile definition (replaces the standing one; the body is
+    /// rebuilt from it). Whether the digest names a profile definition is the engine's
+    /// decision.
+    pub profile: Option<ContentDigest>,
+}
+
+impl MemberPatch {
+    /// Whether no member field is named: the patch leaves a member's own fields alone.
+    pub const fn is_empty(&self) -> bool {
+        self.axis_points_mm.is_none() && self.profile.is_none()
+    }
+
+    /// Whether a named member field is a shape input, so the body is rebuilt.
+    pub const fn changes_shape(&self) -> bool {
+        self.axis_points_mm.is_some() || self.profile.is_some()
+    }
+
+    /// Admits the path: at most [`MAX_MEMBER_PATH_POINTS`] points, all finite and within the
+    /// coordinate cap.
+    pub(crate) fn validate_path(&self) -> Result<(), CommandError> {
+        let Some(points) = &self.axis_points_mm else {
+            return Ok(());
+        };
+        if points.len() > MAX_MEMBER_PATH_POINTS {
+            return Err(CommandError::new(
+                ErrorCode::LimitExceeded,
+                "axis_points_mm",
+                "path has more than 1024 points",
+            )
+            .with_rule("DV-LIM-001"));
+        }
+        if points.iter().flatten().any(|v| !v.is_finite()) {
+            return Err(CommandError::new(
+                ErrorCode::NonFiniteNumber,
+                "axis_points_mm",
+                "value is not finite",
+            )
+            .with_rule("DV-ATTR-003"));
+        }
+        if points.iter().flatten().any(|v| v.abs() > COORDINATE_CAP_MM) {
+            return Err(CommandError::new(
+                ErrorCode::LimitExceeded,
+                "axis_points_mm",
+                "coordinate exceeds the coordinate cap",
+            )
+            .with_rule("DV-LIM-001"));
+        }
+        Ok(())
+    }
+}
+
 /// A typed patch of supported authored fields (F04 section 7 `UpdateElement`). A field that is
 /// `None` is left unchanged. `material` distinguishes no change (`None`), clearing the reference
 /// (`Some(None)`) and pinning a definition (`Some(Some(digest))`). There is no raw USD setter.
+///
+/// The patch is split by element kind: the generic fields every kind shares stand on the
+/// patch, and each kind's own fields live in its [`PlatePatch`] or [`MemberPatch`] half. A half
+/// is carried whole and unnamed fields default, so a request mixes kinds only when it names
+/// fields of both halves — the engine refuses the wrong half on the target. The bytes of the
+/// content fingerprint are pinned per field and unchanged by the split.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct ElementPatch {
-    /// Complete replacement of a plate's sparse corner treatment list; empty clears it.
-    pub corners: Option<Vec<PlateCorner>>,
-    /// Complete replacement of a plate's authored contour (A12.3): every point, in order. A
-    /// member has no contour. Whether the new contour is a valid plate shape is the engine's
-    /// decision; the patch carries it whole, like a creation.
-    pub contour_points_mm: Option<Vec<[f64; 3]>>,
     /// New label.
     pub name: Option<String>,
     /// New authored integer part class (P15).
     pub class: Option<i32>,
     /// New material reference, or its explicit removal.
     pub material: Option<Option<ContentDigest>>,
-    /// New plate thickness in millimetres (a plate only).
-    pub thickness_mm: Option<f64>,
-    /// New thickness side of a plate (A12.1); `Some` names the side to lay the thickness off
-    /// from the contour plane. A plate always has a side (absent means `top`), so there is no
-    /// clearing.
-    pub thickness_side: Option<PlateSide>,
     /// New placement translation in millimetres, absolute; the rotation is kept (a move).
     pub translation_mm: Option<[f64; 3]>,
     /// New placement rotation, absolute. Replaces the stored quaternion (the identity resets a
@@ -3672,9 +3882,6 @@ pub struct ElementPatch {
     /// D2: new level assignment of a plate, beam or column, or its explicit removal
     /// (`Some(None)`). Whether the level exists is the engine's decision.
     pub level: Option<Option<ElementId>>,
-    /// P12: the complete replacement of a member's path points, two for a straight member and
-    /// at least three for a polybeam. The whole path is replaced; there is no per-point setter.
-    pub axis_points_mm: Option<Vec<[f64; 3]>>,
     /// T03: rotate the element about a world axis, relative to its current placement. Mutually
     /// exclusive with `translation_mm`, `orientation_xyzw` and `mirror`.
     pub rotate: Option<ElementRotate>,
@@ -3685,10 +3892,17 @@ pub struct ElementPatch {
     /// two-point move form is its `to - from`). Mutually exclusive with `translation_mm`,
     /// `rotate` and `mirror`.
     pub move_mm: Option<[f64; 3]>,
-    /// A member's new pinned profile definition (replaces the standing one; the body is rebuilt
-    /// from it). A plate has no profile. Whether the digest names a profile definition is the
-    /// engine's decision.
-    pub profile: Option<ContentDigest>,
+    /// The plate's own fields; empty for a patch that leaves them alone.
+    pub plate: PlatePatch,
+    /// The member's own fields; empty for a patch that leaves them alone.
+    pub member: MemberPatch,
+}
+
+impl ElementPatch {
+    /// The member profile the patch pins, if any; a plate has none.
+    pub const fn pinned_profile(&self) -> Option<ContentDigest> {
+        self.member.profile
+    }
 }
 
 /// F04 section 7 `UpdateElement`: the target element and a typed patch.
@@ -3707,76 +3921,19 @@ impl UpdateElement {
     /// target's kind and the geometry are the engine's decisions.
     pub fn validate_arguments(&self) -> Result<(), CommandError> {
         let patch = &self.patch;
-        if let Some(corners) = &patch.corners {
-            if corners.len() > CONTOUR_POINT_CAP {
-                return Err(CommandError::new(
-                    ErrorCode::LimitExceeded,
-                    "corner",
-                    "too many corner treatments",
-                ));
-            }
-            let mut seen = Vec::new();
-            for corner in corners {
-                corner.validate()?;
-                if corner.vertex >= CONTOUR_POINT_CAP || seen.contains(&corner.vertex) {
-                    return Err(CommandError::new(
-                        ErrorCode::InvalidArgument,
-                        "corner",
-                        "duplicate or out-of-range corner vertex",
-                    ));
-                }
-                seen.push(corner.vertex);
-            }
-        }
-        if let Some(points) = &patch.contour_points_mm {
-            let count = points.len();
-            if count > CONTOUR_POINT_CAP {
-                return Err(CommandError::new(
-                    ErrorCode::LimitExceeded,
-                    "contour_points_mm",
-                    "contour has more than 1024 points",
-                )
-                .with_rule("DV-LIM-001"));
-            }
-            if count < MIN_CONTOUR_POINTS {
-                return Err(CommandError::new(
-                    ErrorCode::InvalidArgument,
-                    "contour_points_mm",
-                    "contour needs at least 3 points",
-                ));
-            }
-            if points.iter().flatten().any(|v| !v.is_finite()) {
-                return Err(CommandError::new(
-                    ErrorCode::NonFiniteNumber,
-                    "contour_points_mm",
-                    "value is not finite",
-                )
-                .with_rule("DV-ATTR-003"));
-            }
-            if points.iter().flatten().any(|v| v.abs() > COORDINATE_CAP_MM) {
-                return Err(CommandError::new(
-                    ErrorCode::LimitExceeded,
-                    "contour_points_mm",
-                    "coordinate exceeds the coordinate cap",
-                )
-                .with_rule("DV-LIM-001"));
-            }
-        }
-        if patch.corners.is_none()
-            && patch.contour_points_mm.is_none()
+        patch.plate.validate_corners()?;
+        patch.plate.validate_contour()?;
+        if patch.plate.is_empty()
+            && patch.member.is_empty()
             && patch.class.is_none()
             && patch.name.is_none()
             && patch.material.is_none()
-            && patch.thickness_mm.is_none()
-            && patch.thickness_side.is_none()
             && patch.translation_mm.is_none()
             && patch.orientation_xyzw.is_none()
             && patch.level.is_none()
-            && patch.axis_points_mm.is_none()
             && patch.rotate.is_none()
             && patch.mirror.is_none()
             && patch.move_mm.is_none()
-            && patch.profile.is_none()
         {
             return Err(CommandError::new(
                 ErrorCode::InvalidArgument,
@@ -3822,7 +3979,7 @@ impl UpdateElement {
             }
             // A mirror re-encodes the member through its path symmetry: replacing the path in
             // the same patch would mirror through one path and re-encode through another.
-            if patch.mirror.is_some() && patch.axis_points_mm.is_some() {
+            if patch.mirror.is_some() && patch.member.axis_points_mm.is_some() {
                 return Err(CommandError::new(
                     ErrorCode::InvalidArgument,
                     "changes",
@@ -3859,50 +4016,8 @@ impl UpdateElement {
             )
             .with_rule("DV-BASE-003"));
         }
-        if let Some(t) = patch.thickness_mm {
-            if !t.is_finite() {
-                return Err(CommandError::new(
-                    ErrorCode::NonFiniteNumber,
-                    "thickness_mm",
-                    "value is not finite",
-                )
-                .with_rule("DV-ATTR-003"));
-            }
-            if t > DIMENSION_CAP_MM {
-                return Err(CommandError::new(
-                    ErrorCode::LimitExceeded,
-                    "thickness_mm",
-                    "thickness exceeds the dimension cap",
-                )
-                .with_rule("DV-LIM-001"));
-            }
-        }
-        if let Some(points) = &patch.axis_points_mm {
-            if points.len() > MAX_MEMBER_PATH_POINTS {
-                return Err(CommandError::new(
-                    ErrorCode::LimitExceeded,
-                    "axis_points_mm",
-                    "path has more than 1024 points",
-                )
-                .with_rule("DV-LIM-001"));
-            }
-            if points.iter().flatten().any(|v| !v.is_finite()) {
-                return Err(CommandError::new(
-                    ErrorCode::NonFiniteNumber,
-                    "axis_points_mm",
-                    "value is not finite",
-                )
-                .with_rule("DV-ATTR-003"));
-            }
-            if points.iter().flatten().any(|v| v.abs() > COORDINATE_CAP_MM) {
-                return Err(CommandError::new(
-                    ErrorCode::LimitExceeded,
-                    "axis_points_mm",
-                    "coordinate exceeds the coordinate cap",
-                )
-                .with_rule("DV-LIM-001"));
-            }
-        }
+        patch.plate.validate_thickness()?;
+        patch.member.validate_path()?;
         Ok(())
     }
 
@@ -3935,7 +4050,7 @@ impl UpdateElement {
                 bytes.extend_from_slice(digest.as_bytes());
             }
         }
-        match self.patch.thickness_mm {
+        match self.patch.plate.thickness_mm {
             Some(t) => {
                 bytes.push(1);
                 bytes.extend_from_slice(&canonical_f64_bytes(t).map_err(|_| {
@@ -3987,7 +4102,7 @@ impl UpdateElement {
             }
         }
         // Appended only when present, so the fingerprints of earlier patches are unchanged.
-        if let Some(side) = self.patch.thickness_side {
+        if let Some(side) = self.patch.plate.thickness_side {
             bytes.push(5);
             bytes.push(match side {
                 PlateSide::Top => 1,
@@ -3996,12 +4111,12 @@ impl UpdateElement {
             });
         }
         // Appended only when present, so the fingerprints of earlier patches are unchanged.
-        if let Some(profile) = &self.patch.profile {
+        if let Some(profile) = &self.patch.member.profile {
             bytes.extend_from_slice(&[7, 1]);
             bytes.extend_from_slice(profile.as_bytes());
         }
         // Appended only when present, so the fingerprints of earlier patches are unchanged.
-        if let Some(points) = &self.patch.axis_points_mm {
+        if let Some(points) = &self.patch.member.axis_points_mm {
             bytes.extend_from_slice(&[6, 1]);
             bytes.extend_from_slice(&(points.len() as u64).to_le_bytes());
             for v in points.iter().flatten().copied() {
@@ -4015,7 +4130,7 @@ impl UpdateElement {
                 })?);
             }
         }
-        if let Some(corners) = &self.patch.corners {
+        if let Some(corners) = &self.patch.plate.corners {
             bytes.extend_from_slice(b"A12.3/corner-patch/v1\0");
             bytes.extend_from_slice(&(corners.len() as u64).to_le_bytes());
             for corner in corners {
@@ -4034,7 +4149,7 @@ impl UpdateElement {
             }
         }
         // Appended only when present, so the fingerprints of earlier patches are unchanged.
-        if let Some(points) = &self.patch.contour_points_mm {
+        if let Some(points) = &self.patch.plate.contour_points_mm {
             bytes.extend_from_slice(b"A12.3/contour-patch/v1\0");
             bytes.extend_from_slice(&(points.len() as u64).to_le_bytes());
             for v in points.iter().flatten().copied() {
@@ -5234,7 +5349,10 @@ mod tests {
         let update = |side: Option<PlateSide>| UpdateElement {
             target_id: id(5),
             patch: ElementPatch {
-                thickness_side: side,
+                plate: PlatePatch {
+                    thickness_side: side,
+                    ..PlatePatch::default()
+                },
                 ..ElementPatch::default()
             },
         };
@@ -5260,6 +5378,231 @@ mod tests {
             },
         };
         assert_ne!(rename.content_fingerprint().unwrap(), bottom);
+    }
+
+    /// Pins the `BeamCraft/P04/UpdateElement/v2` bytes field by field: the digest of one
+    /// patch per field, captured before the `ElementPatch` split moved the plate and member
+    /// fields into their payload halves. Stored journal fingerprints compare against these
+    /// bytes on a replayed operation, so a changed digest here is an `OP_ID_REUSE` waiting to
+    /// happen and stops the suite instead.
+    #[test]
+    fn the_update_element_fingerprint_bytes_are_pinned_per_field() {
+        let digest = |patch: ElementPatch| {
+            UpdateElement {
+                target_id: id(5),
+                patch,
+            }
+            .content_fingerprint()
+            .unwrap()
+            .to_string()
+        };
+        let material = Sha256::digest(b"material").unwrap();
+        let profile = Sha256::digest(b"profile").unwrap();
+        let level = ElementId::parse("019a7bf0-0000-7000-8000-0000000000a0").unwrap();
+        let pinned: &[(&str, &str, ElementPatch)] = &[
+            (
+                "name",
+                "a3c8e4575a77d961eb27db2875eb16f5d676fbf4203ff1d2de1f1db98423bce4",
+                ElementPatch {
+                    name: Some("A".into()),
+                    ..ElementPatch::default()
+                },
+            ),
+            (
+                "class",
+                "865c0552da985cefe5bc00d03f40e54364c3a23cd3d4f946830978cb0738f644",
+                ElementPatch {
+                    class: Some(7),
+                    ..ElementPatch::default()
+                },
+            ),
+            (
+                "material_pin",
+                "24f4c19e66ddbe0a6b8a98b26d8d7bb2cac5fb2e997bc7867aad8031c27d6a06",
+                ElementPatch {
+                    material: Some(Some(material)),
+                    ..ElementPatch::default()
+                },
+            ),
+            (
+                "material_clear",
+                "849fc6b30e190d74d3427b56e107dbb76d6ac103032cd18318aa463ee6a31d8e",
+                ElementPatch {
+                    material: Some(None),
+                    ..ElementPatch::default()
+                },
+            ),
+            (
+                "thickness",
+                "03477b1a8c5f135d5dfa50db80872fa2011191d60757953988b70302b8282980",
+                ElementPatch {
+                    plate: PlatePatch {
+                        thickness_mm: Some(12.5),
+                        ..PlatePatch::default()
+                    },
+                    ..ElementPatch::default()
+                },
+            ),
+            (
+                "translation",
+                "49b36a593adcbbd6995ee7cd72df5cb018b93119447f8579db0a13c1de682fe8",
+                ElementPatch {
+                    translation_mm: Some([1.0, 2.0, 3.0]),
+                    ..ElementPatch::default()
+                },
+            ),
+            (
+                "level_set",
+                "d092836bce4c10c3ab14dfb99a4f90640cdcf0417c9bf190bec0818d0fb0a512",
+                ElementPatch {
+                    level: Some(Some(level)),
+                    ..ElementPatch::default()
+                },
+            ),
+            (
+                "level_clear",
+                "5b089e758cb52c9af96d61d568dfbe43603e86d6ae77004c5bca8f08a851bb92",
+                ElementPatch {
+                    level: Some(None),
+                    ..ElementPatch::default()
+                },
+            ),
+            (
+                "orientation",
+                "54e4884d1964d46fbdadc24ce2ae09c8db7122cf3cf632acaf11c81916d2d58d",
+                ElementPatch {
+                    orientation_xyzw: Some([0.0, 0.0, 0.0, 1.0]),
+                    ..ElementPatch::default()
+                },
+            ),
+            (
+                "side",
+                "919f1137a16872ed1b05cd7bfd119038cc3e6d1cfc6dec814539b460399639e8",
+                ElementPatch {
+                    plate: PlatePatch {
+                        thickness_side: Some(PlateSide::Bottom),
+                        ..PlatePatch::default()
+                    },
+                    ..ElementPatch::default()
+                },
+            ),
+            (
+                "profile",
+                "b4d010df931ae17e54a4cf4b1d1585d8956a3d07dfe5e7c6bc4f65263dabbfbe",
+                ElementPatch {
+                    member: MemberPatch {
+                        profile: Some(profile),
+                        ..MemberPatch::default()
+                    },
+                    ..ElementPatch::default()
+                },
+            ),
+            (
+                "axis",
+                "c76bcbfed55bbfa1e1832cbd196814e00b49eb5cc51286282d12304b49f2c710",
+                ElementPatch {
+                    member: MemberPatch {
+                        axis_points_mm: Some(vec![[0.0; 3], [1000.0, 0.0, 0.0]]),
+                        ..MemberPatch::default()
+                    },
+                    ..ElementPatch::default()
+                },
+            ),
+            (
+                "corners",
+                "6e1800c090f95ba6df73e84b3066b895d64c47d28aedb0bedc4ea2e07f653789",
+                ElementPatch {
+                    plate: PlatePatch {
+                        corners: Some(vec![PlateCorner {
+                            vertex: 1,
+                            treatment: CornerTreatment::Round { radius_mm: 25.0 },
+                        }]),
+                        ..PlatePatch::default()
+                    },
+                    ..ElementPatch::default()
+                },
+            ),
+            (
+                "contour",
+                "b05e186a41efd6c2bf9ea430137214060672ecc41c83397acb128fd2e25cd1b4",
+                ElementPatch {
+                    plate: PlatePatch {
+                        contour_points_mm: Some(vec![
+                            [0.0; 3],
+                            [1000.0, 0.0, 0.0],
+                            [1000.0, 500.0, 0.0],
+                        ]),
+                        ..PlatePatch::default()
+                    },
+                    ..ElementPatch::default()
+                },
+            ),
+            (
+                "rotate",
+                "d112b6aa902ca9b8f78174474b1ca6cb835d734a5e0eb3dccff46bec230b9ed5",
+                ElementPatch {
+                    rotate: Some(ElementRotate {
+                        pivot_mm: [0.0; 3],
+                        axis: [0.0, 0.0, 1.0],
+                        angle_rad: core::f64::consts::FRAC_PI_2,
+                    }),
+                    ..ElementPatch::default()
+                },
+            ),
+            (
+                "mirror",
+                "236ad4e66ef469e2b659c8aebcb7d0d54fc4228d61b4fdf2f7055974218cd4e4",
+                ElementPatch {
+                    mirror: Some(ElementMirror {
+                        point_mm: [0.0; 3],
+                        normal: [1.0, 0.0, 0.0],
+                    }),
+                    ..ElementPatch::default()
+                },
+            ),
+            (
+                "move",
+                "d59fbe0781344fa3cfaa10e56ae0728658210a1f9928d831479d29cbbc23f64b",
+                ElementPatch {
+                    move_mm: Some([10.0, 0.0, -5.0]),
+                    ..ElementPatch::default()
+                },
+            ),
+            (
+                "combined",
+                "f260ff470f2fa02ecae3708a29a43847d8c57156f8c9f11a1fe7e7e6e7e68f2b",
+                ElementPatch {
+                    name: Some("B".into()),
+                    class: Some(3),
+                    material: Some(Some(material)),
+                    level: Some(Some(level)),
+                    plate: PlatePatch {
+                        thickness_mm: Some(8.0),
+                        thickness_side: Some(PlateSide::Top),
+                        corners: Some(vec![PlateCorner {
+                            vertex: 0,
+                            treatment: CornerTreatment::Chamfer {
+                                d1_mm: 10.0,
+                                d2_mm: 20.0,
+                            },
+                        }]),
+                        contour_points_mm: Some(vec![
+                            [0.0; 3],
+                            [1000.0, 0.0, 0.0],
+                            [1000.0, 500.0, 0.0],
+                        ]),
+                    },
+                    member: MemberPatch {
+                        profile: Some(profile),
+                        axis_points_mm: Some(vec![[0.0; 3], [1000.0, 0.0, 0.0]]),
+                    },
+                    ..ElementPatch::default()
+                },
+            ),
+        ];
+        for (name, expected, patch) in pinned {
+            assert_eq!(&digest(patch.clone()), expected, "field {name}");
+        }
     }
 
     #[test]
@@ -5755,10 +6098,29 @@ mod tests {
         assert!(
             UpdateBoltGroup {
                 target_id: id(1),
+                name: None,
                 inputs: inputs.clone(),
             }
             .validate_arguments()
             .is_ok()
+        );
+        // The label is part of the edit's content: a rename under a retried operation id is
+        // reuse, never a silent replay.
+        assert_ne!(
+            UpdateBoltGroup {
+                target_id: id(1),
+                name: Some("G9".into()),
+                inputs: inputs.clone(),
+            }
+            .content_fingerprint()
+            .unwrap(),
+            UpdateBoltGroup {
+                target_id: id(1),
+                name: None,
+                inputs: inputs.clone(),
+            }
+            .content_fingerprint()
+            .unwrap()
         );
         // Every input and the part order are part of the content; equal inputs are equal.
         let variant = |mutate: &dyn Fn(&mut BoltGroupInputs)| {
@@ -5927,5 +6289,670 @@ mod tests {
         let other = patch(Some(Some(id(10)))).content_fingerprint().unwrap();
         let clear = patch(Some(None)).content_fingerprint().unwrap();
         assert!(set != other && set != clear && other != clear);
+    }
+
+    fn linear(spacing_mm: f64) -> ArrayStep {
+        ArrayStep::Linear {
+            direction: [1.0, 0.0, 0.0],
+            spacing_mm,
+        }
+    }
+
+    fn polar(angle_rad: f64) -> ArrayStep {
+        ArrayStep::Polar {
+            point_mm: [0.0; 3],
+            axis: [0.0, 0.0, 1.0],
+            angle_rad,
+        }
+    }
+
+    fn array(step: ArrayStep) -> ArrayElements {
+        ArrayElements {
+            source_id: id(5),
+            name: Some("Rung".into()),
+            new_ids: vec![id(6), id(7)],
+            step,
+        }
+    }
+
+    #[test]
+    fn array_elements_admission_refuses_the_limits_and_pins_its_v1_fingerprint() {
+        assert!(array(linear(600.0)).validate_arguments().is_ok());
+        assert!(
+            array(polar(core::f64::consts::FRAC_PI_2))
+                .validate_arguments()
+                .is_ok()
+        );
+        let error = |command: ArrayElements| {
+            let error = command.validate_arguments().unwrap_err();
+            (error.code, error.field)
+        };
+        // The copy count is one to MAX_ARRAY_COPIES, all distinct and different from the source.
+        let many: Vec<ElementId> = (0..=MAX_ARRAY_COPIES).map(|i| id(i as u8 + 30)).collect();
+        assert_eq!(
+            error(ArrayElements {
+                new_ids: Vec::new(),
+                ..array(linear(600.0))
+            }),
+            (ErrorCode::LimitExceeded, "new_ids")
+        );
+        assert_eq!(
+            error(ArrayElements {
+                new_ids: many,
+                ..array(linear(600.0))
+            }),
+            (ErrorCode::LimitExceeded, "new_ids")
+        );
+        assert_eq!(
+            error(ArrayElements {
+                new_ids: vec![id(5), id(6)],
+                ..array(linear(600.0))
+            }),
+            (ErrorCode::DuplicateId, "new_ids")
+        );
+        assert_eq!(
+            error(ArrayElements {
+                new_ids: vec![id(6), id(6)],
+                ..array(linear(600.0))
+            }),
+            (ErrorCode::DuplicateId, "new_ids")
+        );
+        assert_eq!(
+            error(ArrayElements {
+                name: Some(String::new()),
+                ..array(linear(600.0))
+            }),
+            (ErrorCode::InvalidArgument, "name")
+        );
+        // A linear step: finite values, a nonzero direction, a positive spacing in the cap.
+        let nan = |mut values: [f64; 3], at: usize| {
+            values[at] = f64::NAN;
+            values
+        };
+        assert_eq!(
+            error(ArrayElements {
+                step: ArrayStep::Linear {
+                    direction: nan([1.0, 0.0, 0.0], 2),
+                    spacing_mm: 600.0,
+                },
+                ..array(linear(600.0))
+            }),
+            (ErrorCode::NonFiniteNumber, "step")
+        );
+        assert_eq!(
+            error(ArrayElements {
+                step: ArrayStep::Linear {
+                    direction: [0.0; 3],
+                    spacing_mm: 600.0,
+                },
+                ..array(linear(600.0))
+            }),
+            (ErrorCode::InvalidArgument, "step")
+        );
+        for spacing in [0.0, -600.0, COORDINATE_CAP_MM + 1.0] {
+            assert_eq!(
+                error(array(linear(spacing))).0,
+                ErrorCode::LimitExceeded,
+                "spacing {spacing}"
+            );
+        }
+        // A polar step: finite values, a nonzero axis, a nonzero angle in the rotation cap.
+        assert_eq!(
+            error(ArrayElements {
+                step: ArrayStep::Polar {
+                    point_mm: nan([0.0; 3], 1),
+                    axis: [0.0, 0.0, 1.0],
+                    angle_rad: core::f64::consts::FRAC_PI_2,
+                },
+                ..array(polar(core::f64::consts::FRAC_PI_2))
+            }),
+            (ErrorCode::NonFiniteNumber, "step")
+        );
+        assert_eq!(
+            error(ArrayElements {
+                step: ArrayStep::Polar {
+                    point_mm: [0.0; 3],
+                    axis: nan([0.0, 0.0, 1.0], 0),
+                    angle_rad: f64::NAN,
+                },
+                ..array(polar(core::f64::consts::FRAC_PI_2))
+            }),
+            (ErrorCode::NonFiniteNumber, "step")
+        );
+        assert_eq!(
+            error(ArrayElements {
+                step: ArrayStep::Polar {
+                    point_mm: [0.0; 3],
+                    axis: [0.0; 3],
+                    angle_rad: core::f64::consts::FRAC_PI_2,
+                },
+                ..array(polar(core::f64::consts::FRAC_PI_2))
+            }),
+            (ErrorCode::InvalidArgument, "step")
+        );
+        for angle in [0.0, ROLL_CAP_RAD + 0.1, -ROLL_CAP_RAD - 0.1] {
+            assert_eq!(
+                error(array(polar(angle))).0,
+                ErrorCode::LimitExceeded,
+                "angle {angle}"
+            );
+        }
+        // The `T03/ArrayElements/v1` bytes are pinned: a stored journal replay compares its
+        // fingerprints against them, so a silent layout change would be an `OP_ID_REUSE`
+        // waiting to happen and stops here instead. One digest per step kind.
+        let pinned: &[(&str, &str, ArrayElements)] = &[
+            (
+                "linear",
+                "4c49e790c5694a21579de7a558694d29720bd308f561f8a4e033bfd3f4430491",
+                array(linear(600.0)),
+            ),
+            (
+                "polar",
+                "9f23457085737ab8b1466ee624da3efde2bff82ce6b30d09c1752025b5667056",
+                array(polar(core::f64::consts::FRAC_PI_2)),
+            ),
+        ];
+        for (name, expected, command) in pinned {
+            assert_eq!(
+                &command.clone().content_fingerprint().unwrap().to_string(),
+                expected,
+                "step {name}"
+            );
+        }
+        // Every distinct argument changes the digest; a clone keeps it.
+        let base = array(linear(600.0)).content_fingerprint().unwrap();
+        let polar_base = array(polar(core::f64::consts::FRAC_PI_2))
+            .content_fingerprint()
+            .unwrap();
+        assert_eq!(array(linear(600.0)).content_fingerprint().unwrap(), base);
+        for changed in [
+            ArrayElements {
+                source_id: id(8),
+                ..array(linear(600.0))
+            },
+            ArrayElements {
+                name: None,
+                ..array(linear(600.0))
+            },
+            ArrayElements {
+                name: Some("Riser".into()),
+                ..array(linear(600.0))
+            },
+            ArrayElements {
+                new_ids: vec![id(6), id(9)],
+                ..array(linear(600.0))
+            },
+            ArrayElements {
+                new_ids: vec![id(6), id(7), id(9)],
+                ..array(linear(600.0))
+            },
+            array(linear(601.0)),
+            array(polar(core::f64::consts::FRAC_PI_2)),
+        ] {
+            assert_ne!(changed.content_fingerprint().unwrap(), base);
+        }
+        // The direction and the signed angle are part of the bytes.
+        let mut direction = array(linear(600.0));
+        direction.step = ArrayStep::Linear {
+            direction: [0.0, 1.0, 0.0],
+            spacing_mm: 600.0,
+        };
+        assert_ne!(direction.content_fingerprint().unwrap(), base);
+        let flipped = array(polar(-core::f64::consts::FRAC_PI_2));
+        assert_ne!(flipped.content_fingerprint().unwrap(), polar_base);
+    }
+
+    #[test]
+    fn a_relative_transform_patch_takes_no_sibling_transform_absolute_placement_or_path_swap() {
+        // The three relative transforms of T03 compose with the current placement, so a patch
+        // names at most one of them, no absolute placement field beside it, and no member path
+        // replacement beside a mirror (the mirror re-encodes through the stored path).
+        fn patch(mutate: impl FnOnce(&mut ElementPatch)) -> UpdateElement {
+            let mut patch = ElementPatch::default();
+            mutate(&mut patch);
+            UpdateElement {
+                target_id: id(5),
+                patch,
+            }
+        }
+        let rotate = ElementRotate {
+            pivot_mm: [0.0; 3],
+            axis: [0.0, 0.0, 1.0],
+            angle_rad: core::f64::consts::FRAC_PI_2,
+        };
+        let mirror = ElementMirror {
+            point_mm: [0.0; 3],
+            normal: [1.0, 0.0, 0.0],
+        };
+        let code_and_message = |update: UpdateElement| {
+            let error = update.validate_arguments().unwrap_err();
+            (error.code, error.message)
+        };
+        // One relative transform alone is admitted.
+        assert!(
+            patch(|p| p.rotate = Some(rotate))
+                .validate_arguments()
+                .is_ok()
+        );
+        assert!(
+            patch(|p| p.mirror = Some(mirror))
+                .validate_arguments()
+                .is_ok()
+        );
+        assert!(
+            patch(|p| p.move_mm = Some([10.0, 0.0, -5.0]))
+                .validate_arguments()
+                .is_ok()
+        );
+        // A transform composes with the placement, so absolute placement fields are refused.
+        for mutate in [
+            |p: &mut ElementPatch| p.translation_mm = Some([5.0; 3]),
+            |p: &mut ElementPatch| p.orientation_xyzw = Some([0.0, 0.0, 0.0, 1.0]),
+        ] {
+            assert_eq!(
+                code_and_message(patch(|p| {
+                    p.rotate = Some(rotate);
+                    mutate(p);
+                })),
+                (
+                    ErrorCode::InvalidArgument,
+                    "a relative transform takes no absolute placement fields"
+                ),
+            );
+        }
+        // Two transforms in one patch are refused; compose them with two updates.
+        for (name, mutate) in [
+            ("rotate+mirror", None),
+            ("rotate+move", Some([10.0, 0.0, -5.0])),
+        ] {
+            assert_eq!(
+                code_and_message(patch(|p| {
+                    p.rotate = Some(rotate);
+                    match mutate {
+                        Some(offset) => p.move_mm = Some(offset),
+                        None => p.mirror = Some(mirror),
+                    }
+                })),
+                (
+                    ErrorCode::InvalidArgument,
+                    "relative transforms are separate patches; compose them with two updates"
+                ),
+                "{name}"
+            );
+        }
+        assert_eq!(
+            code_and_message(patch(|p| {
+                p.mirror = Some(mirror);
+                p.move_mm = Some([10.0, 0.0, -5.0]);
+            })),
+            (
+                ErrorCode::InvalidArgument,
+                "relative transforms are separate patches; compose them with two updates"
+            ),
+        );
+        // A mirror re-encodes through the stored path: a path replacement in the same patch
+        // would mirror through one path and re-encode through another.
+        assert_eq!(
+            code_and_message(patch(|p| {
+                p.mirror = Some(mirror);
+                p.member.axis_points_mm = Some(vec![[0.0; 3], [1000.0, 0.0, 0.0]]);
+            })),
+            (
+                ErrorCode::InvalidArgument,
+                "a mirror takes no path replacement in the same patch"
+            ),
+        );
+        // A transform is not a placement field: non-positional fields ride along.
+        let combined = patch(|p| {
+            p.rotate = Some(rotate);
+            p.name = Some("Turned".into());
+            p.plate.thickness_mm = Some(12.0);
+        });
+        assert!(combined.validate_arguments().is_ok());
+        // The transform arguments carry their own rules through the patch admission.
+        assert_eq!(
+            code_and_message(patch(|p| {
+                p.rotate = Some(ElementRotate {
+                    pivot_mm: [0.0; 3],
+                    axis: [0.0; 3],
+                    angle_rad: core::f64::consts::FRAC_PI_2,
+                });
+            })),
+            (
+                ErrorCode::InvalidArgument,
+                "the rotation axis is the zero vector"
+            ),
+        );
+        let capped = |angle_rad: f64| {
+            patch(|p| {
+                p.rotate = Some(ElementRotate {
+                    pivot_mm: [0.0; 3],
+                    axis: [0.0, 0.0, 1.0],
+                    angle_rad,
+                })
+            })
+            .validate_arguments()
+            .unwrap_err()
+            .code
+        };
+        assert_eq!(capped(ROLL_CAP_RAD + 0.1), ErrorCode::LimitExceeded);
+        assert_eq!(capped(f64::NAN), ErrorCode::NonFiniteNumber);
+        assert_eq!(
+            code_and_message(patch(|p| {
+                p.mirror = Some(ElementMirror {
+                    point_mm: [0.0; 3],
+                    normal: [0.0; 3],
+                });
+            })),
+            (
+                ErrorCode::InvalidArgument,
+                "the mirror normal is the zero vector"
+            ),
+        );
+        let move_error = patch(|p| p.move_mm = Some([f64::NAN, 0.0, 0.0]))
+            .validate_arguments()
+            .unwrap_err();
+        assert_eq!(move_error.code, ErrorCode::NonFiniteNumber);
+        assert_eq!(move_error.field, "move_mm");
+        assert_eq!(move_error.rule_id, Some("DV-ATTR-003"));
+    }
+
+    /// Pins the `A10/BendPlate/v1` and `A11/CreateLoftedPlate/v1` bytes: the digests of one
+    /// command per stored layout (fold, cylinder roll, cone roll, loft). The engines compare a
+    /// replayed command's digest against the stored one, so a changed byte layout here is an
+    /// `OP_ID_REUSE` waiting to happen and stops the suite instead.
+    #[test]
+    fn the_bend_plate_and_lofted_plate_v1_fingerprints_are_pinned() {
+        let bend = |spec| BendPlate {
+            target_id: id(5),
+            operation_id: OpId::parse("019a7bf0-0000-7000-8000-0000000000b0").unwrap(),
+            spec,
+        };
+        let fold = BendSpec::Fold {
+            a_mm: [250.0, 0.0, 0.0],
+            b_mm: [250.0, 500.0, 0.0],
+            radius_mm: 5.0,
+            angle_rad: core::f64::consts::FRAC_PI_2,
+        };
+        let cylinder = BendSpec::Roll {
+            a_mm: [0.0, 0.0, 0.0],
+            b_mm: [100.0, 0.0, 0.0],
+            radius_mm: 8.0,
+            radius_b_mm: None,
+        };
+        let cone = BendSpec::Roll {
+            a_mm: [0.0, 0.0, 0.0],
+            b_mm: [100.0, 0.0, 0.0],
+            radius_mm: 8.0,
+            radius_b_mm: Some(12.0),
+        };
+        let pinned: &[(&str, &str, BendPlate)] = &[
+            (
+                "fold",
+                "419f742838fc0e294f813a05e1c60e257052eac558dada88c4140c51578d9d3c",
+                bend(fold),
+            ),
+            (
+                "roll_cylinder",
+                "2afe99ee8e1df6d1a91a332e54c375f8b8ca9a88cb96c02a56275920db7d2c4a",
+                bend(cylinder),
+            ),
+            (
+                "roll_cone",
+                "f2b7860c675793653051166aa3a220c4c8798e42455085c2110d95c272b76e36",
+                bend(cone),
+            ),
+        ];
+        for (name, expected, command) in pinned {
+            assert_eq!(
+                &command.clone().content_fingerprint().unwrap().to_string(),
+                expected,
+                "layout {name}"
+            );
+        }
+        // Every distinct argument changes the digest; the fold and the two rolls differ.
+        let base = bend(fold).content_fingerprint().unwrap();
+        for changed in [
+            BendPlate {
+                target_id: id(6),
+                ..bend(fold)
+            },
+            BendPlate {
+                operation_id: OpId::parse("019a7bf0-0000-7000-8000-0000000000b1").unwrap(),
+                ..bend(fold)
+            },
+            bend(cylinder),
+            bend(cone),
+            BendPlate {
+                spec: BendSpec::Fold {
+                    a_mm: [250.0, 0.0, 0.0],
+                    b_mm: [250.0, 500.0, 0.0],
+                    radius_mm: 5.0,
+                    angle_rad: -core::f64::consts::FRAC_PI_2,
+                },
+                ..bend(fold)
+            },
+            BendPlate {
+                spec: BendSpec::Fold {
+                    a_mm: [250.0, 0.0, 0.0],
+                    b_mm: [250.0, 500.0, 0.0],
+                    radius_mm: 6.0,
+                    angle_rad: core::f64::consts::FRAC_PI_2,
+                },
+                ..bend(fold)
+            },
+        ] {
+            assert_ne!(changed.content_fingerprint().unwrap(), base);
+        }
+        // The argument rules of a bend, independent of the plate: a positive radius, a fold
+        // angle in the open range (-pi, pi), two distinct line points, and a cone whose two
+        // radii differ (an equal-radius cone would read back as a cylinder on replay).
+        let code = |spec: BendSpec| spec.validate().unwrap_err().code;
+        assert!(fold.validate().is_ok());
+        assert!(cylinder.validate().is_ok());
+        assert!(cone.validate().is_ok());
+        for spec in [
+            BendSpec::Fold {
+                a_mm: [250.0, 0.0, 0.0],
+                b_mm: [250.0, 500.0, 0.0],
+                radius_mm: 0.0,
+                angle_rad: core::f64::consts::FRAC_PI_2,
+            },
+            BendSpec::Roll {
+                a_mm: [0.0, 0.0, 0.0],
+                b_mm: [100.0, 0.0, 0.0],
+                radius_mm: -8.0,
+                radius_b_mm: None,
+            },
+        ] {
+            assert_eq!(code(spec), ErrorCode::InvalidArgument);
+        }
+        for angle in [0.0, core::f64::consts::PI, -core::f64::consts::PI] {
+            assert_eq!(
+                code(BendSpec::Fold {
+                    a_mm: [250.0, 0.0, 0.0],
+                    b_mm: [250.0, 500.0, 0.0],
+                    radius_mm: 5.0,
+                    angle_rad: angle,
+                }),
+                ErrorCode::InvalidArgument,
+                "angle {angle}"
+            );
+        }
+        assert_eq!(
+            code(BendSpec::Fold {
+                a_mm: [250.0, 0.0, 0.0],
+                b_mm: [250.0, 0.0, 0.0],
+                radius_mm: 5.0,
+                angle_rad: core::f64::consts::FRAC_PI_2,
+            }),
+            ErrorCode::InvalidArgument
+        );
+        assert_eq!(
+            code(BendSpec::Fold {
+                a_mm: [f64::NAN, 0.0, 0.0],
+                b_mm: [250.0, 500.0, 0.0],
+                radius_mm: 5.0,
+                angle_rad: core::f64::consts::FRAC_PI_2,
+            }),
+            ErrorCode::NonFiniteNumber
+        );
+        assert_eq!(
+            code(BendSpec::Roll {
+                a_mm: [0.0, 0.0, 0.0],
+                b_mm: [100.0, 0.0, 0.0],
+                radius_mm: 8.0,
+                radius_b_mm: Some(8.0),
+            }),
+            ErrorCode::InvalidArgument
+        );
+        assert_eq!(
+            code(BendSpec::Fold {
+                a_mm: [250.0, 0.0, 0.0],
+                b_mm: [250.0, 500.0, 0.0],
+                radius_mm: DIMENSION_CAP_MM + 1.0,
+                angle_rad: core::f64::consts::FRAC_PI_2,
+            }),
+            ErrorCode::LimitExceeded
+        );
+        // The lofted-plate digest: one command per layout, then its distinct arguments.
+        let loft = CreateLoftedPlate {
+            new_id: id(7),
+            name: "Transition".into(),
+            class: 3,
+            start_points_mm: vec![
+                [0.0, 0.0, 0.0],
+                [600.0, 0.0, 0.0],
+                [600.0, 400.0, 0.0],
+                [0.0, 400.0, 0.0],
+            ],
+            end_points_mm: vec![
+                [100.0, 100.0, 1200.0],
+                [500.0, 100.0, 1200.0],
+                [500.0, 300.0, 1200.0],
+                [100.0, 300.0, 1200.0],
+            ],
+            placement: Placement::IDENTITY,
+            material_digest: None,
+        };
+        assert!(loft.validate_arguments().is_ok());
+        assert_eq!(
+            loft.clone().content_fingerprint().unwrap().to_string(),
+            "f4b517785689ed63dfd445615fadeeeb2043d5031f053a38a703bcc4666a185c"
+        );
+        let material = Sha256::digest(b"material").unwrap();
+        let loft_base = loft.content_fingerprint().unwrap();
+        for changed in [
+            CreateLoftedPlate {
+                new_id: id(8),
+                ..loft.clone()
+            },
+            CreateLoftedPlate {
+                name: "Reducer".into(),
+                ..loft.clone()
+            },
+            CreateLoftedPlate {
+                class: 0,
+                ..loft.clone()
+            },
+            CreateLoftedPlate {
+                start_points_mm: vec![
+                    [0.0, 0.0, 0.0],
+                    [600.0, 0.0, 0.0],
+                    [600.0, 400.0, 0.0],
+                    [1.0, 400.0, 0.0],
+                ],
+                ..loft.clone()
+            },
+            CreateLoftedPlate {
+                end_points_mm: vec![
+                    [100.0, 100.0, 1200.0],
+                    [500.0, 100.0, 1200.0],
+                    [500.0, 300.0, 1200.0],
+                    [100.0, 300.0, 1201.0],
+                ],
+                ..loft.clone()
+            },
+            CreateLoftedPlate {
+                placement: Placement {
+                    translation_mm: [10.0, 0.0, 0.0],
+                    orientation_xyzw: [0.0, 0.0, 0.0, 1.0],
+                },
+                ..loft.clone()
+            },
+            CreateLoftedPlate {
+                material_digest: Some(material),
+                ..loft.clone()
+            },
+        ] {
+            assert_ne!(changed.content_fingerprint().unwrap(), loft_base, "loft");
+        }
+        assert_ne!(
+            loft.content_fingerprint().unwrap(),
+            bend(fold).content_fingerprint().unwrap()
+        );
+        // The loft argument rules: the label rule, three to 1024 points per contour, the same
+        // vertex count, finiteness, the coordinate cap and the placement rules.
+        let loft_error = |loft: CreateLoftedPlate| {
+            let error = loft.validate_arguments().unwrap_err();
+            (error.code, error.field.to_owned())
+        };
+        assert_eq!(
+            loft_error(CreateLoftedPlate {
+                name: String::new(),
+                ..loft.clone()
+            }),
+            (ErrorCode::InvalidArgument, "name".to_owned())
+        );
+        assert_eq!(
+            loft_error(CreateLoftedPlate {
+                start_points_mm: vec![[0.0; 3], [600.0, 0.0, 0.0]],
+                end_points_mm: vec![[100.0; 3], [500.0, 100.0, 1200.0]],
+                ..loft.clone()
+            }),
+            (ErrorCode::InvalidArgument, "start_points_mm".to_owned())
+        );
+        assert_eq!(
+            loft_error(CreateLoftedPlate {
+                end_points_mm: loft.end_points_mm[..3].to_vec(),
+                ..loft.clone()
+            }),
+            (ErrorCode::InvalidArgument, "end_points_mm".to_owned())
+        );
+        assert_eq!(
+            loft_error(CreateLoftedPlate {
+                start_points_mm: vec![[0.0; 3]; CONTOUR_POINT_CAP + 1],
+                end_points_mm: vec![[0.0; 3]; CONTOUR_POINT_CAP + 1],
+                ..loft.clone()
+            }),
+            (ErrorCode::LimitExceeded, "start_points_mm".to_owned())
+        );
+        let mut nan_start = loft.start_points_mm.clone();
+        nan_start[0][2] = f64::NAN;
+        assert_eq!(
+            loft_error(CreateLoftedPlate {
+                start_points_mm: nan_start,
+                ..loft.clone()
+            }),
+            (ErrorCode::NonFiniteNumber, "start_points_mm".to_owned())
+        );
+        let mut far_start = loft.start_points_mm.clone();
+        far_start[0][0] = COORDINATE_CAP_MM + 1.0;
+        assert_eq!(
+            loft_error(CreateLoftedPlate {
+                start_points_mm: far_start,
+                ..loft.clone()
+            }),
+            (ErrorCode::LimitExceeded, "start_points_mm".to_owned())
+        );
+        let mut nan_placement = loft.clone();
+        nan_placement.placement.translation_mm = [f64::NAN, 0.0, 0.0];
+        assert_eq!(
+            loft_error(nan_placement),
+            (
+                ErrorCode::NonFiniteNumber,
+                "placement.translation_mm".to_owned()
+            )
+        );
     }
 }

@@ -38,48 +38,17 @@ fn text(ui: &mut egui::Ui, label: &str, value: &mut String) {
     });
 }
 
-/// Width of the label column of the view panel's rows.
-const FIELD_LABEL: f32 = 92.0;
+/// Slack left at the end of a row that fills the panel (the kit's).
+const FIT: f32 = crate::kit::FIT;
 
-/// Slack left at the end of a row that fills the panel: a row sized to the exact available
-/// width can come out a pixel wider, and the resizable panel would follow it wider every frame.
-const FIT: f32 = 6.0;
-
-/// One property row, as in a Revit properties grid: the label column, the value beside it,
-/// and a thin rule under the row.
+/// One property row of the properties grid (the kit's).
 fn row(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui)) {
-    let palette = theme::Palette::current(ui);
-    let response = ui.horizontal(|ui| {
-        ui.add_sized(
-            [FIELD_LABEL, 20.0],
-            egui::Label::new(egui::RichText::new(label).size(12.0).color(palette.muted)).truncate(),
-        );
-        add(ui);
-    });
-    let rect = response.response.rect;
-    ui.painter().hline(
-        rect.x_range(),
-        rect.max.y + 1.0,
-        egui::Stroke::new(1.0, palette.rule.gamma_multiply(0.6)),
-    );
+    crate::kit::prop_row(ui, label, add);
 }
 
-/// A collapsible group of the properties grid, as Revit groups its properties: a filled bar
-/// with the group's title, its rows under it.
+/// A collapsible group of the properties grid (the kit's group bar).
 fn section(ui: &mut egui::Ui, title: &str, open: bool, add: impl FnOnce(&mut egui::Ui)) {
-    let palette = theme::Palette::current(ui);
-    egui::Frame::new()
-        .fill(palette.head)
-        .inner_margin(egui::Margin::symmetric(4, 1))
-        .show(ui, |ui| {
-            ui.set_width((ui.available_width() - FIT).max(40.0));
-            egui::CollapsingHeader::new(egui::RichText::new(title).strong().size(12.0))
-                .id_salt(("view-section", title))
-                .default_open(open)
-                .show_unindented(ui, |ui| {
-                    egui::Frame::new().fill(palette.surface).show(ui, add);
-                });
-        });
+    let _ = crate::kit::section(ui, "view", title, open, add);
 }
 
 /// One tab of the project browser: its icon, and its name beside the icon while it is the
@@ -127,6 +96,20 @@ fn browser_tab(ui: &mut egui::Ui, icon: theme::Icon, label: &str, active: bool) 
     response.on_hover_text(label)
 }
 
+/// The number of views under a browser node, as a small rounded count at the end of its row.
+fn count_pill(ui: &mut egui::Ui, count: usize) {
+    let palette = theme::Palette::current(ui);
+    let text = count.to_string();
+    let galley = ui
+        .painter()
+        .layout_no_wrap(text, egui::FontId::proportional(10.5), palette.muted);
+    let size = egui::vec2((galley.size().x + 10.0).max(18.0), 16.0);
+    let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+    ui.painter().rect_filled(rect, 8, palette.head);
+    ui.painter()
+        .galley(rect.center() - galley.size() / 2.0, galley, palette.muted);
+}
+
 /// What one row of the project browser shows.
 #[derive(Default)]
 struct BrowserRow<'a> {
@@ -144,64 +127,76 @@ struct BrowserRow<'a> {
 fn browser_row(ui: &mut egui::Ui, row: BrowserRow<'_>) -> egui::Response {
     let palette = theme::Palette::current(ui);
     let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(ui.available_width(), 26.0),
+        egui::vec2(
+            (ui.available_width() - crate::kit::FIT).max(40.0),
+            crate::kit::ROW_HEIGHT,
+        ),
         egui::Sense::click_and_drag(),
     );
+    let painter = ui.painter();
     if row.selected {
-        ui.painter().rect_filled(rect, 4, palette.select);
+        painter.rect_filled(rect, 3, palette.select);
     } else if response.hovered() {
-        ui.painter().rect_filled(rect, 4, palette.head);
+        painter.rect_filled(rect, 3, palette.head);
     }
     if response.has_focus() {
-        ui.painter().rect_stroke(
+        painter.rect_stroke(
             rect,
-            4,
+            3,
             egui::Stroke::new(1.0, palette.link),
             egui::StrokeKind::Inside,
         );
     }
-    let centre = |x: f32| egui::pos2(x, rect.center().y);
-    if let Some(icon) = row.icon {
-        theme::paint_icon(
-            ui.painter(),
-            egui::Rect::from_center_size(centre(rect.left() + 14.0), egui::Vec2::splat(16.0)),
-            icon,
-            palette.text,
+    // An open view carries an accent bar at its left edge, the way an open tab is marked.
+    if row.open {
+        painter.rect_filled(
+            egui::Rect::from_min_size(
+                rect.left_top() + egui::vec2(0.0, 4.0),
+                egui::vec2(2.0, rect.height() - 8.0),
+            ),
+            1,
+            palette.link,
         );
     }
-    let mut right = rect.right() - 8.0;
+    let centre = |x: f32| egui::pos2(x, rect.center().y);
+    let ink = if row.selected {
+        palette.text
+    } else {
+        palette.muted
+    };
+    if let Some(icon) = row.icon {
+        theme::paint_icon(
+            painter,
+            egui::Rect::from_center_size(centre(rect.left() + 14.0), egui::Vec2::splat(16.0)),
+            icon,
+            ink,
+        );
+    }
+    let mut right = rect.right() - 6.0;
     let mut mark = |icon: theme::Icon, colour: egui::Color32| {
         theme::paint_icon(
-            ui.painter(),
-            egui::Rect::from_center_size(centre(right - 7.0), egui::Vec2::splat(14.0)),
+            painter,
+            egui::Rect::from_center_size(centre(right - 6.0), egui::Vec2::splat(12.0)),
             icon,
             colour,
         );
-        right -= 18.0;
+        right -= 16.0;
     };
-    if row.default {
-        mark(theme::Icon::Home, palette.text);
-    }
     if row.favorite {
         mark(theme::Icon::Star, palette.link);
     }
     if row.temporary {
         mark(theme::Icon::Recent, palette.muted);
     }
-    if row.open {
-        ui.painter()
-            .circle_filled(centre(right - 4.0), 3.0, palette.link);
-        right -= 14.0;
-    }
     let colour = if row.temporary && !row.selected {
         palette.muted
     } else {
         palette.text
     };
-    ui.painter()
+    painter
         .with_clip_rect(egui::Rect::from_min_max(
             rect.min,
-            egui::pos2(right, rect.max.y),
+            egui::pos2(right - 2.0, rect.max.y),
         ))
         .text(
             egui::pos2(rect.left() + 28.0, rect.center().y),
@@ -210,13 +205,16 @@ fn browser_row(ui: &mut egui::Ui, row: BrowserRow<'_>) -> egui::Response {
             egui::FontId::proportional(12.0),
             colour,
         );
-    let hint = if row.temporary {
-        format!("{} (temporary: it is not saved)", row.name)
-    } else if row.default {
-        format!("{} (the default view)", row.name)
-    } else {
-        row.name.to_owned()
-    };
+    let mut hint = row.name.to_owned();
+    if row.default {
+        hint.push_str(" — the default view");
+    }
+    if row.temporary {
+        hint.push_str(" — temporary, not saved");
+    }
+    if row.open {
+        hint.push_str(" — open");
+    }
     response
         .widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, row.selected, &hint));
     response.on_hover_text(hint)
@@ -1228,17 +1226,11 @@ impl App {
             );
             return;
         }
-        ui.horizontal(|ui| {
-            theme::icon(ui, theme::Icon::Search, 16.0, palette.muted);
-            ui.add(
-                egui::TextEdit::singleline(&mut self.views.search)
-                    .hint_text("Search views")
-                    .char_limit(128)
-                    .desired_width((ui.available_width() - FIT).max(40.0)),
-            );
-        });
+        // One row: the search field, then the new-folder button and the filter menu. A filter
+        // that is on lights the funnel, so a short list never looks like a missing view.
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
+            crate::kit::search_field(ui, &mut self.views.search, "Search views", 56.0);
             if theme::icon_toggle(
                 ui,
                 theme::Icon::NewFolder,
@@ -1253,50 +1245,49 @@ impl App {
                     .iter()
                     .next()
                     .and_then(|id| self.views.book.get(id))
-                    .map_or(crate::views::ViewKind::ThreeD, crate::views::view_kind);
+                    .map_or(crate::views::ViewKind::Plan, crate::views::view_kind);
                 self.views.new_folder = !self.views.new_folder;
                 self.views.folder_parent = (kind, String::new());
                 self.views.destination.clear();
             }
-            ui.add_space(4.0);
-            let quick = theme::icon_toggle(
+            let filtering = self.views.quick_access || self.views.favorites_only;
+            let funnel = theme::icon_toggle(
                 ui,
-                theme::Icon::Recent,
-                "Quick access: favourites, temporary and open views",
-                self.views.quick_access,
+                theme::Icon::Filter,
+                "Show: quick access, favourites, previews",
+                filtering || self.views.previews_on,
             );
-            if quick.clicked() {
-                self.views.quick_access = !self.views.quick_access;
-            }
-            let fav = theme::icon_toggle(
-                ui,
-                theme::Icon::Star,
-                "Favourites only",
-                self.views.favorites_only,
-            );
-            if fav.clicked() {
-                self.views.favorites_only = !self.views.favorites_only;
-            }
-            let previews = theme::icon_toggle(
-                ui,
-                theme::Icon::Preview,
-                "Show previews",
-                self.views.previews_on,
-            );
-            if previews.clicked() {
-                self.views.previews_on = !self.views.previews_on;
-            }
-            if self.views.selected.len() > 1 {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let label = format!("Open {} selected views", self.views.selected.len());
-                    if theme::icon_toggle(ui, theme::Icon::Arrange, &label, false).clicked() {
-                        for id in self.views.selected.clone() {
-                            self.open_view_at(id, None);
-                        }
-                    }
+            egui::Popup::menu(&funnel)
+                .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                .show(|ui| {
+                    ui.set_min_width(220.0);
+                    ui.checkbox(
+                        &mut self.views.quick_access,
+                        "Quick access (favourites, temporary, open)",
+                    );
+                    ui.checkbox(&mut self.views.favorites_only, "Favourites only");
+                    ui.separator();
+                    ui.checkbox(&mut self.views.previews_on, "Show previews");
                 });
-            }
         });
+        if self.views.selected.len() > 1 {
+            ui.horizontal(|ui| {
+                let label = format!("Open {} selected views", self.views.selected.len());
+                if ui
+                    .add(
+                        egui::Button::new(
+                            egui::RichText::new(label).size(11.0).color(palette.link),
+                        )
+                        .frame(false),
+                    )
+                    .clicked()
+                {
+                    for id in self.views.selected.clone() {
+                        self.open_view_at(id, None);
+                    }
+                }
+            });
+        }
         if self.views.new_folder {
             let (kind, parent) = self.views.folder_parent.clone();
             ui.horizontal(|ui| {
@@ -1335,7 +1326,11 @@ impl App {
         ui.add_space(2.0);
         ui.separator();
         let tree = self.views.browser_tree();
-        let order: Vec<Uuid7> = tree.iter().flat_map(|(_, node)| node.all_views()).collect();
+        let home = self.views.browser_home();
+        let order: Vec<Uuid7> = home
+            .into_iter()
+            .chain(tree.iter().flat_map(|(_, node)| node.all_views()))
+            .collect();
         let mut actions: Vec<BrowserAction> = Vec::new();
         let mut budget = true;
         let confirm = self.views.confirm_delete;
@@ -1361,6 +1356,15 @@ impl App {
                     presets: &presets,
                 };
                 let mut listed = false;
+                if let Some(view) = home.and_then(|id| self.views.book.get(&id).cloned()) {
+                    listed = true;
+                    ui.horizontal(|ui| {
+                        ui.add_space(crate::kit::CHEVRON - ui.spacing().item_spacing.x);
+                        ui.vertical(|ui| {
+                            self.browser_view_row(ui, &view, &ctx, &mut actions, &mut budget);
+                        });
+                    });
+                }
                 for (kind, node) in &tree {
                     // Like Revit's browser, a kind with nothing in it is left out.
                     if node.all_views().is_empty() && node.folders.is_empty() {
@@ -1424,12 +1428,10 @@ impl App {
             format!("view-folder-{}-{}", kind.label(), node.stored)
         };
         let id = ui.make_persistent_id(salt);
-        let state =
-            egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true);
         let all = node.all_views();
         let mut toggle = false;
         let dragging = egui::DragAndDrop::has_payload_of_type::<Uuid7>(ui.ctx());
-        let header = state.show_header(ui, |ui| {
+        let (node_ui, header_row, ()) = crate::kit::TreeNode::header(ui, id, true, |ui| {
             let icon = if depth == 0 {
                 kind.icon()
             } else {
@@ -1446,11 +1448,7 @@ impl App {
                 .truncate()
                 .sense(egui::Sense::click()),
             );
-            ui.label(
-                egui::RichText::new(all.len().to_string())
-                    .size(11.0)
-                    .color(palette.muted),
-            );
+            count_pill(ui, all.len());
             toggle = name.clicked();
             name.context_menu(|ui| {
                 if ui.button("New folder…").clicked() {
@@ -1473,7 +1471,7 @@ impl App {
                 }
             });
         });
-        let (_, header_response, _) = header.body(|ui| {
+        node_ui.body(ui, |ui| {
             for folder in &node.folders {
                 self.browser_folder(ui, kind, folder, depth + 1, ctx, actions, budget);
             }
@@ -1490,7 +1488,7 @@ impl App {
                 }
             }
         });
-        let header = header_response.response;
+        let header = header_row;
         if dragging && header.contains_pointer() {
             ui.painter().rect_stroke(
                 header.rect,
@@ -1503,13 +1501,7 @@ impl App {
             actions.push(BrowserAction::Move(*view, node.stored.clone()));
         }
         if toggle {
-            let mut state = egui::collapsing_header::CollapsingState::load_with_default_open(
-                ui.ctx(),
-                id,
-                true,
-            );
-            state.toggle(ui);
-            state.store(ui.ctx());
+            crate::kit::toggle_node(ui, id, true);
         }
     }
 
@@ -1537,7 +1529,12 @@ impl App {
         let response = browser_row(
             ui,
             BrowserRow {
-                icon: Some(crate::views::view_kind(view).icon()),
+                // The default view is the model's home view: the house is its icon.
+                icon: Some(if view.is_default {
+                    theme::Icon::Home
+                } else {
+                    crate::views::view_kind(view).icon()
+                }),
                 name: &view.name,
                 selected: self.views.selected.contains(&view.id)
                     || self.views.active() == Some(view.id),
@@ -1699,9 +1696,9 @@ impl App {
     }
 
     /// The view presets a view can be filled from, as the part presets fill a new part: the
-    /// model's own first, then the environment's that the model does not shadow by name.
-    pub(crate) fn preset_choices(&self) -> Vec<beamcraft_engine::views::ViewPreset> {
-        let mut out: Vec<_> = self.views.book.presets().to_vec();
+    /// user's own first, then the environment's that the user does not shadow by name.
+    pub(crate) fn preset_choices(&self) -> Vec<beamcraft_engine::presets::ViewPreset> {
+        let mut out: Vec<_> = self.views.presets.presets().to_vec();
         for preset in &self.tools.definitions.view_presets {
             if !out
                 .iter()
@@ -1749,7 +1746,7 @@ impl App {
     pub(crate) fn apply_preset_to(
         &mut self,
         id: Uuid7,
-        preset: &beamcraft_engine::views::ViewPreset,
+        preset: &beamcraft_engine::presets::ViewPreset,
     ) {
         for o in &preset.overrides {
             if let Err(e) = self.adopt_filter(&o.filter) {
@@ -1759,7 +1756,9 @@ impl App {
         let Some(mut view) = self.views.book.get(&id).cloned() else {
             return;
         };
-        view.apply_preset(preset);
+        if let Err(e) = preset.apply_to(&mut view) {
+            return self.view_note(Err(e.to_string()));
+        }
         let name = preset.name.clone();
         self.keep_view(view);
         self.view_note(Ok(format!("The view now shows as “{name}”.")));
@@ -1769,23 +1768,33 @@ impl App {
         self.refresh_filter_overlays();
     }
 
-    /// Saves view `id`'s display as the model's view preset `name` (replacing one of that
+    /// Writes the user's view presets into the configuration directory.
+    fn persist_presets(&mut self) -> Result<(), String> {
+        crate::views::persist_presets(self.source.config_dir.as_deref(), &self.views.presets)
+    }
+
+    /// Saves view `id`'s display as the user's view preset `name` (replacing one of that
     /// name).
     pub(crate) fn save_preset_from(&mut self, id: Uuid7, name: &str) {
         let Some(view) = self.views.book.get(&id) else {
             return;
         };
-        let preset = view.to_preset(name);
-        match self.views.book.save_preset(preset) {
+        let preset = beamcraft_engine::presets::ViewPreset::from_view(name, view);
+        match self
+            .views
+            .presets
+            .save(preset)
+            .map_err(|e| e.to_string())
+            .and_then(|()| self.persist_presets())
+        {
             Ok(()) => {
-                self.persist_views();
                 self.view_note(Ok(format!("Saved the view preset “{}”.", name.trim())));
             }
             Err(e) => self.view_note(Err(e.to_string())),
         }
     }
 
-    /// Saves the display the form shows now as the model's view preset `name`; the filters it
+    /// Saves the display the form shows now as the user's view preset `name`; the filters it
     /// names come into the model with it.
     pub(crate) fn save_preset_from_form(&mut self, name: &str) {
         for o in self.views.form.overrides.clone() {
@@ -1812,9 +1821,15 @@ impl App {
         if let Err(e) = form.apply(&mut view) {
             return self.view_note(Err(e));
         }
-        match self.views.book.save_preset(view.to_preset(name)) {
+        let preset = beamcraft_engine::presets::ViewPreset::from_view(name, &view);
+        match self
+            .views
+            .presets
+            .save(preset)
+            .map_err(|e| e.to_string())
+            .and_then(|()| self.persist_presets())
+        {
             Ok(()) => {
-                self.persist_views();
                 self.views.preset_name = None;
                 self.view_note(Ok(format!("Saved the view preset “{}”.", name.trim())));
             }
@@ -2433,7 +2448,7 @@ impl App {
                 refused: o.refused.clone(),
             });
         let mut edit_filter: Option<Option<String>> = None;
-        let mut chosen_preset: Option<beamcraft_engine::views::ViewPreset> = None;
+        let mut chosen_preset: Option<beamcraft_engine::presets::ViewPreset> = None;
         let mut save_preset: Option<String> = None;
         let mut preset_name = self.views.preset_name.clone();
         let preset_field = preset_name.is_some();
@@ -2450,7 +2465,7 @@ impl App {
                     type_box(ui, &header);
                     ui.add_space(4.0);
                     ui.horizontal(|ui| {
-                        ui.add_sized([FIELD_LABEL, 20.0], egui::Label::new("Name"));
+                        ui.add_sized([crate::kit::LABEL_WIDTH, 20.0], egui::Label::new("Name"));
                         let toggles = 2.0 * 26.0 + 3.0 * 8.0;
                         ui.add(
                             egui::TextEdit::singleline(&mut form.name)
@@ -3155,13 +3170,12 @@ struct TypeBox {
     name: String,
 }
 
-/// The kind of a view as one word, for the type box.
+/// The kind of a view in a few words, for the type box.
 fn kind_name(kind: crate::views::ViewKind) -> &'static str {
     match kind {
-        crate::views::ViewKind::ThreeD => "3D view",
         crate::views::ViewKind::Plan => "Plan",
-        crate::views::ViewKind::Elevation => "Elevation",
-        crate::views::ViewKind::Section => "Section",
+        crate::views::ViewKind::Vertical => "Elevation / section",
+        crate::views::ViewKind::Inclined => "Inclined view",
     }
 }
 

@@ -27,8 +27,7 @@ use beamcraft_engine::assembly::{Membership, PartKind};
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionError, RevisionStore, Uuid7};
 use beamcraft_layer_engine::authored::{
-    Author, Change, EditTargets, Element, Placement as LayerPlacement, Prepare, Shape,
-    schema_identity, validate_layers,
+    Change, Element, Placement as LayerPlacement, Prepare, Shape, schema_identity, validate_layers,
 };
 use beamcraft_layer_engine::{Control, OpenRequest, Prim, Reader};
 use beamcraft_model::command::{
@@ -40,8 +39,7 @@ use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
 use session::Refusal;
 use session::pipeline::{
-    AUTHORED_LAYER, Base, DERIVED_LAYER, RevisionSummary, base_of, control, host_uuid, integrity,
-    load_base, open_base, summarize,
+    Base, RevisionSummary, base_of, control, host_uuid, integrity, load_base, open_base, summarize,
 };
 use std::collections::BTreeMap;
 use steel::engine::transaction::PriorOp;
@@ -332,15 +330,8 @@ fn apply(
     }
     let Plan { changes, footprint } = plan(&model)?;
     let schema = schema_identity()?;
-    let (mut author, opened) = Author::open(
-        base_request,
-        EditTargets {
-            authored: AUTHORED_LAYER.into(),
-            derived: DERIVED_LAYER.into(),
-        },
-        schema,
-        &control,
-    )?;
+    let (mut author, opened) =
+        crate::scope::open_author(store, base_request, false, schema, &control)?;
     let prepared = author.prepare(
         Prepare {
             context: opened.context.clone(),

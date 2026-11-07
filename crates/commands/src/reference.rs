@@ -44,8 +44,8 @@ use beamcraft_host::revision::{
     CommitHook, CommitOutcome, LayerRole, Revision, RevisionStore, Uuid7,
 };
 use beamcraft_layer_engine::authored::{
-    Author, Change, EditTargets, ForeignPrim, Placement as LayerPlacement, Prepare, Reference,
-    ReferenceView, SourcePin, UpAxis, read_references, schema_identity,
+    Change, ForeignPrim, Placement as LayerPlacement, Prepare, Reference, ReferenceView, SourcePin,
+    UpAxis, read_references, schema_identity,
 };
 use beamcraft_layer_engine::{Asset, Budgets, Opened, Prim, Reader, inspect_foreign_layer};
 use beamcraft_model::command::{CommandError, Placement};
@@ -58,8 +58,8 @@ use beamcraft_model::reference::{
 };
 use session::Refusal;
 use session::pipeline::{
-    AUTHORED_LAYER, Base, DERIVED_LAYER, RevisionSummary, control, digest_of, host_uuid, integrity,
-    load_base, open_base, summarize,
+    Base, RevisionSummary, control, digest_of, host_uuid, integrity, load_base, open_base,
+    summarize,
 };
 use std::collections::BTreeSet;
 use std::convert::Infallible;
@@ -372,15 +372,7 @@ pub fn attach_reference(
         open.manifest = open.manifest_digest()?;
     }
     let schema = schema_identity()?;
-    let (mut author, opened) = Author::open(
-        open,
-        EditTargets {
-            authored: AUTHORED_LAYER.into(),
-            derived: DERIVED_LAYER.into(),
-        },
-        schema,
-        &control,
-    )?;
+    let (mut author, opened) = crate::scope::open_author(store, open, false, schema, &control)?;
     let prepared = author.prepare(
         Prepare {
             context: opened.context.clone(),
@@ -500,15 +492,8 @@ fn edit(
         PriorOp::Unseen => {}
     }
     let schema = schema_identity()?;
-    let (mut author, opened) = Author::open(
-        open_base(&base)?,
-        EditTargets {
-            authored: AUTHORED_LAYER.into(),
-            derived: DERIVED_LAYER.into(),
-        },
-        schema,
-        &control,
-    )?;
+    let (mut author, opened) =
+        crate::scope::open_author(store, open_base(&base)?, false, schema, &control)?;
     let prepared = author.prepare(
         Prepare {
             context: opened.context.clone(),

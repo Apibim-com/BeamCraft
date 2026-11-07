@@ -492,8 +492,9 @@ pub struct Created {
     pub element_id: String,
     /// The element's name.
     pub name: String,
-    /// The digest of its mesh (shape key).
-    pub mesh_digest: String,
+    /// The digest of its mesh (shape key); `None` for a retained degenerate element (A-2
+    /// D-7), whose authored geometry the kernel cannot evaluate.
+    pub mesh_digest: Option<String>,
     /// Its volume in mm3, when the CLI reports a current one.
     pub volume_mm3: Option<f64>,
     /// The accepted revision that contains it.
@@ -583,7 +584,7 @@ pub fn parse_created(
         kind,
         element_id: text(element, "element_id").ok_or_else(unreadable)?,
         name: text(element, "name").unwrap_or_default(),
-        mesh_digest: text(element, "mesh_digest").ok_or_else(unreadable)?,
+        mesh_digest: text(element, "mesh_digest"),
         volume_mm3: volume,
         revision_id: text(revision, "revision_id").ok_or_else(unreadable)?,
         manifest_digest: text(revision, "manifest_digest").ok_or_else(unreadable)?,
@@ -694,7 +695,7 @@ pub struct Definitions {
     /// The view filters the project's environment declares.
     pub view_filters: Vec<beamcraft_engine::views::ViewFilter>,
     /// The view presets the project's environment declares; their overrides name its filters.
-    pub view_presets: Vec<beamcraft_engine::views::ViewPreset>,
+    pub view_presets: Vec<beamcraft_engine::presets::ViewPreset>,
     /// The levels of the model, for a column's top.
     pub levels: Vec<LevelChoice>,
     /// The revision the listing was read from: the store's head at that moment.
@@ -799,7 +800,7 @@ pub fn parse_definitions(exit_code: Option<i32>, stdout: &[u8]) -> Result<Defini
         .collect();
     out.view_presets = listed("environment_view_presets")
         .iter()
-        .filter_map(|j| beamcraft_host::views::preset_from_json(j).ok())
+        .filter_map(|j| beamcraft_host::presets::preset_from_json(j).ok())
         .collect();
     out.levels = reply
         .get("levels")
@@ -1512,7 +1513,7 @@ mod tests {
         let created = parse_created(ToolKind::Plate, Some(0), CREATED.as_bytes()).unwrap();
         assert_eq!(created.element_id, "e1");
         assert_eq!(created.name, "P1");
-        assert_eq!(created.mesh_digest, "m1");
+        assert_eq!(created.mesh_digest, Some("m1".to_owned()));
         assert_eq!(created.volume_mm3, Some(200_000.0));
         assert_eq!(created.revision_id, "r1");
         assert_eq!(created.manifest_digest, "d1");
@@ -1521,6 +1522,19 @@ mod tests {
         // A member reply is not a plate reply.
         let error = parse_created(ToolKind::Member, Some(0), CREATED.as_bytes()).unwrap_err();
         assert_eq!(error.code, "UNREADABLE_REPLY");
+    }
+
+    #[test]
+    fn a_degenerate_created_reply_has_no_mesh_or_volume() {
+        let reply = CREATED
+            .replace("\"mesh_digest\":\"m1\"", "\"mesh_digest\":null")
+            .replace(
+                "\"mm3\":200000,\"status\":\"current\"",
+                "\"mm3\":null,\"status\":\"degenerate\"",
+            );
+        let created = parse_created(ToolKind::Plate, Some(0), reply.as_bytes()).unwrap();
+        assert_eq!(created.mesh_digest, None);
+        assert_eq!(created.volume_mm3, None);
     }
 
     #[test]

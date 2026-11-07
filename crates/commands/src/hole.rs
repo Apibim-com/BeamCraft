@@ -18,21 +18,19 @@
 
 use crate::definition::{material_lookup, profile_lookup};
 use crate::plate::{
-    check_footprint, decode, evaluate_decoded, member_record, mesh_change, plate_record,
-    prior_op_with, replay_summary,
+    check_footprint, decode, evaluate_decoded, part_mesh_change, prior_op_with, replay_summary,
 };
 use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionStore, Uuid7};
 use beamcraft_layer_engine::Reader;
-use beamcraft_layer_engine::authored::{Author, EditTargets, Prepare, schema_identity};
+use beamcraft_layer_engine::authored::{Prepare, schema_identity};
 use beamcraft_model::command::CommandError;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{OpId, ProjectId, RevisionId, WorkspaceId};
 use session::Refusal;
 use session::pipeline::{
-    AUTHORED_LAYER, Base, DERIVED_LAYER, RevisionSummary, control, host_uuid, integrity, load_base,
-    open_base, summarize,
+    Base, RevisionSummary, control, host_uuid, integrity, load_base, open_base, summarize,
 };
 use std::collections::BTreeMap;
 use steel::engine::committed::{MemberRecord, PlateRecord};
@@ -248,7 +246,7 @@ fn apply_hole(
             return Err(CommandError::new(
                 ErrorCode::DependencyUnavailable,
                 "target_id",
-                "editing an unsupported plate is not implemented",
+                "the target plate has no evaluated geometry to drill",
             )
             .into());
         }
@@ -372,14 +370,10 @@ fn apply_hole(
                     canonical.to_string(),
                     next.authored.hole_records.clone(),
                 ),
-                mesh_change(&next.authored.id, &next.body.solid, &plate_record(&next))?,
+                part_mesh_change(&next)?,
             ];
             for other in &others {
-                changes.push(mesh_change(
-                    &other.authored.id,
-                    &other.body.solid,
-                    &plate_record(other),
-                )?);
+                changes.push(part_mesh_change(other)?);
             }
             (HoleElement::Plate(Box::new(next)), changes)
         }
@@ -439,14 +433,10 @@ fn apply_hole(
                     canonical.to_string(),
                     next.authored.hole_records.clone(),
                 ),
-                mesh_change(&next.authored.id, &next.body.solid, &member_record(&next))?,
+                part_mesh_change(&next)?,
             ];
             for other in &others {
-                changes.push(mesh_change(
-                    &other.authored.id,
-                    &other.body.solid,
-                    &member_record(other),
-                )?);
+                changes.push(part_mesh_change(other)?);
             }
             (HoleElement::Member(Box::new(next)), changes)
         }
@@ -462,15 +452,8 @@ fn apply_hole(
         footprint
     };
     let schema = schema_identity()?;
-    let (mut author, opened) = Author::open(
-        base_request,
-        EditTargets {
-            authored: AUTHORED_LAYER.into(),
-            derived: DERIVED_LAYER.into(),
-        },
-        schema,
-        &control,
-    )?;
+    let (mut author, opened) =
+        crate::scope::open_author(store, base_request, false, schema, &control)?;
     let prepared = author.prepare(
         Prepare {
             context: opened.context.clone(),

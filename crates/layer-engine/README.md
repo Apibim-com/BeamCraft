@@ -38,7 +38,10 @@ aggregate heap/work proof. The engine runs in the calling process (owner decisio
 by SHA-256 before they are parsed, and foreign files are read under these budgets. See [the U01 placement/containment review](../../docs/design/u01-placement-containment.md).
 
 Tests use contributor-original synthetic USDA and binary output of those fixtures.
-Same-crate binary generation is not independent-reader evidence; U04 and N03 remain open.
+Same-crate binary generation is not independent-reader evidence; U04 remains open, and the N03
+platform/SDK-oracle evidence is the differential report
+([docs/design/usd-sdk-differential.md](../../docs/design/usd-sdk-differential.md)); its acceptance
+stays with the issue.
 
 ## Codeless authored and derived layers
 
@@ -57,7 +60,12 @@ is tested with the same Rust backend; SDK interchange has **not run**. No solid 
 or exact quantity computation runs here.
 
 `Author::open` consumes a verified U01 manifest plus distinct, existing owned USDA edit
-targets participating directly in the root's sublayer stack. The root must also be owned.
+targets participating directly in the root's sublayer stack. Derived bodies are stored as
+immutable, content-addressed geometry assets under `/World/Definitions/Geometry/GEO_<sha256>`
+(U11); an element's `Geometry` prim is an `instanceable` reference to one of them, with its
+quantity record authored locally, and equal bodies share one asset. The read profile admits the
+`instanceable` metadata and internal reference arcs on owned layers; see the
+[U11 design note](../../docs/design/u11-geometry-instancing.md). The root must also be owned.
 `prepare` consumes a pinned context, full op/actor identities, exact schema pin, bounded
 immutable resources and typed changes. Host authorization, canonical F04 replay checks,
 engineering validation and serialized decisions are prerequisites. It returns owned layer
@@ -112,7 +120,8 @@ wrapper bounds, not a proof of aggregate upstream allocation or preemptive cance
 U01 admission; schema markers/known types; UUID/path/required inputs; pinned definition
 links; scalar caps, scaled length minima and rigid pose; and standard mesh buffer structure.
 Newer element schemas/kinds/modes remain inert and cannot be edited. This checker is separate
-from external `usdchecker` (**not run**, no offline executable found), the F10 module-rule
+from external `usdchecker` (the official-SDK differential, first run 2026-11-05:
+[docs/design/usd-sdk-differential.md](../../docs/design/usd-sdk-differential.md)), the F10 module-rule
 catalogue and the F06 engineering validator. It does not certify contour topology,
 planarity, support, mesh solidness, exact quantities, F06 result freshness or signatures.
 Those remain engine prerequisites. See [the U02 validation report](../../docs/design/u02-validation.md).
@@ -181,6 +190,25 @@ U16 makes an intentional pre-alpha compatibility break: no old-layout store or s
 accepted or migrated. Definitions live under `Definitions/Materials/MAT_<sha256>` or
 `Definitions/Profiles/PRF_<sha256>`; levels and reference wrappers live outside `/World/Steel`.
 See the [U16 design note](../../docs/design/u16-prim-naming.md).
+
+## The views layer (W01)
+
+`authored::views` is the closed profile of a standalone views layer:
+`authored::views::bytes` produces its canonical text (header with the
+`bimViewsSchemaDigest` pin of `views_schema_identity()`, then one standard USD `Camera`
+prim per saved view under `/World/Views`, plus `bim:view:folders` on the views scope for
+the folders no view uses), and `authored::views::read_layer` reads the owned camera prims
+and the folder record of a composed snapshot back. A saved view is display state, not model
+data: a view prim carries no `bim:id`, so it enters no element index and links to nothing,
+and saving or restoring views never moves model keys or numbering. The camera is an
+ordinary placed USD camera (`xformOp:translate`, `xformOp:orient`, the standard
+`projection` token); the BeamCraft record — identity, span, depth, display properties,
+work area and the W01 provenance (author, unix time, comment, model revision, all four or
+none) — rides on `bim:view:*` attributes with the bounds of `VIEWS_SCHEMA_DESCRIPTOR`.
+The layer's mapping identity is its own digest, separate from the element profile's
+`schema_identity`; an ordinary USD reader needs no BeamCraft plugin to see the cameras
+(SDK interchange has **not** run). See [the W01 design note](../../docs/design/w01-saved-views.md).
+
 
 
 ## F10 vocabulary alignment (#148)

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! View filters, their per-view overrides and view presets: the display rules a model view
+//! View filters and their per-view overrides: the display rules a model view
 //! applies on top of its plane and depth.
 //!
 //! A [`ViewFilter`] is a named list of conditions over the V14 fields (`type`, `name`, `class`
@@ -13,16 +13,14 @@
 //!
 //! A [`FilterOverride`] binds a filter to one view: whether what it matches is shown, an
 //! optional colour and a transparency. A view lists its overrides in order and the first
-//! override whose filter matches an element decides that element's display. A [`ViewPreset`]
-//! is a named set of display properties that a view can be filled from, like a part preset
-//! fills a new part's form; applying a preset copies its values and keeps no link.
+//! override whose filter matches an element decides that element's display. A discipline preset
+//! ([`crate::presets::ViewPreset`]) may carry overrides too.
 //!
 //! Display state only: nothing here reads or writes a store.
 
-use crate::RenderMode;
 use crate::filter::Operator;
-use crate::views::{MAX_DEPTH_MM, MAX_SPAN_MM, MIN_SPAN_MM, Projection};
-use crate::{ElementKind, KindFilter};
+
+use crate::ElementKind;
 use beamcraft_model::command::CommandError;
 use beamcraft_model::error::ErrorCode;
 
@@ -32,8 +30,6 @@ pub const MAX_FILTERS: usize = 64;
 pub const MAX_CONDITIONS: usize = 16;
 /// Filter overrides per view.
 pub const MAX_OVERRIDES: usize = 16;
-/// View presets per view book.
-pub const MAX_PRESETS: usize = 64;
 /// Most characters in a filter or preset name.
 pub const MAX_LABEL_CHARS: usize = 64;
 /// Most characters in a condition's value or attribute name.
@@ -426,68 +422,6 @@ pub fn validate_overrides(overrides: &[FilterOverride]) -> Result<(), CommandErr
         }
     }
     Ok(())
-}
-
-/// A named set of display properties a view can be filled from.
-#[derive(Debug, Clone, PartialEq)]
-pub struct ViewPreset {
-    /// Unique name in the book (case-insensitively).
-    pub name: String,
-    /// Camera projection.
-    pub projection: Projection,
-    /// Visible height at the view plane.
-    pub span_mm: f64,
-    /// Visible distance `[above, below]` the plane, `None` for everything.
-    pub depth: Option<[f64; 2]>,
-    /// Display mode.
-    pub render_mode: RenderMode,
-    /// Whether grid guides are drawn.
-    pub grids_visible: bool,
-    /// Element kinds hidden.
-    pub hidden_kinds: KindFilter,
-    /// Optional colour of the whole model, linear RGB in `0..=1`.
-    pub color: Option<[f64; 3]>,
-    /// Opacity of the whole model in `0..=1`.
-    pub opacity: f64,
-    /// The filter overrides, in order.
-    pub overrides: Vec<FilterOverride>,
-}
-
-impl ViewPreset {
-    /// Admits the preset: its name and the same ranges a view admits.
-    pub fn validate(&self) -> Result<(), CommandError> {
-        validate_label(&self.name, "views.preset.name")?;
-        if !self.span_mm.is_finite() || !(MIN_SPAN_MM..=MAX_SPAN_MM).contains(&self.span_mm) {
-            return Err(invalid(
-                "views.preset.span",
-                "the visible height must be between 1 and 20000000 mm",
-            ));
-        }
-        if !self.opacity.is_finite()
-            || !(0.0..=1.0).contains(&self.opacity)
-            || self
-                .color
-                .is_some_and(|c| c.iter().any(|v| !v.is_finite() || !(0.0..=1.0).contains(v)))
-        {
-            return Err(invalid(
-                "views.preset.display",
-                "colour or opacity is out of range",
-            ));
-        }
-        if let Some([above, below]) = self.depth
-            && (!above.is_finite()
-                || !below.is_finite()
-                || !(0.0..=MAX_DEPTH_MM).contains(&above)
-                || !(0.0..=MAX_DEPTH_MM).contains(&below)
-                || above + below <= 0.0)
-        {
-            return Err(invalid(
-                "views.preset.depth",
-                "view depth needs bounded nonnegative distances and a positive thickness",
-            ));
-        }
-        validate_overrides(&self.overrides)
-    }
 }
 
 #[cfg(test)]

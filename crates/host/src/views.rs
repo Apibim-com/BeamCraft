@@ -7,21 +7,24 @@
 //! never written.
 
 use beamcraft_engine::filter::Operator;
-use beamcraft_engine::view_filter::{MAX_CONDITIONS, MAX_FILTERS, MAX_OVERRIDES, MAX_PRESETS};
+use beamcraft_engine::view_filter::{MAX_CONDITIONS, MAX_FILTERS, MAX_OVERRIDES};
 use beamcraft_engine::views::{
     FilterCondition, FilterField, FilterMatch, FilterOverride, ModelView, Projection, ViewBook,
-    ViewFilter, ViewPreset, WorkArea,
+    ViewFilter, ViewProvenance, WorkArea,
 };
 use beamcraft_engine::work_plane::WorkPlane;
-use beamcraft_engine::{ElementKind, KindFilter, RenderMode};
+use beamcraft_engine::{ElementKind, KindFilter, RenderMode, Representation};
 use beamcraft_json::Json;
 use beamcraft_model::command::CommandError;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::Uuid7;
 
-/// The format version this module writes. Version 2 added the view filters, the views' filter
-/// overrides and the view presets; a version 1 file is still read, with none of them.
+/// The format version this module writes. Version 2 added the W01 provenance stamp; the view
+/// filters and the views' filter overrides are optional keys of version 2, so files written
+/// before them still read.
 pub const VERSION: u64 = 2;
+/// Version 1 predates the W01 provenance stamp; its files still read, without provenance.
+const READ_VERSIONS: [u64; 2] = [1, VERSION];
 
 fn unread(field: &'static str) -> CommandError {
     CommandError::new(
@@ -111,6 +114,35 @@ fn kinds_from_json(json: &Json) -> Result<KindFilter, CommandError> {
     Ok(filter)
 }
 
+/// A provenance stamp as JSON (W01).
+pub fn provenance_to_json(provenance: &ViewProvenance) -> Result<Json, CommandError> {
+    Ok(Json::object([
+        ("author", Json::text(&provenance.author)),
+        ("created_at_ms", Json::uint(provenance.created_at_ms)),
+        ("comment", Json::text(&provenance.comment)),
+        (
+            "model_revision",
+            Json::text(provenance.model_revision.to_string()),
+        ),
+    ]))
+}
+
+fn provenance_from_json(json: &Json) -> Result<ViewProvenance, CommandError> {
+    let text = |key: &'static str| {
+        json.get(key)
+            .and_then(Json::string)
+            .map(str::to_owned)
+            .map_err(|_| unread(key))
+    };
+    let revision = Uuid7::parse(&text("model_revision")?).map_err(|_| unread("model_revision"))?;
+    let created = json
+        .get("created_at_ms")
+        .and_then(Json::unsigned)
+        .map_err(|_| unread("created_at_ms"))?;
+    ViewProvenance::new(&text("author")?, &text("comment")?, revision, created)
+        .map_err(|_| unread("views.provenance"))
+}
+
 /// One view as JSON, in the session file's element shape.
 pub fn view_to_json(view: &ModelView) -> Result<Json, CommandError> {
     Ok(Json::object([
@@ -149,6 +181,21 @@ pub fn view_to_json(view: &ModelView) -> Result<Json, CommandError> {
         ),
         ("opacity", number(view.opacity, "views.opacity")?),
         ("overrides", overrides_to_json(&view.overrides)?),
+        ("representation", Json::text(view.representation.as_token())),
+        (
+            "colour_set",
+            match &view.colour_set {
+                Some(set) => Json::text(set),
+                None => Json::Null,
+            },
+        ),
+        (
+            "provenance",
+            match &view.provenance {
+                Some(provenance) => provenance_to_json(provenance)?,
+                None => Json::Null,
+            },
+        ),
     ]))
 }
 
@@ -159,7 +206,8 @@ fn color_to_json(color: Option<[f64; 3]>, field: &'static str) -> Result<Json, C
     }
 }
 
-fn overrides_to_json(overrides: &[FilterOverride]) -> Result<Json, CommandError> {
+/// A view's or preset's filter overrides as JSON, in order.
+pub fn overrides_to_json(overrides: &[FilterOverride]) -> Result<Json, CommandError> {
     Ok(Json::Array(
         overrides
             .iter()
@@ -178,8 +226,8 @@ fn overrides_to_json(overrides: &[FilterOverride]) -> Result<Json, CommandError>
     ))
 }
 
-/// Reads a view's or preset's overrides; files from format version 1 have none.
-fn overrides_from_json(json: &Json) -> Result<Vec<FilterOverride>, CommandError> {
+/// Reads a view's or preset's overrides; files written before them have none.
+pub fn overrides_from_json(json: &Json) -> Result<Vec<FilterOverride>, CommandError> {
     let Some(list) = optional(json, "overrides") else {
         return Ok(Vec::new());
     };
@@ -279,70 +327,6 @@ pub fn filter_from_json(json: &Json) -> Result<ViewFilter, CommandError> {
     Ok(filter)
 }
 
-/// One preset as JSON.
-pub fn preset_to_json(preset: &ViewPreset) -> Result<Json, CommandError> {
-    Ok(Json::object([
-        ("name", Json::text(&preset.name)),
-        ("projection", Json::text(preset.projection.as_str())),
-        ("span_mm", number(preset.span_mm, "views.preset.span")?),
-        (
-            "depth_mm",
-            match preset.depth {
-                Some(depth) => array(&depth, "views.preset.depth")?,
-                None => Json::Null,
-            },
-        ),
-        ("render_mode", Json::text(preset.render_mode.as_token())),
-        ("grids_visible", Json::Bool(preset.grids_visible)),
-        ("hidden_kinds", kinds_to_json(preset.hidden_kinds)),
-        ("color", color_to_json(preset.color, "views.preset.color")?),
-        ("opacity", number(preset.opacity, "views.preset.opacity")?),
-        ("overrides", overrides_to_json(&preset.overrides)?),
-    ]))
-}
-
-/// Reads one preset written by [`preset_to_json`].
-pub fn preset_from_json(json: &Json) -> Result<ViewPreset, CommandError> {
-    let text = |key: &'static str| {
-        json.get(key)
-            .and_then(Json::string)
-            .map_err(|_| unread(key))
-    };
-    let preset = ViewPreset {
-        name: text("name")?.to_owned(),
-        projection: Projection::parse(text("projection")?)?,
-        span_mm: json
-            .get("span_mm")
-            .and_then(Json::float)
-            .map_err(|_| unread("span_mm"))?,
-        depth: match optional(json, "depth_mm") {
-            Some(_) => Some(numbers(json, "depth_mm")?),
-            None => None,
-        },
-        render_mode: RenderMode::parse(text("render_mode")?)
-            .ok_or_else(|| unread("render_mode"))?,
-        grids_visible: json
-            .get("grids_visible")
-            .and_then(Json::boolean)
-            .map_err(|_| unread("grids_visible"))?,
-        hidden_kinds: kinds_from_json(json)?,
-        color: match optional(json, "color") {
-            Some(_) => Some(numbers(json, "color")?),
-            None => None,
-        },
-        opacity: json
-            .get("opacity")
-            .and_then(Json::float)
-            .map_err(|_| unread("opacity"))?,
-        overrides: overrides_from_json(json)?,
-    };
-    preset.validate()?;
-    Ok(preset)
-}
-
-/// The V14 rule JSON of a filter, the one `query-elements` evaluates: an `all` or `any` group
-/// of comparisons. A class is an integer literal; an attribute value is a number, `true` or
-/// `false`, a number with a unit (`250 mm` becomes `{"value":250,"unit":"mm"}`) or text, and
 /// the evaluator refuses one that does not fit the attribute's definition.
 pub fn filter_rule(filter: &ViewFilter) -> Json {
     let comparisons = filter
@@ -455,6 +439,21 @@ pub fn view_from_json(json: &Json) -> Result<ModelView, CommandError> {
         .and_then(Json::float)
         .map_err(|_| unread("opacity"))?;
     view.overrides = overrides_from_json(json)?;
+    // The representation and the colour set postdate the provenance stamp, so files written
+    // earlier read with the display defaults; a present key of another type still refuses.
+    view.representation = match optional(json, "representation") {
+        Some(_) => Representation::parse(text("representation")?)
+            .ok_or_else(|| unread("representation"))?,
+        None => Representation::Full,
+    };
+    view.colour_set = match optional(json, "colour_set") {
+        Some(_) => Some(text("colour_set")?.to_owned()),
+        None => None,
+    };
+    view.provenance = match optional(json, "provenance") {
+        Some(stamp) => Some(provenance_from_json(stamp)?),
+        None => None,
+    };
     view.validate()?;
     Ok(view)
 }
@@ -467,11 +466,6 @@ pub fn book_to_json(book: &ViewBook) -> Result<Json, CommandError> {
         .filter(|v| !v.temporary)
         .map(view_to_json)
         .collect::<Result<Vec<_>, _>>()?;
-    let presets = book
-        .presets()
-        .iter()
-        .map(preset_to_json)
-        .collect::<Result<Vec<_>, _>>()?;
     Ok(Json::object([
         ("version", Json::uint(VERSION)),
         (
@@ -483,7 +477,6 @@ pub fn book_to_json(book: &ViewBook) -> Result<Json, CommandError> {
             "filters",
             Json::Array(book.filters().iter().map(filter_to_json).collect()),
         ),
-        ("presets", Json::Array(presets)),
     ]))
 }
 
@@ -494,7 +487,7 @@ pub fn book_from_json(json: &Json) -> Result<ViewBook, CommandError> {
         .get("version")
         .and_then(Json::unsigned)
         .map_err(|_| unread("version"))?;
-    if !(1..=VERSION).contains(&version) {
+    if !READ_VERSIONS.contains(&version) {
         return Err(CommandError::new(
             ErrorCode::InvalidArgument,
             "views.version",
@@ -503,16 +496,14 @@ pub fn book_from_json(json: &Json) -> Result<ViewBook, CommandError> {
     }
     let list = |key: &'static str| json.get(key).and_then(Json::array).map_err(|_| unread(key));
     let (views, folders) = (list("views")?, list("folders")?);
-    // Version 1 had no filters and presets; version 2 requires both lists.
-    let (filters, presets): (&[Json], &[Json]) = if version >= 2 {
-        (list("filters")?, list("presets")?)
-    } else {
-        (&[], &[])
+    // The filters postdate the provenance stamp: an absent list is none.
+    let filters: &[Json] = match optional(json, "filters") {
+        Some(_) => list("filters")?,
+        None => &[],
     };
     if views.len() > beamcraft_engine::views::MAX_VIEWS
         || folders.len() > beamcraft_engine::views::MAX_FOLDERS
         || filters.len() > MAX_FILTERS
-        || presets.len() > MAX_PRESETS
     {
         return Err(CommandError::new(
             ErrorCode::LimitExceeded,
@@ -532,11 +523,7 @@ pub fn book_from_json(json: &Json) -> Result<ViewBook, CommandError> {
         .iter()
         .map(filter_from_json)
         .collect::<Result<Vec<_>, _>>()?;
-    let presets = presets
-        .iter()
-        .map(preset_from_json)
-        .collect::<Result<Vec<_>, _>>()?;
-    ViewBook::from_all(views, folders, filters, presets)
+    ViewBook::from_all(views, folders, filters)
 }
 
 #[cfg(test)]
@@ -544,9 +531,12 @@ pub fn book_from_json(json: &Json) -> Result<ViewBook, CommandError> {
 mod tests {
     use super::*;
 
+    fn id(n: u64) -> Uuid7 {
+        Uuid7::parse(&format!("019a7bf0-0000-7000-8000-{n:012}")).unwrap()
+    }
+
     fn view(n: u64, name: &str) -> ModelView {
-        let id = Uuid7::parse(&format!("019a7bf0-0000-7000-8000-{n:012}")).unwrap();
-        ModelView::new(id, name, WorkPlane::default(), 4000.0)
+        ModelView::new(id(n), name, WorkPlane::default(), 4000.0)
     }
 
     #[test]
@@ -566,6 +556,11 @@ mod tests {
         full.rotation_rad = [0.5, -0.25];
         full.color = Some([0.25, 0.5, 0.75]);
         full.opacity = 0.4;
+        full.representation = Representation::Simplified;
+        full.colour_set = Some("Part classes".into());
+        let stamp_revision = Uuid7::parse("019a7bf0-0000-7000-8000-000000000009").unwrap();
+        full.stamp_provenance("Ana", "frame front", stamp_revision, 1_760_000_000_000)
+            .unwrap();
         let mut temp = view(2, "Scratch");
         temp.temporary = true;
         let mut book = ViewBook::new();
@@ -600,7 +595,7 @@ mod tests {
     }
 
     #[test]
-    fn filters_overrides_and_presets_round_trip() {
+    fn filters_and_overrides_round_trip() {
         let mut book = ViewBook::new();
         book.save_filter(beams(), None).unwrap();
         let mut plan = view(1, "Plan");
@@ -611,7 +606,6 @@ mod tests {
             transparency: 0.25,
         });
         book.insert(plan.clone()).unwrap();
-        book.save_preset(plan.to_preset("Hidden beams")).unwrap();
         let back = book_from_json(&book_to_json(&book).unwrap()).unwrap();
         assert_eq!(back, book);
     }
@@ -629,7 +623,7 @@ mod tests {
         ]);
         let book = book_from_json(&file).unwrap();
         assert_eq!(book.len(), 1);
-        assert!(book.filters().is_empty() && book.presets().is_empty());
+        assert!(book.filters().is_empty());
     }
 
     #[test]
@@ -678,5 +672,69 @@ mod tests {
             ),
         ]);
         assert!(book_from_json(&twice).is_err(), "names stay unique");
+    }
+
+    #[test]
+    fn provenance_stamps_round_trip_and_version_one_files_read() {
+        let mut stamped = view(1, "Provenance");
+        stamped
+            .stamp_provenance("Ana", "frame front", id(9), 1_760_000_000_000)
+            .unwrap();
+        let mut book = ViewBook::new();
+        book.insert(stamped.clone()).unwrap();
+        book.insert(view(2, "Plain")).unwrap();
+        let back = book_from_json(&book_to_json(&book).unwrap()).unwrap();
+        assert_eq!(
+            back.get(&stamped.id).unwrap().provenance,
+            stamped.provenance
+        );
+        assert_eq!(back.get(&id(2)).unwrap().provenance, None);
+        // A version 1 file has no provenance keys at all and reads as before.
+        let mut plain = view_to_json(&stamped).unwrap();
+        if let Json::Object(map) = &mut plain {
+            map.remove("provenance");
+        }
+        let legacy = Json::object([
+            ("version", Json::uint(1)),
+            ("folders", Json::Array(vec![])),
+            ("views", Json::Array(vec![plain])),
+        ]);
+        let read = book_from_json(&legacy).unwrap();
+        assert_eq!(read.get(&stamped.id).unwrap().provenance, None);
+        // A file from before the representation and colour set existed reads with the display
+        // defaults; the round trip above proves a present key still carries the values.
+        let mut plain = view_to_json(&stamped).unwrap();
+        if let Json::Object(map) = &mut plain {
+            map.remove("representation");
+            map.remove("colour_set");
+        }
+        let older = Json::object([
+            ("version", Json::uint(2)),
+            ("folders", Json::Array(vec![])),
+            ("views", Json::Array(vec![plain])),
+        ]);
+        let read = book_from_json(&older).unwrap();
+        let plain_view = read.get(&stamped.id).unwrap();
+        assert_eq!(plain_view.representation, Representation::Full);
+        assert_eq!(plain_view.colour_set, None);
+        // A present key of another type refuses the read.
+        let mut wrong = view_to_json(&stamped).unwrap();
+        if let Json::Object(map) = &mut wrong {
+            map.insert("representation".into(), Json::uint(3));
+        }
+        let wrong_file = Json::object([
+            ("version", Json::uint(2)),
+            ("folders", Json::Array(vec![])),
+            ("views", Json::Array(vec![wrong])),
+        ]);
+        assert!(book_from_json(&wrong_file).is_err());
+        // A stamp that breaks the admission rules refuses its read, so the file refuses whole.
+        let empty_author = Json::object([
+            ("author", Json::text("")),
+            ("created_at_ms", Json::uint(1)),
+            ("comment", Json::text("")),
+            ("model_revision", Json::text(stamped.id.to_string())),
+        ]);
+        assert!(provenance_from_json(&empty_author).is_err());
     }
 }

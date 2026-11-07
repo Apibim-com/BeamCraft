@@ -11,7 +11,7 @@
 
 use super::Drawing;
 use super::projection::{ALGORITHM, Projection};
-use super::svg::{MARGIN_MM, MAX_EXPORT_BYTES, StrokeGroups, bounds, stroke_groups};
+use super::svg::{MARGIN_MM, MAX_EXPORT_BYTES, bounds, drafting_layers, stroke_groups};
 use beamcraft_model::command::CommandError;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::DocumentVersionId;
@@ -23,6 +23,15 @@ pub const PDF_EXPORT_CONTRACT: &str = "beamcraft-drawing-pdf/1";
 const MM_TO_PT: f64 = 72.0 / 25.4;
 /// Stroke width matching the SVG export, in millimetres.
 const STROKE_MM: f64 = 0.25;
+
+/// One painted path of a page: its strokes and the authored dash pattern in paper
+/// millimetres, when the path carries one.
+pub(super) struct PagePath {
+    /// Paper-millimetre strokes.
+    pub strokes: Vec<[[f64; 2]; 2]>,
+    /// The dash pattern in millimetres; unbroken when `None`.
+    pub dash_mm: Option<&'static [f64]>,
+}
 
 /// Escapes one PDF literal string: backslash and parentheses get backslash escapes and
 /// every byte outside printable ASCII becomes a three-digit octal escape, so arbitrary
@@ -48,39 +57,60 @@ fn pt(value: f64) -> String {
     format!("{value:.4}")
 }
 
-/// Draws all stroke groups as one path of absolute move/line subpaths translated by
-/// `origin_mm`, the paper point mapped onto the page's lower-left corner.
-fn content_stream(groups: &StrokeGroups, origin_mm: [f64; 2]) -> String {
+/// Paints every path as move/line operators translated by `origin_mm`, the paper point
+/// mapped onto the page's lower-left corner; each path sets and clears its own dash pattern.
+/// A stroke whose start continues the previous stroke's end joins it into one polyline, so
+/// a dash pattern runs along a tessellated circle or arc instead of restarting at every
+/// chord and painting the circle solid (#490 finding 1).
+fn content_stream(paths: &[PagePath], origin_mm: [f64; 2]) -> String {
     let mut path = String::new();
-    for group in groups {
-        for [start, end] in group {
+    for group in paths {
+        if let Some(dash) = group.dash_mm {
+            let pattern = dash
+                .iter()
+                .map(|value| pt(*value))
+                .collect::<Vec<_>>()
+                .join(" ");
+            path.push_str(&format!("[{pattern}] 0 d\n"));
+        }
+        let mut pen: Option<(String, String)> = None;
+        for [start, end] in &group.strokes {
             let [sx, sy] = *start;
             let [ex, ey] = *end;
-            path.push_str(&format!(
-                "{} {} m {} {} l\n",
-                pt(sx - origin_mm[0]),
-                pt(sy - origin_mm[1]),
-                pt(ex - origin_mm[0]),
-                pt(ey - origin_mm[1]),
-            ));
+            let from = (pt(sx - origin_mm[0]), pt(sy - origin_mm[1]));
+            let to = (pt(ex - origin_mm[0]), pt(ey - origin_mm[1]));
+            // A closing stroke that only repeats the point the run already reached prints a
+            // duplicated point and advances nothing.
+            if pen.as_ref() == Some(&from) && from == to {
+                continue;
+            }
+            if pen.as_ref() == Some(&from) {
+                path.push_str(&format!("{} {} l\n", to.0, to.1));
+            } else {
+                path.push_str(&format!("{} {} m {} {} l\n", from.0, from.1, to.0, to.1));
+            }
+            pen = Some(to);
+        }
+        path.push_str("S\n");
+        if group.dash_mm.is_some() {
+            path.push_str("[] 0 d\n");
         }
     }
-    path.push_str("S\n");
     format!("{:.4} w 1 J 1 j 0 0 0 RG\n{path}", STROKE_MM * MM_TO_PT)
 }
 
 /// Writes one deterministic single-page PDF whose page box is `width_mm` by `height_mm`
-/// and whose strokes are mapped from paper millimetres through `origin_mm`. The document
-/// carries no `/ID`, clock or random field; the byte cap matches the SVG export.
+/// and whose painted paths are mapped from paper millimetres through `origin_mm`. The
+/// document carries no `/ID`, clock or random field; the byte cap matches the SVG export.
 pub(super) fn write_page(
     width_mm: f64,
     height_mm: f64,
-    groups: &StrokeGroups,
+    paths: &[PagePath],
     origin_mm: [f64; 2],
     title: &str,
     keywords: &str,
 ) -> Result<Vec<u8>, CommandError> {
-    let content = content_stream(groups, origin_mm);
+    let content = content_stream(paths, origin_mm);
     let objects = [
         String::from("<< /Type /Catalog /Pages 2 0 R >>"),
         String::from("<< /Type /Pages /Kids [3 0 R] /Count 1 >>"),
@@ -126,15 +156,22 @@ pub(super) fn write_page(
 }
 
 /// Renders the exact resolved published geometry as a deterministic stroke-only PDF bound
-/// to `version`, on a tight page with the SVG export's margin. Unresolved geometry,
-/// unbounded coordinates and an over-cap result refuse.
+/// to `version`, on a tight page with the SVG export's margin, with every drawn object on
+/// a visible layer. Unresolved geometry, unbounded coordinates and an over-cap result
+/// refuse.
 pub fn export(
     drawing: &Drawing,
     version: DocumentVersionId,
     projection: &Projection,
 ) -> Result<Vec<u8>, CommandError> {
     let (groups, _) = stroke_groups(projection)?;
-    let [min_x, min_y, max_x, max_y] = bounds(&groups);
+    let drafting = drafting_layers(drawing)?;
+    let [min_x, min_y, max_x, max_y] = bounds(
+        groups
+            .iter()
+            .flatten()
+            .chain(drafting.iter().flat_map(|layer| layer.strokes.iter())),
+    );
     let origin = [min_x - MARGIN_MM, min_y - MARGIN_MM];
     let width = max_x - min_x + 2.0 * MARGIN_MM;
     let height = max_y - min_y + 2.0 * MARGIN_MM;
@@ -150,7 +187,18 @@ pub fn export(
         spec.source.manifest,
         ALGORITHM,
     );
-    write_page(width, height, &groups, origin, &spec.name, &keywords)
+    let mut paths: Vec<PagePath> = groups
+        .iter()
+        .map(|group| PagePath {
+            strokes: group.clone(),
+            dash_mm: None,
+        })
+        .collect();
+    paths.extend(drafting.iter().map(|layer| PagePath {
+        strokes: layer.strokes.clone(),
+        dash_mm: super::svg::dash_array(layer.line_type),
+    }));
+    write_page(width, height, &paths, origin, &spec.name, &keywords)
 }
 
 #[cfg(test)]
@@ -161,12 +209,13 @@ mod tests {
         BodyProjection, DimensionGeometry, DimensionProjection, ProjectedEdge, UnresolvedReason,
     };
     use crate::drawing::{
-        DEFAULT_SCALE_DENOMINATOR, DimensionSpec, DrawingSpec, Plane, SourceModelPin, ViewSpec,
+        DEFAULT_SCALE_DENOMINATOR, DimensionSpec, DraftingGeometry, DraftingSpec, DrawingSpec,
+        LayerSpec, LineType, Plane, SourceModelPin, ViewSpec,
     };
     use crate::query::feature::FeatureId;
     use beamcraft_model::digest::ContentDigest;
     use beamcraft_model::id::{
-        DimensionId, DrawingId, DrawingViewId, ElementId, ProjectId, RevisionId,
+        DimensionId, DraftingEntityId, DrawingId, DrawingViewId, ElementId, ProjectId, RevisionId,
     };
 
     const A: &str = "01900000-0000-7000-8000-000000000001";
@@ -175,6 +224,22 @@ mod tests {
     const MEMBER: &str = "01900000-0000-7000-8000-000000000004";
 
     fn drawing(name: &str) -> Drawing {
+        drawing_with_strokes(name, None)
+    }
+
+    fn drawing_with_strokes(name: &str, drafting: Option<DraftingSpec>) -> Drawing {
+        let (drafting, layers) = drafting
+            .map(|spec| {
+                (
+                    vec![spec.clone()],
+                    vec![LayerSpec {
+                        id: spec.layer,
+                        name: "Notes".to_owned(),
+                        visible: true,
+                    }],
+                )
+            })
+            .unwrap_or_default();
         Drawing::admit(DrawingSpec {
             id: DrawingId::parse(A).unwrap(),
             name: name.to_owned(),
@@ -191,6 +256,7 @@ mod tests {
                 plane: Plane::Front,
                 scale_denominator: DEFAULT_SCALE_DENOMINATOR,
                 paper_origin_mm: [0.0, 0.0],
+                title: None,
             },
             dimension: DimensionSpec {
                 id: DimensionId::parse(C).unwrap(),
@@ -199,8 +265,8 @@ mod tests {
                 paper_offset_mm: 10.0,
                 decimal_places: 0,
             },
-            drafting: Vec::new(),
-            layers: Vec::new(),
+            drafting,
+            layers,
             views: Vec::new(),
             sections: Vec::new(),
             details: Vec::new(),
@@ -266,6 +332,46 @@ mod tests {
             export(&drawing, version, &projection("995")).unwrap(),
             first
         );
+    }
+
+    #[test]
+    fn a_dashed_circle_sets_its_dash_once_and_draws_one_run() {
+        // #490 finding 1 in the PDF surface: the tessellated ring's ~1 mm chords each
+        // opened their own subpath, and PDF restarts the dash pattern at every `m`, so
+        // dashed circles exported solid. The chords now chain one polyline: the dashed
+        // group's segment between its dash setting and the stroke carries one `m`.
+        let drawing = drawing_with_strokes(
+            "Ring",
+            Some(DraftingSpec {
+                id: DraftingEntityId::parse("01900000-0000-7000-8000-000000000006").unwrap(),
+                geometry: DraftingGeometry::Circle {
+                    center: [45.0, 160.0],
+                    radius: 12.0,
+                },
+                layer: DraftingEntityId::parse("01900000-0000-7000-8000-000000000005").unwrap(),
+                line_type: LineType::Dashed,
+            }),
+        );
+        let version = DocumentVersionId::parse(C).unwrap();
+        let bytes = export(&drawing, version, &projection("1000")).unwrap();
+        let text = String::from_utf8(bytes).unwrap();
+        let dashed = text
+            .split("[8.5039 8.5039] 0 d\n")
+            .nth(1)
+            .unwrap_or_default();
+        let dashed = dashed.split("\nS\n").next().unwrap_or_default();
+        assert!(
+            !dashed.is_empty(),
+            "the dashed drafting group is in the content stream"
+        );
+        assert_eq!(
+            dashed.matches(" m ").count(),
+            1,
+            "the ring is one polyline: {dashed}"
+        );
+        assert!(dashed.matches(" l\n").count() >= 16, "{dashed}");
+        // The pattern is cleared after the dashed group, so later groups stay continuous.
+        assert!(text.contains("[] 0 d\n"));
     }
 
     #[test]

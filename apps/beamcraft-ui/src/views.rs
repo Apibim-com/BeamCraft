@@ -6,6 +6,7 @@
 //! loaded snapshot, and the model is never written.
 
 use crate::camera::Camera;
+use beamcraft_engine::presets::{PresetBook, ViewPreset as PresetBookEntry};
 use beamcraft_engine::views::{
     AxisPick, ModelView, PartSide, Projection, ViewBook, WorkArea, validate_folder,
 };
@@ -16,9 +17,16 @@ use beamcraft_model::id::Uuid7;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-/// The session sidecar of one store: a sibling `<store>.views.json` file, never inside the
-/// store itself.
+/// The session sidecar of one store: a sibling `<store>.views.usda` file — the W01 views
+/// layer — never inside the store itself. A legacy `<store>.views.json` sidecar still loads.
 pub fn session_path(store: &Path) -> PathBuf {
+    let mut name = store.as_os_str().to_os_string();
+    name.push(".views.usda");
+    PathBuf::from(name)
+}
+
+/// The legacy JSON sidecar of one store; it is read when no layer exists and is never written.
+fn legacy_path(store: &Path) -> PathBuf {
     let mut name = store.as_os_str().to_os_string();
     name.push(".views.json");
     PathBuf::from(name)
@@ -29,16 +37,31 @@ pub fn session_path(store: &Path) -> PathBuf {
 pub fn load(store: &Path) -> Result<ViewBook, String> {
     let bytes = match std::fs::read(session_path(store)) {
         Ok(bytes) => bytes,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(ViewBook::new()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            // A legacy JSON sidecar still carries the views of a store saved before the layer.
+            return match std::fs::read(legacy_path(store)) {
+                Ok(bytes) => load_bytes(&bytes),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(ViewBook::new()),
+                Err(e) => Err(format!("the saved views could not be read: {}", e.kind())),
+            };
+        }
         Err(e) => return Err(format!("the saved views could not be read: {}", e.kind())),
     };
+    load_bytes(&bytes)
+}
+
+fn load_bytes(bytes: &[u8]) -> Result<ViewBook, String> {
     if bytes.is_empty() {
         return Ok(ViewBook::new());
     }
     if bytes.len() > 1024 * 1024 {
         return Err("the saved views file exceeds 1 MiB".to_owned());
     }
-    let json = beamcraft_json::decode(&bytes, &Limits::DEFAULT)
+    if session::views_layer::looks_like_layer(bytes) {
+        return session::views_layer::book_from_layer(bytes)
+            .map_err(|e| format!("the saved views were refused: {}", e.message));
+    }
+    let json = beamcraft_json::decode(bytes, &Limits::DEFAULT)
         .map_err(|_| "the saved views file is not valid JSON".to_owned())?;
     beamcraft_host::views::book_from_json(&json)
         .map_err(|e| format!("the saved views were refused: {e}"))
@@ -52,14 +75,86 @@ pub fn persist(store: &Path, book: &ViewBook) -> Result<(), String> {
         return Ok(());
     }
     let path = session_path(store);
-    let bytes = beamcraft_host::views::book_to_json(book)
-        .map_err(|e| format!("the saved views were refused: {e}"))?
-        .encode(&Limits::DEFAULT)
-        .map_err(|_| "the saved views exceed the JSON limits".to_owned())?;
-    let temp = path.with_extension("json.tmp");
+    let bytes = session::views_layer::layer_bytes(book)
+        .map_err(|e| format!("the saved views were refused: {}", e.message))?;
+    if bytes.len() > 1024 * 1024 {
+        return Err("the saved views exceed the file limit".to_owned());
+    }
+    let temp = path.with_extension("usda.tmp");
     std::fs::write(&temp, &bytes)
         .and_then(|()| std::fs::rename(&temp, &path))
         .map_err(|e| format!("the saved views could not be written: {}", e.kind()))
+}
+
+/// The file the user's discipline view presets (V07) are kept in, inside the configuration
+/// directory: personal configuration, like the colour sets, never part of a model.
+pub const PRESETS_FILE: &str = "view-presets.json";
+
+/// Reads the user's view presets from `config_dir` (the platform default when `None`). A missing
+/// file is an empty book; an unreadable one is an empty book and a note.
+pub fn load_presets(config_dir: Option<&Path>) -> (PresetBook, Option<String>) {
+    let Some(dir) =
+        config_dir.map_or_else(crate::shortcuts::default_dir, |d| Some(d.to_path_buf()))
+    else {
+        return (PresetBook::new(), None);
+    };
+    let bytes = match std::fs::read(dir.join(PRESETS_FILE)) {
+        Ok(bytes) if bytes.len() <= beamcraft_host::presets::MAX_BYTES => bytes,
+        Ok(_) => {
+            return (
+                PresetBook::new(),
+                Some("the view presets file is larger than 64 KiB".into()),
+            );
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return (PresetBook::new(), None),
+        Err(e) => {
+            return (
+                PresetBook::new(),
+                Some(format!("the view presets could not be read: {}", e.kind())),
+            );
+        }
+    };
+    let book = beamcraft_json::decode(&bytes, &Limits::DEFAULT)
+        .map_err(|_| "the view presets file is not valid JSON".to_owned())
+        .and_then(|json| {
+            beamcraft_host::presets::book_from_json(&json)
+                .map_err(|e| format!("the view presets were refused: {e}"))
+        });
+    match book {
+        Ok(book) => (book, None),
+        Err(note) => (PresetBook::new(), Some(note)),
+    }
+}
+
+/// Writes the user's view presets into `config_dir` (the platform default when `None`) through
+/// a sibling temporary file, so a failed write keeps the old content.
+pub fn persist_presets(config_dir: Option<&Path>, book: &PresetBook) -> Result<(), String> {
+    let Some(dir) =
+        config_dir.map_or_else(crate::shortcuts::default_dir, |d| Some(d.to_path_buf()))
+    else {
+        return Err("there is no configuration directory for the view presets".into());
+    };
+    let bytes = beamcraft_host::presets::book_to_json(book)
+        .and_then(|json| {
+            json.encode(&Limits::DEFAULT).map_err(|_| {
+                beamcraft_model::command::CommandError::new(
+                    beamcraft_model::error::ErrorCode::InvalidArgument,
+                    "presets",
+                    "the view presets do not encode",
+                )
+            })
+        })
+        .map_err(|e| format!("the view presets were refused: {e}"))?;
+    if bytes.len() > beamcraft_host::presets::MAX_BYTES {
+        return Err("the view presets exceed 64 KiB".into());
+    }
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| format!("the view presets could not be written: {}", e.kind()))?;
+    let path = dir.join(PRESETS_FILE);
+    let temp = path.with_extension("json.tmp");
+    std::fs::write(&temp, &bytes)
+        .and_then(|()| std::fs::rename(&temp, &path))
+        .map_err(|e| format!("the view presets could not be written: {}", e.kind()))
 }
 
 /// How a new view gets its plane.
@@ -375,22 +470,15 @@ impl Form {
         self.overrides.clone_from(&view.overrides);
     }
 
-    /// Fills the display fields from a view preset, as a part preset fills a new part's form.
-    pub fn copy_preset(&mut self, preset: &beamcraft_engine::views::ViewPreset) {
-        self.projection = preset.projection;
-        self.span = format!("{}", preset.span_mm);
+    /// Fills the display fields a discipline preset carries (the depth slab, the grid toggle,
+    /// the hidden kinds and the filter overrides), as a part preset fills a new part's form.
+    pub fn copy_preset(&mut self, preset: &PresetBookEntry) {
         self.depth_on = preset.depth.is_some();
         if let Some([above, below]) = preset.depth {
             self.depth = [format!("{above}"), format!("{below}")];
         }
-        self.mode = preset.render_mode;
         self.grids = preset.grids_visible;
         self.hidden = preset.hidden_kinds;
-        self.color_on = preset.color.is_some();
-        if let Some(color) = preset.color {
-            self.color = color.map(|c| c as f32);
-        }
-        self.opacity = preset.opacity as f32;
         self.overrides.clone_from(&preset.overrides);
     }
 
@@ -471,32 +559,30 @@ impl Picking {
     }
 }
 
-/// What a view looks at, as the browser groups it (the way Revit's browser sorts views by
-/// type): a 3D view, a plan, an elevation or a section.
+/// How a view's plane lies, as the browser groups it. Every view can be looked at in 3D (the
+/// 3D/plane toggle orbits any of them), so "3D" is a way of looking, not a kind: the kind is
+/// the orientation of the plane the view is built on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub enum ViewKind {
-    /// A perspective or oblique view, and the default view.
+    /// A horizontal plane: the view looks straight down (or up).
     #[default]
-    ThreeD,
-    /// A view straight down (or up) the vertical axis.
     Plan,
-    /// A view along a horizontal direction that shows everything behind its plane.
-    Elevation,
-    /// A view along a horizontal direction with a limited depth: it cuts the model.
-    Section,
+    /// A vertical plane: an elevation, or a section when its depth is limited.
+    Vertical,
+    /// A plane neither horizontal nor vertical.
+    Inclined,
 }
 
 impl ViewKind {
     /// The kinds in browser order.
-    pub const ALL: [Self; 4] = [Self::ThreeD, Self::Plan, Self::Elevation, Self::Section];
+    pub const ALL: [Self; 3] = [Self::Plan, Self::Vertical, Self::Inclined];
 
     /// The group title.
     pub fn label(self) -> &'static str {
         match self {
-            Self::ThreeD => "3D views",
             Self::Plan => "Plans",
-            Self::Elevation => "Elevations",
-            Self::Section => "Sections",
+            Self::Vertical => "Elevations & sections",
+            Self::Inclined => "Inclined",
         }
     }
 
@@ -508,10 +594,9 @@ impl ViewKind {
     /// The icon of the kind.
     pub fn icon(self) -> crate::theme::Icon {
         match self {
-            Self::ThreeD => crate::theme::Icon::Block,
-            Self::Plan => crate::theme::Icon::Grid,
-            Self::Elevation => crate::theme::Icon::ViewFrame,
-            Self::Section => crate::theme::Icon::Callout,
+            Self::Plan => crate::theme::Icon::PlanView,
+            Self::Vertical => crate::theme::Icon::ElevationView,
+            Self::Inclined => crate::theme::Icon::InclinedView,
         }
     }
 }
@@ -519,21 +604,15 @@ impl ViewKind {
 /// The kind of `view`: from its projection, the direction its camera looks along and whether
 /// its depth is limited.
 pub fn view_kind(view: &ModelView) -> ViewKind {
-    if view.is_default || view.projection == Projection::Perspective {
-        return ViewKind::ThreeD;
-    }
-    let normal = view.camera_plane().unwrap_or(view.plane).normal();
-    let up = normal[2].abs();
+    // The plane the view is built on decides, not the camera turned about it: a plan stays a
+    // plan while it is orbited in 3D.
+    let up = view.plane.normal()[2].abs();
     if up > 0.999 {
         ViewKind::Plan
     } else if up < 0.001 {
-        if view.depth.is_some() {
-            ViewKind::Section
-        } else {
-            ViewKind::Elevation
-        }
+        ViewKind::Vertical
     } else {
-        ViewKind::ThreeD
+        ViewKind::Inclined
     }
 }
 
@@ -668,6 +747,8 @@ impl Subject {
 pub struct Views {
     /// The book: saved and temporary views and the folders.
     pub book: ViewBook,
+    /// The user's discipline view presets (V07), kept in the configuration directory.
+    pub presets: PresetBook,
     /// Why the last action failed, or what it did.
     pub note: Option<Result<String, String>>,
     /// The panes of the work area in z-order: the last one is active.
@@ -810,18 +891,29 @@ impl Views {
                 .contains(&needle)
     }
 
-    /// The browser tree: one node per view kind in kind order (3D views, plans, elevations,
-    /// sections, as Revit's browser sorts by view type), each holding the folders of its views
-    /// and the views. A folder made under a kind is stored with the kind's label first and
-    /// listed without it; an empty folder is listed under its kind, or under every kind when
-    /// its path names none. Empty folders are hidden while a search or switch filters the list.
+    /// The default view when the browser lists it: it heads the tree on its own row, above
+    /// the kinds, since it is the model's home view rather than one of a kind.
+    pub fn browser_home(&self) -> Option<Uuid7> {
+        self.book
+            .default_view()
+            .filter(|view| self.listed(view))
+            .map(|view| view.id)
+    }
+
+    /// The browser tree: one node per view kind in kind order (plans, elevations and
+    /// sections, inclined views: the orientation of each view's plane), each holding the
+    /// folders of its views and the views; the default view is not in it ([`Self::browser_home`]).
+    /// A folder made under a kind is stored with the kind's label first and listed without it;
+    /// an empty folder is listed under its kind, or under Plans when its path names none. Empty
+    /// folders are hidden while a search or switch filters the list.
     pub fn browser_tree(&self) -> Vec<(ViewKind, FolderNode)> {
         let filtering = !self.search.trim().is_empty() || self.favorites_only || self.quick_access;
         let mut out = Vec::new();
         for kind in ViewKind::ALL {
             let mut root = FolderNode::new(kind.label(), String::new());
             for view in self.book.views() {
-                if view_kind(view) != kind || !self.listed(view) {
+                // The default view heads the browser on its own row, above the kinds.
+                if view.is_default || view_kind(view) != kind || !self.listed(view) {
                     continue;
                 }
                 let (shown, prefix) = match shown_path(&view.folder, kind) {
@@ -840,8 +932,8 @@ impl Views {
                         Some((k, rest)) if k == kind => (rest, kind.label()),
                         Some(_) => continue,
                         // A folder whose path names no kind is listed where its views are; an
-                        // empty one under 3D views, so it can still be found and deleted.
-                        None if kind == ViewKind::ThreeD
+                        // empty one under Plans, so it can still be found and deleted.
+                        None if kind == ViewKind::Plan
                             && !self.book.views().iter().any(|v| {
                                 beamcraft_engine::views::folder_within(&v.folder, folder)
                             }) =>
@@ -978,18 +1070,49 @@ mod tests {
         let store = dir.join("m.store");
         std::fs::create_dir_all(&store).unwrap();
         assert!(load(&store).unwrap().is_empty());
-        assert_eq!(session_path(&store), dir.join("m.store.views.json"));
+        assert_eq!(session_path(&store), dir.join("m.store.views.usda"));
         let mut book = ViewBook::new();
         book.insert(view(1, "Plan", "Plans")).unwrap();
         let mut temp = view(2, "Scratch", "");
         temp.temporary = true;
         book.insert(temp).unwrap();
         persist(&store, &book).unwrap();
+        // The sidecar is the views layer: a camera-prim USD document, not JSON.
+        let written = std::fs::read(session_path(&store)).unwrap();
+        assert!(session::views_layer::looks_like_layer(&written));
         let back = load(&store).unwrap();
         assert_eq!(back.len(), 1, "temporary views are not written");
         assert_eq!(back.get(&id(1)), book.get(&id(1)));
         std::fs::write(session_path(&store), b"{not json").unwrap();
         assert!(load(&store).is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_legacy_json_sidecar_still_loads_and_never_preempts_the_layer() {
+        let dir =
+            std::env::temp_dir().join(format!("beamcraft-views-ui-legacy-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = dir.join("m.store");
+        std::fs::create_dir_all(&store).unwrap();
+        let mut book = ViewBook::new();
+        book.insert(view(1, "Plan", "Plans")).unwrap();
+        std::fs::write(
+            legacy_path(&store),
+            beamcraft_host::views::book_to_json(&book)
+                .unwrap()
+                .encode(&Limits::DEFAULT)
+                .unwrap(),
+        )
+        .unwrap();
+        let back = load(&store).unwrap();
+        assert_eq!(back.len(), 1);
+        assert_eq!(back.get(&id(1)), book.get(&id(1)));
+        // A layer beside the legacy sidecar wins; the JSON copy is never read again.
+        persist(&store, &back).unwrap();
+        std::fs::write(legacy_path(&store), b"{broken").unwrap();
+        let layer = load(&store).unwrap();
+        assert_eq!(layer.len(), 1);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -1030,7 +1153,7 @@ mod tests {
     }
 
     #[test]
-    fn the_browser_groups_views_by_kind_with_the_default_first() {
+    fn the_browser_groups_views_by_plane_with_the_default_on_its_own() {
         use beamcraft_engine::work_plane::WorkPlane;
         let mut views = Views::default();
         let mut home = view(1, "Z home", "");
@@ -1042,9 +1165,12 @@ mod tests {
         let mut section = view(5, "Section A", "");
         section.plane = WorkPlane::parallel("yz", 0.0).unwrap();
         section.depth = Some([500.0, 500.0]);
+        // A perspective look at a plan is still a plan: 3D is a way of looking.
         let mut spatial = view(4, "B spatial", "");
         spatial.projection = Projection::Perspective;
-        for v in [plan, elevation, spatial, home, section] {
+        let mut roof = view(6, "Roof", "");
+        roof.plane = WorkPlane::new([0.0; 3], [1.0, 0.0, 0.0], [0.0, 0.8, 0.6]).unwrap();
+        for v in [plan, elevation, spatial, home, section, roof] {
             views.book.insert(v).unwrap();
         }
         let tree = views.browser_tree();
@@ -1063,10 +1189,12 @@ mod tests {
         assert_eq!(
             names,
             [
-                ("3D views", vec!["Z home".to_owned(), "B spatial".into()]),
-                ("Plans", vec!["A plan".into()]),
-                ("Elevations", vec!["Elevation".into()]),
-                ("Sections", vec!["Section A".into()]),
+                ("Plans", vec!["A plan".to_owned(), "B spatial".into()]),
+                (
+                    "Elevations & sections",
+                    vec!["Elevation".to_owned(), "Section A".into()]
+                ),
+                ("Inclined", vec!["Roof".to_owned()]),
             ]
         );
     }
@@ -1088,10 +1216,10 @@ mod tests {
             .unwrap();
         views
             .book
-            .create_folder(&new_folder_path(ViewKind::Section, "", "Grid A"))
+            .create_folder(&new_folder_path(ViewKind::Vertical, "", "Grid A"))
             .unwrap();
         let tree = views.browser_tree();
-        let plans = &tree[1].1;
+        let plans = &tree[0].1;
         let folders: Vec<(&str, &str, usize)> = plans
             .folders
             .iter()
@@ -1107,17 +1235,17 @@ mod tests {
         );
         assert_eq!(plans.views, [id(2)]);
         assert_eq!(plans.all_views().len(), 3);
-        // The empty section folder is listed under Sections only.
-        assert_eq!(tree[3].1.folders.len(), 1);
-        assert!(tree[0].1.folders.is_empty());
+        // The empty folder made under the vertical kind is listed there only.
+        assert_eq!(tree[1].1.folders.len(), 1);
+        assert!(tree[2].1.folders.is_empty());
         views.favorites_only = true;
-        assert_eq!(views.browser_tree()[1].1.all_views(), [id(3)]);
+        assert_eq!(views.browser_tree()[0].1.all_views(), [id(3)]);
         views.favorites_only = false;
         views.search = "PLAN".into();
         let found = views.browser_tree();
-        assert_eq!(found[1].1.all_views().len(), 3);
+        assert_eq!(found[0].1.all_views().len(), 3);
         assert!(
-            found[1].1.folders.iter().all(|f| !f.all_views().is_empty()),
+            found[0].1.folders.iter().all(|f| !f.all_views().is_empty()),
             "empty folders hide"
         );
         // Plain, Ctrl and Shift clicks.

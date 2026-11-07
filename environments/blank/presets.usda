@@ -121,8 +121,6 @@ def Scope "Presets"
     {
         token steel:preset:kind = "view"
         string steel:preset:name = "3D by part type"
-        token steel:preset:projection = "perspective"
-        token steel:preset:renderMode = "shaded"
         string[] steel:preset:overrides = ["Columns|show|0.85,0.45,0.2|0", "Beams|show|0.25,0.55,0.85|0", "Plates|show|0.55,0.7,0.35|0"]
     }
 
@@ -131,7 +129,6 @@ def Scope "Presets"
         token steel:preset:kind = "view"
         string steel:preset:name = "Plan"
         double[] steel:preset:depthMm = [1000, 1000]
-        token steel:preset:renderMode = "shaded"
     }
 
     def Scope "View_Plan_columns_faded"
@@ -139,7 +136,6 @@ def Scope "Presets"
         token steel:preset:kind = "view"
         string steel:preset:name = "Plan, columns faded"
         double[] steel:preset:depthMm = [1000, 1000]
-        token steel:preset:renderMode = "transparent"
         string[] steel:preset:overrides = ["Columns|show|0.6,0.6,0.6|0.7"]
     }
 
@@ -148,6 +144,5 @@ def Scope "Presets"
         token steel:preset:kind = "view"
         string steel:preset:name = "Section"
         double[] steel:preset:depthMm = [500, 500]
-        token steel:preset:renderMode = "shaded"
     }
 }

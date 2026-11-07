@@ -131,26 +131,37 @@ impl Budgets {
     /// * `layer_bytes` 32 MiB: one layer is one host blob (`host::storage::MAX_BLOB_BYTES`).
     /// * `total_bytes` 64 MiB: the host's content-verification bound for one revision
     ///   (`host::revision::MAX_CONTENT_VERIFY_BYTES`).
-    /// * `prims` 262,144: four prims per element at the engine's 65,536-element view cap (element,
-    ///   geometry, representation and a definition or relationship target).
-    /// * `values` 4,194,304: 64 fields per element at the same cap.
+    /// * `prims` 393,216: six prims per element at the engine's 65,536-element view cap (element,
+    ///   geometry, the three U12 representation levels and a definition or relationship target).
+    /// * `values` 8,388,608: 128 fields per element at the same cap, counting a full mesh with
+    ///   its quantity record and every authored representation level.
     /// * `array_items` 1,572,864: one element mesh at the engine blob caps (524,288 triangles
     ///   are 1,572,864 indices; 262,144 vertices are 786,432 scalars).
+    /// * `layers` 70,000: the U15 per-element derived layers (`derived/<uuid>.usda`, one per
+    ///   element) at the 65,536-element view cap, beside the roots, section and grids layers,
+    ///   external wrappers and coordination pins. Depth stays 16 and pages 64: the composed
+    ///   project stack is three levels deep (root, derived stack, element layer).
     /// * `text_bytes` 64 KiB: a bounded allowance for imported USD string/token values, including
     ///   metadata. Engineering fields and identifiers retain their own tighter validation.
     /// * `decoded_bytes` 256 MiB and `snapshot_bytes` 512 MiB: four and eight times the 64 MiB
     ///   stage, a conservative allowance for the binary expansion and the per-value accounting of
     ///   the typed snapshot (not measured at the cap).
     ///
-    /// Layers, depth and page size are unchanged: a project stage has a fixed, shallow layer
-    /// stack. Allocation is still charged against these ceilings before it happens.
+    /// Layers, depth and page size: depth and page size are unchanged and the composed stack
+    /// stays shallow; only the layer count grew with the per-element derived layers. Allocation
+    /// is still charged against these ceilings before it happens.
     pub const MODEL: Self = Self {
         layer_bytes: 32 * 1024 * 1024,
         total_bytes: 64 * 1024 * 1024,
-        layers: 8,
+        // F12 section 9, amended by U15: a stage composes its own roots plus one derived layer
+        // per element (`derived/<uuid>.usda`), so the stack holds up to 65,536 element layers at
+        // the engine's element view cap, beside the roots, section/grids layers, external
+        // wrappers and the pinned source closures of coordination. Pins beyond this refuse with
+        // LIMIT_EXCEEDED. The stack stays shallow: the composition depth of a project is 3.
+        layers: 70_000,
         depth: 16,
-        prims: 262_144,
-        values: 4_194_304,
+        prims: 393_216,
+        values: 8_388_608,
         array_items: 1_572_864,
         text_bytes: 64 * 1024,
         decoded_bytes: 256 * 1024 * 1024,
@@ -393,6 +404,8 @@ pub struct Prim {
     pub kind: Option<String>,
     /// Composed `displayName` metadata, when authored.
     pub display_name: Option<String>,
+    /// Composed `instanceable` metadata (U11): true only for an explicit `true`.
+    pub instanceable: bool,
     /// Static attributes, ordered by full name.
     pub properties: Vec<Property>,
     /// Static composed relationships, ordered by full name; the UUID/link index is built

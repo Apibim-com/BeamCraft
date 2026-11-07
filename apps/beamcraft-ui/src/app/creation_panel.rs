@@ -721,7 +721,7 @@ impl App {
                         if ui.add_enabled(!self.plate_draft.points().is_empty(), egui::Button::new("Remove last point")).clicked() { self.plate_draft.back(); }
                         if ui.add_enabled(self.plate_draft.points().len() >= 3, egui::Button::new("Reverse direction")).clicked() { self.plate_draft.reverse(); }
                     });
-                    egui::CollapsingHeader::new("Precise point · work-plane mm").show(ui, |ui| {
+                    crate::kit::fold(ui, "plate", "Precise point · work-plane mm", false, |ui| {
                         for (axis, text) in ["X", "Y"].into_iter().zip(&mut self.plate_input) { field(ui, axis, text, 100.0); }
                         if ui.button("Add point").clicked() {
                             let numbers = self.plate_input.clone().map(|s| s.parse::<f64>().ok());
@@ -761,7 +761,7 @@ impl App {
                     }
                     ui.label("Right-click or wheel-click ends this tool.");
                     if self.tools.definitions.profiles.is_empty() { ui.label("Add a profile to the model catalogue before creating a member."); }
-                    egui::CollapsingHeader::new("Precise placement").show(ui, |ui| {
+                    crate::kit::fold(ui, "member", "Precise placement", false, |ui| {
                         for (label, point) in [("Start (mm)", &mut self.tools.member.start), ("End (mm)", &mut self.tools.member.end)] {
                             ui.label(label); super::point_fields(ui, point);
                         }
@@ -772,7 +772,7 @@ impl App {
                     });
                 }
             }
-            egui::CollapsingHeader::new("Work plane").show(ui, |ui| {
+            crate::kit::section(ui, "create", "Work plane", false, |ui| {
                 match self.plane_form.show(ui) {
                     Ok(Some(crate::work_plane::Action::Apply(plane))) => self.install_plane(Some(plane)),
                     Ok(Some(crate::work_plane::Action::Clear)) => self.install_plane(None),

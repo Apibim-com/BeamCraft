@@ -80,6 +80,17 @@ pub(super) fn input_bounds(input: &Prepare, b: Budgets) -> Result<(), Diagnostic
                 count(m.points_mm.len().checked_mul(3).ok_or_else(limit)?, 4)?;
                 count(m.face_counts.len(), 4)?;
                 count(m.indices.len(), 4)?;
+                // The U12 level bodies charge the same caps as the full mesh they accompany.
+                for r in m.reduced.iter().chain(m.proxy.iter()) {
+                    count(r.points_mm.len().checked_mul(3).ok_or_else(limit)?, 4)?;
+                    count(r.face_counts.len(), 4)?;
+                    count(r.indices.len(), 4)?;
+                }
+                if let Some(points) = &m.axis {
+                    count(points.len().checked_mul(3).ok_or_else(limit)?, 4)?;
+                    finite(points.iter().flatten().copied())?;
+                    cap(points.iter().flatten().copied(), 1e9)?;
+                }
             }
             _ => (),
         }
@@ -436,6 +447,88 @@ pub(super) fn owned_pose(p: &Prim) -> Result<(), Diagnostic> {
     Ok(())
 }
 
+/// Reads the standard mesh buffers of a composed `Geometry` prim or of a geometry asset and
+/// checks their structure, extent, stored normals and orientation against the buffers
+/// (U02-V06). The same rules hold for the shared asset (U11) and for the composed instance.
+fn composed_mesh(p: &Prim, id: String) -> Result<Mesh, Diagnostic> {
+    let key = text(p, "bim:shapeKey", "string")?
+        .parse::<ContentDigest>()
+        .map_err(|_| invalid())?;
+    let Value::Array(values) = required(p, "points", "point3f[]")? else {
+        return Err(invalid());
+    };
+    let points = values
+        .iter()
+        .map(|v| {
+            let Value::Array(v) = v else {
+                return Err(invalid());
+            };
+            match v.as_slice() {
+                [Value::Number(x), Value::Number(y), Value::Number(z)] => {
+                    Ok([*x as f32, *y as f32, *z as f32])
+                }
+                _ => Err(invalid()),
+            }
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let integers = |name| -> Result<Vec<i32>, Diagnostic> {
+        let Value::Array(values) = required(p, name, "int[]")? else {
+            return Err(invalid());
+        };
+        values
+            .iter()
+            .map(|v| match v {
+                Value::Int(n) => i32::try_from(*n).map_err(|_| invalid()),
+                _ => Err(invalid()),
+            })
+            .collect()
+    };
+    let result = Mesh {
+        id,
+        shape_key: key,
+        points_mm: points,
+        face_counts: integers("faceVertexCounts")?,
+        indices: integers("faceVertexIndices")?,
+        quantities: None,
+        reduced: None,
+        proxy: None,
+        axis: None,
+    };
+    mesh(&result, Budgets::default())?;
+    let expected = derive::extent(&result.points_mm).ok_or_else(invalid)?;
+    let stored = vec3s(required(p, "extent", "float3[]")?)?;
+    if stored.len() != 2 || stored.iter().zip(expected).any(|(s, e)| *s != e) {
+        return Err(invalid());
+    }
+    let expected = derive::face_normals(&result.points_mm, &result.face_counts, &result.indices)
+        .ok_or_else(invalid)?;
+    let stored = vec3s(required(p, "normals", "normal3f[]")?)?;
+    // Per-face data read as per-vertex data (the USD default) would mis-shade every reader.
+    let interpolation = p
+        .properties
+        .iter()
+        .find(|v| v.name == "normals")
+        .and_then(|v| v.interpolation.as_deref());
+    if interpolation != Some("uniform") {
+        return Err(invalid());
+    }
+    if stored.len() != expected.len()
+        || stored.iter().zip(&expected).any(|(s, e)| {
+            s.iter()
+                .zip(e)
+                .any(|(s, e)| (s - e).abs() > derive::NORMAL_TOLERANCE)
+        })
+    {
+        return Err(invalid());
+    }
+    if text(p, "subdivisionScheme", "token")? != "none"
+        || text(p, "orientation", "token")? != "rightHanded"
+    {
+        return Err(unsupported());
+    }
+    Ok(result)
+}
+
 pub(super) fn snapshot(
     prims: &[Prim],
     metadata: &BTreeMap<String, Value>,
@@ -469,8 +562,21 @@ pub(super) fn snapshot(
         ));
     }
     project_record(metadata)?;
+    // The F12 descriptor is optional; when present it is validated as a whole, and its project
+    // identity can never disagree with the root layer's own project record.
+    let descriptor = super::descriptor::descriptor_of(metadata)?;
+    if let Some(descriptor) = descriptor
+        && let Some(record) = project_record(metadata)?
+        && descriptor.project.to_string() != record
+    {
+        return Err(fail(
+            ErrorCode::IntegrityError,
+            "the project descriptor names another project",
+        ));
+    }
     let mut operation_ids = std::collections::BTreeSet::new();
     attribute_schema(prims)?;
+    appearance::validate_looks(prims)?;
     for p in prims.iter().filter(|p| p.element_id.is_some()) {
         let id = p.element_id.as_deref().ok_or_else(invalid)?;
         // Foreign content is preserved inertly, not interpreted as engineering input.
@@ -546,6 +652,7 @@ pub(super) fn snapshot(
         {
             return Err(invalid());
         }
+        appearance::validate_element(p, is_part_kind(kind))?;
         if instance::definition(p, prims)?.is_none() {
             if is_part_kind(kind) {
                 disciplines::validate_part(kind, p, prims, &mut operation_ids)?;
@@ -604,15 +711,63 @@ pub(super) fn snapshot(
         .iter()
         .filter(|p| p.type_name.as_deref() == Some("Mesh") && p.sources.iter().all(|s| s.owned))
     {
-        let Some((parent, "Geometry")) = p.path.rsplit_once('/') else {
+        // U11: an immutable geometry asset under `/World/Definitions/Geometry`. Its buffers are
+        // validated exactly like a composed body, and its name must recompute from the content
+        // it labels; an asset never carries an element identity, a model kind or a quantity
+        // record of its own.
+        if let Some(label) = p
+            .path
+            .strip_prefix(&format!("{}/GEO_", super::edit::GEOMETRY_ASSETS))
+        {
+            if p.kind.is_some() || p.element_id.is_some() || p.display_name.is_some() {
+                return Err(invalid());
+            }
+            let result = composed_mesh(p, String::new())?;
+            let digest = super::edit::mesh_asset_digest(&result)?;
+            if label.len() != 64 || digest.to_string() != label {
+                return Err(fail(
+                    ErrorCode::InvalidId,
+                    "geometry asset name does not recompose from its content",
+                ));
+            }
+            continue;
+        }
+        // The full mesh and the U12 level bodies share the encoding and every structural rule;
+        // a level body never carries a quantity record (engineering reads the full mesh only).
+        let Some((parent, name)) = p.path.rsplit_once('/') else {
             continue;
         };
+        if !matches!(name, "Geometry" | "Reduced" | "Proxy") {
+            continue;
+        }
         let Some(element) = prims
             .iter()
             .find(|p| p.path == parent && p.element_id.is_some())
         else {
             continue;
         };
+        if name == "Geometry" {
+            // U11: the element's own prim is an instanceable reference to the shared asset; a
+            // non-instanceable inline body is outside this mapping.
+            if !p.instanceable
+                || !p.sources.iter().any(|s| {
+                    s.path
+                        .starts_with(&format!("{}/GEO_", super::edit::GEOMETRY_ASSETS))
+                })
+            {
+                return Err(invalid());
+            }
+        } else if text(p, "purpose", "token")? != expected_purpose(name)
+            || required(p, "bim:exact", "bool")? != &Value::Bool(false)
+            // A level is a display body: a quantity record on one is outside the profile.
+            || p.properties.iter().any(|v| {
+                v.name.starts_with("bim:volume")
+                    || v.name.starts_with("bim:mass")
+                    || v.name == "bim:quantityAlgorithm"
+            })
+        {
+            return Err(unsupported());
+        }
         // An assembly, a level or a weld without a path has no body: a Geometry mesh under one
         // is refused, authored or loaded. A grid carries only derived guide meshes (T01.7);
         // only the A15 weld with an authored path carries a derived solid.
@@ -627,83 +782,12 @@ pub(super) fn snapshot(
             return Err(unsupported());
         }
         let id = element.element_id.clone().ok_or_else(invalid)?;
-        let key = text(p, "bim:shapeKey", "string")?
-            .parse::<ContentDigest>()
-            .map_err(|_| invalid())?;
-        let Value::Array(values) = required(p, "points", "point3f[]")? else {
-            return Err(invalid());
-        };
-        let points = values
-            .iter()
-            .map(|v| {
-                let Value::Array(v) = v else {
-                    return Err(invalid());
-                };
-                match v.as_slice() {
-                    [Value::Number(x), Value::Number(y), Value::Number(z)] => {
-                        Ok([*x as f32, *y as f32, *z as f32])
-                    }
-                    _ => Err(invalid()),
-                }
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let integers = |name| -> Result<Vec<i32>, Diagnostic> {
-            let Value::Array(values) = required(p, name, "int[]")? else {
-                return Err(invalid());
-            };
-            values
-                .iter()
-                .map(|v| match v {
-                    Value::Int(n) => i32::try_from(*n).map_err(|_| invalid()),
-                    _ => Err(invalid()),
-                })
-                .collect()
-        };
-        let result = Mesh {
-            id,
-            shape_key: key,
-            points_mm: points,
-            face_counts: integers("faceVertexCounts")?,
-            indices: integers("faceVertexIndices")?,
-            quantities: None,
-        };
-        mesh(&result, Budgets::default())?;
+        composed_mesh(p, id)?;
         if p.kind.as_deref() != Some("subcomponent") {
             return Err(invalid());
         }
-        let expected = derive::extent(&result.points_mm).ok_or_else(invalid)?;
-        let stored = vec3s(required(p, "extent", "float3[]")?)?;
-        if stored.len() != 2 || stored.iter().zip(expected).any(|(s, e)| *s != e) {
-            return Err(invalid());
-        }
-        let expected =
-            derive::face_normals(&result.points_mm, &result.face_counts, &result.indices)
-                .ok_or_else(invalid)?;
-        let stored = vec3s(required(p, "normals", "normal3f[]")?)?;
-        // Per-face data read as per-vertex data (the USD default) would mis-shade every reader.
-        let interpolation = p
-            .properties
-            .iter()
-            .find(|v| v.name == "normals")
-            .and_then(|v| v.interpolation.as_deref());
-        if interpolation != Some("uniform") {
-            return Err(invalid());
-        }
-        if stored.len() != expected.len()
-            || stored.iter().zip(&expected).any(|(s, e)| {
-                s.iter()
-                    .zip(e)
-                    .any(|(s, e)| (s - e).abs() > derive::NORMAL_TOLERANCE)
-            })
-        {
-            return Err(invalid());
-        }
-        if text(p, "subdivisionScheme", "token")? != "none"
-            || text(p, "orientation", "token")? != "rightHanded"
-        {
-            return Err(unsupported());
-        }
     }
+    axis_guides(prims)?;
     Ok(Validation {
         profile: "u02-structural-v1",
         rules: &[
@@ -1091,8 +1175,72 @@ fn chain(prims: &[Prim], changes: &[Change], start: &str) -> Vec<String> {
     out
 }
 
+/// The U19 scope admission of one change (`DV-SCOPE-002..004`): an edit must name an element
+/// whose strongest authored provenance lies inside the authorized scopes, unknown provenance
+/// gives no write permission, and common-data layers answer only to authorized shared commands.
+/// An element this batch creates is admitted: it is authored in the scope's write layer.
+pub(super) fn in_scope(
+    change: &Change,
+    existing: Option<&Prim>,
+    scope: &EditScope,
+) -> Result<(), Diagnostic> {
+    if matches!(
+        change,
+        Change::AttrDefine { .. } | Change::AttrUndefine { .. }
+    ) {
+        return if scope.shared_authorized {
+            Ok(())
+        } else {
+            Err(fail(
+                ErrorCode::PermissionDenied,
+                "the user-attribute schema is shared data",
+            )
+            .with_rule("DV-SCOPE-004"))
+        };
+    }
+    if matches!(change, Change::Create(_) | Change::AttachReference(_)) {
+        return Ok(());
+    }
+    // An element created in the same batch has no provenance yet; the kind checks below still
+    // refuse a change that names no such create.
+    let Some(prim) = existing else {
+        return Ok(());
+    };
+    let layer = prim
+        .sources
+        .first()
+        .map(|s| s.layer.as_str())
+        .ok_or_else(|| {
+            fail(
+                ErrorCode::ForeignReadOnly,
+                "unknown provenance gives no write permission",
+            )
+            .with_rule("DV-SCOPE-002")
+        })?;
+    if scope.allowed.contains(layer) {
+        return Ok(());
+    }
+    if scope.shared.contains(layer) {
+        return if scope.shared_authorized {
+            Ok(())
+        } else {
+            Err(fail(
+                ErrorCode::PermissionDenied,
+                "grids and levels are shared data",
+            )
+            .with_rule("DV-SCOPE-004"))
+        };
+    }
+    Err(fail(
+        ErrorCode::ForeignReadOnly,
+        "the element belongs to another section or zone",
+    )
+    .with_rule("DV-SCOPE-002"))
+}
+
 pub(super) fn changes(
     input: &Prepare,
+    scope: Option<&EditScope>,
     prims: &[Prim],
     b: Budgets,
 ) -> Result<(BTreeSet<Footprint>, BTreeSet<Footprint>), Diagnostic> {
@@ -1106,6 +1254,9 @@ pub(super) fn changes(
             change,
             Change::AttrDefine { .. } | Change::AttrUndefine { .. }
         ) {
+            if let Some(scope) = scope {
+                in_scope(change, None, scope)?;
+            }
             writes.insert(Footprint {
                 identity: super::ATTR_SCHEMA_IDENTITY.to_owned(),
                 group: Group::Lifecycle,
@@ -1121,6 +1272,9 @@ pub(super) fn changes(
         let wrapper = existing
             .is_some_and(|p| matches!(text(p, "bim:geometryMode", "token"), Ok("reference")));
         owned(prims, &path, !wrapper)?;
+        if let Some(scope) = scope {
+            in_scope(change, existing, scope)?;
+        }
         if matches!(change, Change::Delete { .. })
             && input.changes.iter().filter(|c| c.key().0 == id).count() > 1
         {
@@ -1365,9 +1519,21 @@ pub(super) fn changes(
                 });
             }
         }
-        if matches!(change, Change::Mesh(_)) {
+        if let Change::Mesh(m) = change {
             let mesh_path = format!("{path}/Geometry");
             owned(prims, &mesh_path, true)?;
+            // U11: the transfer pins an immutable geometry asset; its content identity joins
+            // the declared read/write set, so a rebase can carry the shared prim's delta and
+            // two clients editing equal bodies conflict instead of silently interleaving.
+            let digest = super::edit::mesh_asset_digest(m)?.to_string();
+            reads.insert(Footprint {
+                identity: digest.clone(),
+                group: Group::Derived,
+            });
+            writes.insert(Footprint {
+                identity: digest,
+                group: Group::Derived,
+            });
         }
     }
     // Whole-batch finiteness precedes numeric caps/ranges, independent of insertion order.
@@ -1583,10 +1749,96 @@ fn finite_change(c: &Change) -> Result<(), Diagnostic> {
                     .iter()
                     .flat_map(|q| [q.volume_mm3].into_iter().chain(q.mass_kg)),
             ),
-        ),
+        )
+        .and_then(|()| {
+            for r in m.reduced.iter().chain(m.proxy.iter()) {
+                finite(r.points_mm.iter().flatten().map(|n| f64::from(*n)))?;
+            }
+            finite(m.axis.iter().flatten().flatten().copied())
+        }),
         _ => Ok(()),
     }
 }
+/// The one U12 purpose a level body may carry: the reduced level is the `default` body a plain
+/// viewer draws, the simplified level is the `proxy` stand-in (owner decision: standard
+/// `purpose`; Full `render`, Simplified `proxy`, Axis `guide`).
+fn expected_purpose(name: &str) -> &'static str {
+    match name {
+        "Reduced" => "default",
+        "Proxy" => "proxy",
+        _ => "render",
+    }
+}
+
+/// The U12 axis guides: a member's `BasisCurves` display axis under `<part>/Axis` carries the
+/// guide purpose with the inexact mark and stores no engineering record. Every other owned
+/// `BasisCurves` prim (a drawing view's curves, for example) stays outside this rule.
+fn axis_guides(prims: &[Prim]) -> Result<(), Diagnostic> {
+    for p in prims.iter().filter(|p| {
+        p.type_name.as_deref() == Some("BasisCurves") && p.sources.iter().all(|s| s.owned)
+    }) {
+        let Some((_, "Axis")) = p.path.rsplit_once('/') else {
+            continue;
+        };
+        let Some(parent) = p.path.rsplit_once('/').map(|(parent, _)| parent.to_owned()) else {
+            continue;
+        };
+        let Some(element) = prims
+            .iter()
+            .find(|p| p.path == parent && p.element_id.is_some())
+        else {
+            return Err(unsupported());
+        };
+        // Only a beam or column authors an axis; a plate has no axis data in storage. The kind
+        // token is platform-owned and readable without a registered discipline.
+        let kind = text(element, "bim:elementKind", "token")?;
+        if !matches!(kind, "beam" | "column")
+            || text(p, "purpose", "token")? != "guide"
+            || required(p, "bim:exact", "bool")? != &Value::Bool(false)
+            || text(p, "type", "token")? != "linear"
+            || text(p, "wrap", "token")? != "nonperiodic"
+            || p.properties.iter().any(|v| {
+                v.name.starts_with("bim:volume")
+                    || v.name.starts_with("bim:mass")
+                    || v.name == "bim:quantityAlgorithm"
+                    || v.name == "bim:shapeKey"
+            })
+        {
+            return Err(unsupported());
+        }
+        let Value::Array(values) = required(p, "points", "point3f[]")? else {
+            return Err(invalid());
+        };
+        let ok_point = |v: &Value| {
+            matches!(
+                v,
+                Value::Array(a) if matches!(
+                    a.as_slice(),
+                    [Value::Number(x), Value::Number(y), Value::Number(z)]
+                        if x.is_finite() && y.is_finite() && z.is_finite()
+                )
+            )
+        };
+        if values.is_empty() || values.iter().any(|v| !ok_point(v)) {
+            return Err(invalid());
+        }
+        let Value::Array(counts) = required(p, "curveVertexCounts", "int[]")? else {
+            return Err(invalid());
+        };
+        if counts.as_slice()
+            != [Value::Int(
+                i64::try_from(values.len()).map_err(|_| invalid())?,
+            )]
+        {
+            return Err(invalid());
+        }
+        if p.kind.as_deref() != Some("subcomponent") {
+            return Err(invalid());
+        }
+    }
+    Ok(())
+}
+
 fn quantities(q: &StoredQuantities) -> Result<(), Diagnostic> {
     let status = |s: &str| matches!(s, "current" | "stale" | "unknown");
     if !status(&q.volume_status)

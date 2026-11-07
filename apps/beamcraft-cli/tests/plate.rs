@@ -47,7 +47,7 @@ impl Fixture {
         fs::create_dir_all(&base).unwrap();
         let root = base.join(format!(
             "e2e-{}-{}",
-            std::process::id(),
+            crate::support::boot_nonce(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir(&root).unwrap();
@@ -116,6 +116,7 @@ fn parse_usda(source: &str) -> Usda {
     let mut depth_in_dict = 0usize;
     let mut stack: Vec<String> = Vec::new();
     let mut pending: Option<String> = None;
+    let mut pending_refs: Option<String> = None;
     let mut skipping = false;
     for line in lines {
         if line.is_empty() {
@@ -143,6 +144,12 @@ fn parse_usda(source: &str) -> Usda {
             let parent = stack.last().cloned().unwrap_or_default();
             stack.push(format!("{parent}/{name}"));
             usda.prims.entry(stack.last().unwrap().clone()).or_default();
+            if let Some(target) = pending_refs.take() {
+                usda.prims
+                    .get_mut(stack.last().unwrap())
+                    .expect("prim on the stack")
+                    .insert("references".to_owned(), target);
+            }
             continue;
         }
         if line == "}" {
@@ -150,7 +157,21 @@ fn parse_usda(source: &str) -> Usda {
             continue;
         }
         if skipping {
-            // Prim or attribute metadata (kind, displayName, interpolation): not needed here.
+            // Prim or attribute metadata (kind, displayName, interpolation): not needed here,
+            // except the reference naming the shared geometry asset — the U11 internal form
+            // (`references = </World/...>`) or the U15 external form (`references =
+            // @geometry.usda@</World/...>`). The prim enters the stack only at its `{`, so the
+            // capture rides on `pending`.
+            let external = line
+                .strip_prefix("references = @")
+                .and_then(|rest| rest.split_once("@<").map(|(_, target)| target));
+            let target = line
+                .strip_prefix("references = <")
+                .and_then(|rest| rest.strip_suffix('>'))
+                .or_else(|| external.and_then(|t| t.strip_suffix('>')));
+            if let Some(target) = target {
+                pending_refs = Some(target.to_owned());
+            }
             skipping = line != ")";
             continue;
         }
@@ -161,12 +182,18 @@ fn parse_usda(source: &str) -> Usda {
         if is_header {
             let name = line.trim_end_matches(" (").rsplit('"').nth(1).unwrap();
             pending = Some(name.to_owned());
+            pending_refs = None;
             skipping = line.ends_with(" (");
             continue;
         }
         let skip_after = line.ends_with(" (");
         let line = line.strip_suffix(" (").unwrap_or(line);
-        let (lhs, rhs) = line.split_once(" = ").expect("an attribute line");
+        // A valueless declaration such as `uniform token outputs:surface` (the U08 look)
+        // carries no default; this reader needs only attributes with values.
+        let Some((lhs, rhs)) = line.split_once(" = ") else {
+            skipping = skip_after;
+            continue;
+        };
         let name = lhs.split_whitespace().last().unwrap();
         let path = stack.last().expect("attribute inside a prim").clone();
         usda.prims
@@ -213,8 +240,38 @@ struct Mesh {
     triangles: Vec<[usize; 3]>,
 }
 
+/// The prim's own attributes composed over the shared geometry asset (U11/U15): one reference
+/// hop — internal on master's layout, external to the asset layer here — exactly what a plain
+/// reader composes for `instanceable`.
+fn composed<'a>(stage: &'a Usda, path: &str) -> &'a BTreeMap<String, String> {
+    let prim = &stage.prims[path];
+    match prim.get("references") {
+        // The U15 external form carries the asset layer: `@geometry.usda@</target>`.
+        Some(target) => {
+            // The raw value is `@geometry.usda@</World/...>`: the asset layer name and the
+            // target prim path.
+            let bare = target
+                .rsplit_once('>')
+                .map(|(_, path)| path)
+                .unwrap_or(target);
+            let bare = bare.trim_start_matches('>');
+            let asset = &stage.prims[bare];
+            assert!(
+                bare.starts_with("/World/Definitions/Geometry/GEO_"),
+                "the reference names a shared geometry asset: {target}"
+            );
+            assert!(
+                prim.get("points").is_none(),
+                "inline buffers on a reference"
+            );
+            asset
+        }
+        None => prim,
+    }
+}
+
 fn mesh_of(stage: &Usda, element_path: &str) -> Mesh {
-    let prim = &stage.prims[&format!("{element_path}/Geometry")];
+    let prim = composed(stage, &format!("{element_path}/Geometry"));
     let flat = floats(&prim["points"]);
     let points = flat.chunks(3).map(|c| [c[0], c[1], c[2]]).collect();
     assert!(floats(&prim["faceVertexCounts"]).iter().all(|c| *c == 3.0));
@@ -469,7 +526,7 @@ fn two_plates_in_two_commits_are_independent_complete_revisions_readable_without
         let (lo, hi) = bounds(&mesh);
         assert_eq!(lo, [0.0, 0.0, 0.0]);
         assert_eq!(hi, [w, l, t]);
-        let geometry = &stage.prims[&format!("{path}/Geometry")];
+        let geometry = composed(&stage, &format!("{path}/Geometry"));
         assert_eq!(geometry["orientation"], "\"rightHanded\"");
         assert_eq!(geometry["subdivisionScheme"], "\"none\"");
     }

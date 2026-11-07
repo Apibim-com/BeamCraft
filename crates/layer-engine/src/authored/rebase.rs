@@ -7,7 +7,7 @@
 //! command, including reads and reverted edits, before calling it. Host authority, pinned history,
 //! kernel re-evaluation, publication and recovery remain the caller's responsibilities.
 
-use super::{EditTargets, edit, schema_identity};
+use super::{EditTargets, edit, element_layer_id, schema_identity};
 use crate::*;
 use beamcraft_model::changeset::{Access, Dependency, DependencyGroup as G, DependencyTarget as T};
 use beamcraft_model::id::ElementId;
@@ -17,6 +17,72 @@ use openusd::sdf::{self, AbstractData};
 use std::collections::BTreeMap;
 
 type Writes = BTreeSet<(T, G)>;
+
+/// Rebuilds the derived stack's sublayer list from the candidate asset set (U15): the stack is
+/// derived state, a sorted set of the referenced asset layer (when the manifest carries it)
+/// plus exactly the element files.
+fn reconcile_element_stack(
+    candidate: &mut OpenRequest,
+    targets: &EditTargets,
+) -> Result<(), Diagnostic> {
+    let mut entries: Vec<String> = candidate
+        .assets
+        .iter()
+        .filter(|a| element_layer_id(&a.name).is_some())
+        .map(|a| a.name.clone())
+        .collect();
+    if candidate
+        .assets
+        .iter()
+        .any(|a| a.name == super::GEOMETRY_ASSET_LAYER)
+    {
+        entries.push(super::GEOMETRY_ASSET_LAYER.to_owned());
+    }
+    entries.sort();
+    entries.dedup();
+    let asset = candidate
+        .assets
+        .iter_mut()
+        .find(|a| a.name == targets.derived)
+        .ok_or_else(corrupt)?;
+    let mut derived = edit::data(asset)?;
+    let root = sdf::Path::abs_root();
+    let current = match derived
+        .try_field(&root, "subLayers")
+        .map_err(|_| corrupt())?
+    {
+        Some(value) => match value.as_ref() {
+            sdf::Value::StringVec(names) => Some(names.clone()),
+            _ => {
+                return Err(fail(
+                    ErrorCode::InvalidArgument,
+                    "the derived stack lists non-token entries",
+                ));
+            }
+        },
+        None => None,
+    };
+    let changed = match (&current, entries.is_empty()) {
+        (None, true) => false,
+        (Some(names), false) => names != &entries,
+        _ => true,
+    };
+    if !changed {
+        return Ok(());
+    }
+    if entries.is_empty() {
+        derived.erase_field(&root, "subLayers");
+    } else {
+        derived.set_field(&root, "subLayers", sdf::Value::StringVec(entries));
+    }
+    let bytes = edit::serialize(&derived, candidate.budgets.layer_bytes)?;
+    *asset = Asset {
+        name: asset.name.clone(),
+        digest: Sha256::digest(&bytes).map_err(|_| limit())?,
+        bytes,
+    };
+    Ok(())
+}
 
 fn conflict() -> Diagnostic {
     fail(
@@ -32,25 +98,42 @@ fn unsupported_delta() -> Diagnostic {
 }
 
 fn scaffold(path: &str) -> bool {
-    matches!(
-        path,
-        "/" | "/World"
-            | "/World/Steel"
-            | "/World/Steel/Parts"
-            | "/World/Steel/Assemblies"
-            | "/World/Steel/Connections"
-            | "/World/Levels"
-            | "/World/Definitions"
-            | "/World/Definitions/Materials"
-            | "/World/Definitions/Profiles"
-    )
+    looks(path)
+        || matches!(
+            path,
+            "/" | "/World"
+                | "/World/Steel"
+                | "/World/Steel/Parts"
+                | "/World/Steel/Assemblies"
+                | "/World/Steel/Connections"
+                | "/World/Levels"
+                | "/World/Grids"
+                | "/World/Definitions"
+                | "/World/Definitions/Materials"
+                | "/World/Definitions/Profiles"
+                | "/World/Definitions/Geometry"
+        )
+}
+
+/// The fixed U08 appearance scope: engine-authored look content, never a user opinion.
+fn looks(path: &str) -> bool {
+    path == "/World/Looks" || path.starts_with("/World/Looks/")
+}
+
+/// The immutable geometry asset (U11) a spec path belongs to, by its content-addressed label.
+fn geometry_asset(path: &str) -> Option<ContentDigest> {
+    path.strip_prefix(super::edit::GEOMETRY_ASSETS)
+        .and_then(|rest| rest.strip_prefix("/GEO_"))
+        .filter(|label| label.len() == 64)
+        .and_then(|label| label.parse().ok())
 }
 
 fn property_group(name: &str) -> Option<G> {
     Some(match name {
         "bim:id" | "bim:elementKind" | "bim:geometryMode" | "bim:schemaVersion"
         | "bim:createdBy" | "bim:revision" => G::Lifecycle,
-        "bim:name" | "steel:class" => G::Label,
+        // The U08 appearance travels with the class: one presentation write, one group.
+        "bim:name" | "steel:class" | "primvars:displayColor" | "material:binding" => G::Label,
         "steel:numbering:series" | "steel:numbering:number" | "steel:numbering:basis" => G::Mark,
         "xformOp:translate" | "xformOp:orient" | "xformOpOrder" => G::Placement,
         "bim:material" => G::MaterialRef,
@@ -109,9 +192,20 @@ fn scope(path: &str, field: &str) -> Result<(T, G), Diagnostic> {
         }
         return Ok((T::Definition(digest), G::Relationship));
     }
-    let (element, geometry) = prim
-        .strip_suffix("/Geometry")
-        .map_or((prim, false), |p| (p, true));
+    // U11: a shared immutable geometry asset is a derived write of its content identity.
+    if let Some(digest) = geometry_asset(prim) {
+        if property.is_some_and(|p| !geometry_property(p)) {
+            return Err(unsupported_delta());
+        }
+        return Ok((T::Definition(digest), G::Derived));
+    }
+    // U12 representation levels are sibling prims of the geometry on the element
+    // (`<part>/Reduced`, `<part>/Proxy`, `<part>/Axis`): derived state of the element,
+    // classified like `/Geometry` with the level bodies' own extra fields.
+    let (element, derived_suffix) = ["/Geometry", "/Reduced", "/Proxy", "/Axis"]
+        .iter()
+        .find_map(|suffix| prim.strip_suffix(suffix).map(|p| (p, true)))
+        .unwrap_or((prim, false));
     let indexed = crate::index::ElementId::from_path(element).map_err(|_| unsupported_delta())?;
     // Reference wrappers and their foreign-facing descendants retain the R01-specific writer.
     if element.starts_with("/World/References/") {
@@ -121,8 +215,8 @@ fn scope(path: &str, field: &str) -> Result<(T, G), Diagnostic> {
         ));
     }
     let id = ElementId::parse(&indexed.to_string()).map_err(|_| corrupt())?;
-    let group = if geometry {
-        if property.is_some_and(|p| !geometry_property(p)) {
+    let group = if derived_suffix {
+        if property.is_some_and(|p| !level_property(p)) {
             return Err(unsupported_delta());
         }
         G::Derived
@@ -136,6 +230,13 @@ fn scope(path: &str, field: &str) -> Result<(T, G), Diagnostic> {
     Ok((T::Element(id), group))
 }
 
+/// The property vocabulary of one element representation body (the full mesh, a U12 level
+/// or a shared geometry asset): mesh fields plus the axis curve's own fields and the
+/// level's exactness mark.
+fn level_property(name: &str) -> bool {
+    geometry_property(name) || matches!(name, "bim:exact" | "type" | "wrap" | "curveVertexCounts")
+}
+
 fn permitted(writes: &Writes, entry: (T, G)) -> bool {
     writes.contains(&entry)
         // Existing A09 approval declares label writes; do not change that historical evidence.
@@ -147,9 +248,14 @@ fn require(writes: &Writes, path: &str, field: &str) -> Result<(), Diagnostic> {
         matches!(
             field,
             "typeName" | "default" | "custom" | "variability" | "targetPaths"
-        ) || (field == "interpolation" && path.ends_with("/Geometry.normals"))
+        ) || (field == "interpolation" && (path.ends_with(".normals") || geometry_asset_path(path)))
     } else {
-        matches!(field, "specifier" | "typeName" | "kind" | "displayName")
+        // `apiSchemas` is the prim metadata a U08 classed part applies at create; U11: an
+        // element's derived prim is an instanceable reference to the shared geometry asset.
+        matches!(
+            field,
+            "specifier" | "typeName" | "kind" | "displayName" | "apiSchemas"
+        ) || ((field == "instanceable" || field == "references") && path.ends_with("/Geometry"))
     };
     if !known {
         return Err(unsupported_delta());
@@ -161,6 +267,13 @@ fn require(writes: &Writes, path: &str, field: &str) -> Result<(), Diagnostic> {
         ));
     }
     Ok(())
+}
+
+/// Whether a property path sits on an immutable geometry asset (U11).
+fn geometry_asset_path(path: &str) -> bool {
+    path.split_once('.')
+        .and_then(|(prim, _)| geometry_asset(prim))
+        .is_some()
 }
 
 fn fields(data: &sdf::Data, path: &sdf::Path) -> Result<BTreeMap<String, sdf::Value>, Diagnostic> {
@@ -205,11 +318,39 @@ fn check_accepted(
         if !base.owned_layers.contains(&asset.name) {
             continue;
         }
-        let other = accepted
-            .assets
-            .iter()
-            .find(|a| a.name == asset.name)
-            .ok_or_else(conflict)?;
+        let other = match accepted.assets.iter().find(|a| a.name == asset.name) {
+            Some(other) => other,
+            None => {
+                // The accepted head removed a whole layer. Roots never vanish; an element
+                // file is an upstream element delete (U15) and conflicts only where the
+                // local write set covers content the deletion removes.
+                if element_layer_id(&asset.name).is_none() {
+                    return Err(conflict());
+                }
+                let removed = edit::data(asset)?;
+                for path in removed.spec_paths() {
+                    control.check()?;
+                    let before = fields(&removed, &path)?;
+                    for key in before.keys() {
+                        if key == "propertyChildren" || key == "primChildren" {
+                            for child in names(before.get(key))? {
+                                let child_path = child_path(&path.to_string(), key, &child);
+                                if scope(&child_path, "default")
+                                    .is_ok_and(|entry| permitted(writes, entry))
+                                {
+                                    return Err(conflict());
+                                }
+                            }
+                        } else if scope(&path.to_string(), key)
+                            .is_ok_and(|entry| permitted(writes, entry))
+                        {
+                            return Err(conflict());
+                        }
+                    }
+                }
+                continue;
+            }
+        };
         if asset.digest == other.digest {
             continue;
         }
@@ -312,6 +453,39 @@ fn merge_layer(
     let mut changed = false;
     for path in paths {
         control.check()?;
+        // The pseudo-root of an edit layer carries engine bookkeeping (units, schema pin, and
+        // since U15 the element-file stack): the candidate keeps the accepted side of it, and
+        // only the root prim children merge — a workspace may author its first element, and
+        // the writer lists prims from that children field, so a skipped root drops them.
+        if path.to_string() == "/" {
+            let before = names(
+                accepted
+                    .try_field(&path, "primChildren")
+                    .map_err(|_| corrupt())?
+                    .as_deref(),
+            )?;
+            merge_names(
+                &path,
+                "primChildren",
+                old.try_field(&path, "primChildren")
+                    .map_err(|_| corrupt())?
+                    .as_deref(),
+                source
+                    .try_field(&path, "primChildren")
+                    .map_err(|_| corrupt())?
+                    .as_deref(),
+                accepted,
+                writes,
+            )?;
+            changed |= before
+                != names(
+                    accepted
+                        .try_field(&path, "primChildren")
+                        .map_err(|_| corrupt())?
+                        .as_deref(),
+                )?;
+            continue;
+        }
         let before = fields(old, &path)?;
         let after = fields(source, &path)?;
         if before == after && old.spec_type(&path) == source.spec_type(&path) {
@@ -319,6 +493,28 @@ fn merge_layer(
         }
         changed = true;
         let path_text = path.to_string();
+        // The fixed appearance scope is engine-authored content both sides carry identically:
+        // equal content is no conflict, and anything else is a tampered look and refuses.
+        // It is never a user opinion, so it is copied wholesale, never permission-merged.
+        if looks(&path_text) {
+            let accepted_type = accepted.spec_type(&path);
+            let same = accepted_type == source.spec_type(&path)
+                && accepted.has_spec(&path)
+                && fields(accepted, &path)? == after;
+            if same {
+                continue;
+            }
+            if accepted_type.is_some() {
+                return Err(conflict());
+            }
+            if let Some(ty) = source.spec_type(&path) {
+                accepted.create_spec(path.clone(), ty);
+            }
+            for (key, value) in &after {
+                accepted.set_field(&path, key, value.clone());
+            }
+            continue;
+        }
         let container = scaffold(&path_text);
         let old_type = old.spec_type(&path);
         let source_type = source.spec_type(&path);
@@ -448,29 +644,57 @@ pub fn prepare(
             }
         }
     }
-    if base.owned_layers != source.owned_layers || base.assets.len() != source.assets.len() {
-        return Err(unsupported_delta());
+    // The layer set of a delta may change by whole element files (U15) and by the referenced
+    // geometry-asset layer: any other layer that the base or the source holds alone is outside
+    // this API's closed transfer form.
+    let transferable =
+        |name: &str| element_layer_id(name).is_some() || name == super::GEOMETRY_ASSET_LAYER;
+    for asset in &base.assets {
+        let in_source = source.assets.iter().any(|a| a.name == asset.name);
+        if !in_source && !transferable(&asset.name) {
+            return Err(unsupported_delta());
+        }
+    }
+    for asset in &source.assets {
+        let in_base = base.assets.iter().any(|a| a.name == asset.name);
+        if !in_base && !transferable(&asset.name) {
+            return Err(unsupported_delta());
+        }
     }
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         check_accepted(base, accepted, &writes, control)?;
         let mut candidate = accepted.clone();
+        // Element files the source removed: whole element deletes (U15), dropped from the
+        // candidate when the accepted head still carries them.
+        let mut dropped: Vec<String> = Vec::new();
         for old in &base.assets {
-            let source_asset = source
-                .assets
-                .iter()
-                .find(|a| a.name == old.name)
-                .ok_or_else(unsupported_delta)?;
+            let element_file = element_layer_id(&old.name).is_some();
+            let source_asset = source.assets.iter().find(|a| a.name == old.name);
+            let Some(source_asset) = source_asset else {
+                if !element_file {
+                    return Err(unsupported_delta());
+                }
+                dropped.push(old.name.clone());
+                continue;
+            };
             if source_asset.digest == old.digest {
                 continue;
             }
-            if old.name != targets.authored && old.name != targets.derived {
+            if old.name != targets.authored
+                && old.name != targets.derived
+                && !transferable(&old.name)
+            {
                 return Err(unsupported_delta());
             }
-            let target = candidate
-                .assets
-                .iter_mut()
-                .find(|a| a.name == old.name)
-                .ok_or_else(unsupported_delta)?;
+            let target = match candidate.assets.iter_mut().find(|a| a.name == old.name) {
+                Some(target) => target,
+                // The accepted head removed the element file too: the deletion carries.
+                None if element_file => {
+                    dropped.retain(|n| n != &old.name);
+                    continue;
+                }
+                None => return Err(unsupported_delta()),
+            };
             let mut merged = edit::data(target)?;
             if merge_layer(
                 &edit::data(old)?,
@@ -487,6 +711,82 @@ pub fn prepare(
                 };
             }
         }
+        // Layers the source added: locally created element files (U15) and the referenced
+        // geometry-asset layer ride with the batch; the authored prim arrives through the
+        // authored-layer merge.
+        for added in &source.assets {
+            if base.assets.iter().any(|a| a.name == added.name) {
+                continue;
+            }
+            if !transferable(&added.name) {
+                return Err(unsupported_delta());
+            }
+            // The accepted head may carry a layer of the same name already (reachable: both
+            // branches create their first meshed element and both add the asset layer).
+            // An identical copy adds nothing. A diverging element file is the same element
+            // authored two ways with no common ancestor: a conflict. A diverging asset layer
+            // unions: the bodies are content-addressed, so a body the accepted head lacks is
+            // a new definition — it must be named by a definition write, and one outside the
+            // verified writes is a conflict between clients, not a silent drop of the other
+            // client's body.
+            let target = match candidate.assets.iter_mut().find(|a| a.name == added.name) {
+                Some(target) if target.digest == added.digest => continue,
+                // A diverging element file is the same element authored two ways with no
+                // common ancestor: a conflict.
+                Some(_) if element_layer_id(&added.name).is_some() => return Err(conflict()),
+                Some(target) => {
+                    let text = String::from_utf8_lossy(&added.bytes).into_owned();
+                    for digest in text.match_indices("GEO_").filter_map(|(at, _)| {
+                        text.get(at + 4..at + 68)
+                            .filter(|label| label.len() == 64)
+                            .and_then(|label| label.parse::<ContentDigest>().ok())
+                    }) {
+                        if !permitted(&writes, (T::Definition(digest), G::Derived)) {
+                            return Err(conflict());
+                        }
+                    }
+                    target
+                }
+                None => {
+                    // A new or rewritten body asset carries the U11 content identity in the
+                    // verified writes: every GEO_ body of the added layer must be named by a
+                    // definition write.
+                    if added.name == super::GEOMETRY_ASSET_LAYER {
+                        let text = String::from_utf8_lossy(&added.bytes).into_owned();
+                        for digest in text.match_indices("GEO_").filter_map(|(at, _)| {
+                            text.get(at + 4..at + 68)
+                                .filter(|label| label.len() == 64)
+                                .and_then(|label| label.parse::<ContentDigest>().ok())
+                        }) {
+                            require(
+                                &writes,
+                                &format!("{}/GEO_{digest}", super::edit::GEOMETRY_ASSETS),
+                                "specifier",
+                            )?;
+                        }
+                    }
+                    candidate.assets.push(added.clone());
+                    candidate.owned_layers.insert(added.name.clone());
+                    continue;
+                }
+            };
+            if added.name == super::GEOMETRY_ASSET_LAYER {
+                // Union: an empty base makes every body of the added layer a new spec gated
+                // by its definition write, and never erases the accepted side's bodies.
+                let empty = sdf::Data::new();
+                let mut merged = edit::data(target)?;
+                if merge_layer(&empty, &edit::data(added)?, &mut merged, &writes, control)? {
+                    let bytes = edit::serialize(&merged, accepted.budgets.layer_bytes)?;
+                    *target = Asset {
+                        name: target.name.clone(),
+                        digest: Sha256::digest(&bytes).map_err(|_| limit())?,
+                        bytes,
+                    };
+                }
+            }
+        }
+        candidate.assets.retain(|a| !dropped.contains(&a.name));
+        reconcile_element_stack(&mut candidate, targets)?;
         candidate.manifest = candidate.manifest_digest()?;
         let mut reader = Reader::default();
         let (opened, _) = reader.open_validated(candidate.clone(), schema, control)?;

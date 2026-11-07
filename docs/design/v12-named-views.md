@@ -71,21 +71,30 @@ frame and its clip planes and touches no store. Filters and presets have their o
   optional colour and a transparency. A view lists at most 16, each filter once; the first
   override whose filter matches an element decides how it is drawn, as Revit's view filters do.
   The book admits a view only when its overrides name filters it has; renaming a filter follows
-  into every view and preset, removing it drops its overrides.
-* `ViewPreset`: a named set of display properties (projection, height, depth, render mode,
-  grids, hidden kinds, colour, opacity, overrides). It fills a view like a part preset fills a
-  new beam: the values are copied and no link is kept. At most 64 filters and 64 presets.
+  into every view, removing it drops its overrides. At most 64 filters per book.
+* Presets are the V07 discipline presets (`beamcraft_engine::presets::ViewPreset`), one
+  mechanism for the CLI and the window: hidden kinds, depth slab, representation, colour set,
+  grid toggle and the filter overrides, never the camera. Applying one copies its values and
+  keeps no link; its overrides must name filters of the views file it is applied in.
+
+The filters and the overrides are stored in the W01 views layer beside the camera prims:
+`bim:view:filterOverrides` (`string[]` of override specs) on each camera and `bim:view:filters`
+(`string[]`, one compact filter JSON each, in book order) on the views scope. A legacy JSON
+sidecar may carry an optional `filters` list and per-view `overrides`; the next save migrates
+them into the layer.
 
 The environment's presets file may declare filters (`steel:preset:kind = "filter"`,
 `steel:preset:conditions` as `string[]` rows, optional `steel:preset:match`) and view presets
 (`"view"`, the display properties as `steel:preset:*` attributes and the overrides as
 `filter|show|r,g,b|transparency` strings) beside the part presets; `definitions` lists them as
-`environment_view_filters` and `environment_view_presets`. The blank environment ships Beams,
+`environment_view_filters` and `environment_view_presets`; a view preset entry carries the V07 bundle (`depthMm`,
+`representation`, `colourSet`, `grids`, `hiddenKinds`, `overrides`). The blank environment ships Beams,
 Columns, Plates and Steel parts, and the presets 3D by part type, Plan, Plan with columns faded
 and Section. An environment filter is copied into the model's views the first time a view uses
 it. Headlessly: `list-view-filters`, `save-view-filter` (`--conditions "type eq beam;class ge
-2"`, `--match`, `--rename-from`), `remove-view-filter`, `save-view-preset --from-view` and
-`remove-view-preset`; `save-view` and `update-view` take `--overrides` and `--preset`.
+2"`, `--match`, `--rename-from`) and `remove-view-filter`; `save-view` and `update-view` take
+`--overrides`; `define-preset` takes `--overrides`, and `apply-preset` fills a view from a preset.
+The window keeps the user's own presets in `view-presets.json` in the configuration directory.
 
 In the window (`beamcraft_ui::view_overlay`) the filters of the open views are evaluated on a
 worker by the read-only `query-elements`, kept per store head, and turned into each view's
@@ -95,12 +104,13 @@ leave the view's scene and cannot be picked (`views::pick_visible_except`).
 
 ## Window
 
-* The project browser is a tree in the way Revit's browser sorts views by type: 3D views,
-  Plans, Elevations (a horizontal look with no depth limit) and Sections (a horizontal look
-  with a limited depth), each holding its folders and views; a kind with nothing in it is left
-  out. A folder made under a kind (its menu's New folder…, or the toolbar for the selected
+* The project browser is a tree by the orientation of each view's plane: Plans (horizontal),
+  Elevations & sections (vertical; a section is one with a limited depth) and Inclined. Every
+  view can be orbited in 3D, so 3D is a way of looking, not a kind, and a view keeps its kind
+  while it is orbited. The default view heads the tree on its own row, with a house icon.
+  Each kind holds its folders and views; a kind with nothing in it is left out. A folder made under a kind (its menu's New folder…, or the toolbar for the selected
   view's kind) is stored as `<kind label>/<name>` and listed inside the kind without the label;
-  an empty folder whose path names no kind is listed under 3D views. A click selects a view and
+  an empty folder whose path names no kind is listed under Plans. A click selects a view and
   shows its properties, a double click opens it as a tab, Ctrl and Shift extend the selection,
   and a view dragged onto a kind or folder moves there; dragged into the work area it opens
   where it is dropped. A view's menu: Open, Open beside, Properties, Duplicate, Apply view

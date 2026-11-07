@@ -31,7 +31,7 @@ struct Story(PathBuf);
 impl Story {
     fn new() -> Self {
         let root = Path::new(env!("CARGO_TARGET_TMPDIR"))
-            .join(format!("q01-alpha-{}", std::process::id()));
+            .join(format!("q01-alpha-{}", crate::support::boot_nonce()));
         fs::create_dir(&root).unwrap();
         fs::create_dir(root.join("published")).unwrap();
         Self(root)
@@ -298,9 +298,11 @@ fn a_detailed_frame_is_numbered_published_exported_and_reopened() {
         rows.iter().all(|row| row[0] != row[1]),
         "approved marks must reach the BOM"
     );
+    // Quantity cells round to their unit's display precision (visual audit finding 8),
+    // so the printed masses sum as their rounded values, not the closed-form 122.0047.
     close(
         rows.iter().map(|row| row[10].parse::<f64>().unwrap()).sum(),
-        122.0047,
+        122.01,
     );
 
     // Historical fork issue #9 also asks for IFC; keep this experimental compatibility check.

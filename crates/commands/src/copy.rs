@@ -23,7 +23,7 @@ use beamcraft_engine::footprint::Footprint;
 use beamcraft_host::revision::{CommitHook, RevisionStore, Uuid7};
 use beamcraft_layer_engine::Reader;
 use beamcraft_layer_engine::authored::{
-    Author, Change, EditTargets, Element, Placement as LayerPlacement, schema_identity,
+    Change, Element, Placement as LayerPlacement, schema_identity,
 };
 use beamcraft_layer_engine::index::{ElementId as LayerElementId, LinkTarget};
 use beamcraft_model::command::CommandError;
@@ -31,8 +31,8 @@ use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{OpId, ProjectId, RevisionId, WorkspaceId};
 use session::Refusal;
 use session::pipeline::{
-    AUTHORED_LAYER, Base, DERIVED_LAYER, RevisionSummary, control, digest_of, host_uuid, integrity,
-    load_base, open_base, summarize,
+    Base, RevisionSummary, control, digest_of, host_uuid, integrity, load_base, open_base,
+    summarize,
 };
 pub use steel::engine::part::PartRecord;
 use steel::engine::transaction::PriorOp;
@@ -168,7 +168,7 @@ fn copy_with_mode(
             return Err(CommandError::new(
                 ErrorCode::DependencyUnavailable,
                 "source_id",
-                "copying an unsupported plate is not implemented",
+                "the source plate has no evaluated geometry to copy",
             )
             .into());
         }
@@ -216,6 +216,14 @@ fn copy_with_mode(
             "a level is not copied",
         )
         .into());
+    } else if crate::coordination::pinned_owns_element(store, &command.source_id)? {
+        // A pinned coordination grid is foreign bytes: the refusal precedes the local miss
+        // (PC-OWN-002), exactly as for the dedicated grid commands.
+        return Err(Refusal {
+            rule_id: Some("PC-OWN-002"),
+            code: ErrorCode::ForeignReadOnly,
+            message: "the source belongs to a pinned coordination project and is read-only",
+        });
     } else {
         return Err(not_found());
     };
@@ -301,15 +309,8 @@ fn copy_with_mode(
         footprint = footprint.union(Footprint::for_level(command.new_id, Some(level))?)?;
     }
     let schema = schema_identity()?;
-    let (mut author, opened) = Author::open(
-        base_request,
-        EditTargets {
-            authored: AUTHORED_LAYER.into(),
-            derived: DERIVED_LAYER.into(),
-        },
-        schema,
-        &control,
-    )?;
+    let (mut author, opened) =
+        crate::scope::open_author(store, base_request, false, schema, &control)?;
     // Links the adapter does not carry over must not be dropped silently: the layer engine plans
     // the copy, dropping assembly membership and connections as required by DV-REL-011.
     // Other unsupported links refuse the operation.

@@ -4,6 +4,15 @@ Decisions that shape the plan, newest first. Each names its date and, where one 
 document that records it in detail. A later decision overrides an earlier one where they differ.
 Open questions are at the end.
 
+## 2026-11-07
+
+- **Every delivered issue closes through a closing reference.** Owner decision: an issue is
+  closed by a merged pull request whose body carries the closing reference (`Closes #N`,
+  `Fixes #N` or `Resolves #N`), never by a bare manual close, so the issue and its delivery
+  record stay linked. Delta-wave and batch pull requests carry one closing reference per card
+  their content delivers; work already merged without one is closed by a small docs bookkeeping
+  pull request that carries the references instead.
+
 ## 2026-10-31
 
 - **`ROADMAP.md` lists no tasks.** Owner decision: it keeps the stage, the acceptance-gate

@@ -10,8 +10,7 @@ use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionError, RevisionStore};
 use beamcraft_layer_engine::authored::{
-    Author, Change, EditTargets, Element, Prepare, Shape, annotation as storage, schema_identity,
-    validate_layers,
+    Change, Element, Prepare, Shape, annotation as storage, schema_identity, validate_layers,
 };
 use beamcraft_layer_engine::{Control, OpenRequest, Prim, Reader};
 use beamcraft_model::annotation::{Annotation, CreateAnnotation};
@@ -21,8 +20,7 @@ use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::ElementId;
 use session::Refusal;
 use session::pipeline::{
-    AUTHORED_LAYER, Base, DERIVED_LAYER, RevisionSummary, control, host_uuid, integrity, load_base,
-    open_base, summarize,
+    Base, RevisionSummary, control, host_uuid, integrity, load_base, open_base, summarize,
 };
 use std::collections::BTreeSet;
 use steel::engine::transaction::PriorOp;
@@ -150,15 +148,7 @@ pub fn create_annotation(
         .map_err(|_| integrity("invalid element identity"))?;
     let footprint = beamcraft_engine::annotation::create(command, &model, &elements)?;
     let schema = schema_identity()?;
-    let (mut author, opened) = Author::open(
-        request,
-        EditTargets {
-            authored: AUTHORED_LAYER.into(),
-            derived: DERIVED_LAYER.into(),
-        },
-        schema,
-        &c,
-    )?;
+    let (mut author, opened) = crate::scope::open_author(store, request, false, schema, &c)?;
     let mut placed = command.clone();
     // The pins are the addressed bodies' full-mesh digests in the verified head: placement
     // needs every anchor live, and any later change of an addressed body marks the annotation

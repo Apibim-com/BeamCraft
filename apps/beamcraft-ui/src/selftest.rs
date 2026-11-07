@@ -21,7 +21,7 @@ use beamcraft_engine::views::{
     FilterCondition, FilterField, FilterOverride, ModelView, ViewBook, ViewFilter,
 };
 use beamcraft_engine::work_plane::WorkPlane;
-use beamcraft_json::{Json, Limits};
+use beamcraft_json::Json;
 use beamcraft_model::id::Uuid7;
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -125,28 +125,21 @@ fn act_step() -> Result<String, String> {
             "{hidden} of 2 columns hidden, {coloured} of 2 beams coloured"
         ));
     }
-    book.save_preset(plan.to_preset("Steel plan"))
-        .map_err(err)?;
+    let preset = beamcraft_engine::presets::ViewPreset::from_view("Steel plan", &plan);
     let mut other = ModelView::new(id(2)?, "Level 2", WorkPlane::default(), 5_000.0);
-    other.apply_preset(book.preset("Steel plan").ok_or("no preset")?);
+    preset.apply_to(&mut other).map_err(err)?;
     book.insert(other.clone()).map_err(err)?;
-    let json = beamcraft_host::views::book_to_json(&book).map_err(err)?;
-    let bytes = json
-        .encode(&Limits::DEFAULT)
-        .map_err(|_| "the view file does not encode")?;
-    let read = beamcraft_json::decode(&bytes, &Limits::DEFAULT)
-        .map_err(|_| "the view file does not decode")?;
-    let back = beamcraft_host::views::book_from_json(&read).map_err(err)?;
+    let bytes = session::views_layer::layer_bytes(&book).map_err(err)?;
+    let back = session::views_layer::book_from_layer(&bytes).map_err(err)?;
     if back != book || other.overrides.len() != 2 {
         return Err("the view file or the preset lost something".into());
     }
     Ok(format!(
         "the plan hides {hidden} columns and colours {coloured} beams; the preset filled \
-         \"Level 2\" with {} filters; the view file kept {} views, {} filters and {} preset",
+         \"Level 2\" with {} filters; the views layer kept {} views and {} filters",
         other.overrides.len(),
         back.len(),
-        back.filters().len(),
-        back.presets().len()
+        back.filters().len()
     ))
 }
 
@@ -189,7 +182,7 @@ fn hud_step() -> Result<String, String> {
                 .iter()
                 .any(|f| f.name == "Levels" && f.views.len() == 1)
         });
-    if listed.len() != 3 || plans != Some(true) {
+    if listed.len() != 2 || plans != Some(true) {
         return Err(format!("the browser lists {listed:?}"));
     }
     Ok(format!("the browser lists {}", listed.join(", ")))

@@ -19,10 +19,9 @@ use crate::library::read_all;
 use crate::plate::{number, text};
 use crate::project::project_environment_file;
 use crate::source_file::read_file;
-use beamcraft_engine::views::{
-    FilterCondition, FilterMatch, FilterOverride, Projection, ViewFilter, ViewPreset,
-};
-use beamcraft_engine::{ElementKind, KindFilter, RenderMode};
+use beamcraft_engine::presets::ViewPreset;
+use beamcraft_engine::views::{FilterCondition, FilterMatch, FilterOverride, ViewFilter};
+use beamcraft_engine::{ElementKind, KindFilter, Representation};
 use beamcraft_layer_engine::{Prim, Value};
 use beamcraft_model::command::label_is_valid;
 use beamcraft_model::error::ErrorCode;
@@ -167,39 +166,25 @@ fn decode_filter(prim: &Prim) -> Result<ViewFilter, &'static str> {
     Ok(filter)
 }
 
-/// A view preset entry: `steel:preset:name` and the display properties, each optional with the
-/// default of a new view: `projection` and `renderMode` (tokens), `spanMm` and `opacity`
-/// (doubles), `depthMm` and `color` (`double[]` of two and three), `grids` (bool),
-/// `hiddenKinds` (`token[]`) and `overrides` (`string[]` of `filter|show|r,g,b|transparency`).
+/// A view preset entry: `steel:preset:name` and the discipline display bundle (V07), each
+/// optional with the default of a new preset: `depthMm` (`double[]` of two), `representation`
+/// (token), `colourSet` (string), `grids` (bool), `hiddenKinds` (`token[]`) and `overrides`
+/// (`string[]` of `filter|show|r,g,b|transparency`).
 fn decode_view(prim: &Prim) -> Result<ViewPreset, &'static str> {
     let name = label(prim, "steel:preset:name")?.ok_or("the preset has no name")?;
-    let token = |key: &str| -> Result<Option<String>, &'static str> {
-        Ok(typed(prim, key, "token")?.and_then(text).map(str::to_owned))
-    };
-    let double = |key: &str| -> Result<Option<f64>, &'static str> {
-        typed(prim, key, "double")?
-            .map(|v| number(v).ok_or("a preset number is not a number"))
-            .transpose()
-    };
-    let projection = match token("steel:preset:projection")? {
-        None => Projection::Orthographic,
-        Some(t) => Projection::parse(&t).map_err(|_| "the preset projection is unknown")?,
-    };
-    let render_mode = match token("steel:preset:renderMode")? {
-        None => RenderMode::Shaded,
-        Some(t) => RenderMode::parse(&t).ok_or("the preset render mode is unknown")?,
-    };
-    let depth = match doubles(prim, "steel:preset:depthMm")? {
+    let mut preset = ViewPreset::new(&name);
+    preset.depth = match doubles(prim, "steel:preset:depthMm")? {
         None => None,
         Some(v) => Some(<[f64; 2]>::try_from(v).map_err(|_| "the preset depth needs two numbers")?),
     };
-    let color = match doubles(prim, "steel:preset:color")? {
-        None => None,
-        Some(v) => {
-            Some(<[f64; 3]>::try_from(v).map_err(|_| "the preset colour needs three numbers")?)
-        }
-    };
-    let grids = match typed(prim, "steel:preset:grids", "bool")? {
+    if let Some(token) = typed(prim, "steel:preset:representation", "token")?.and_then(text) {
+        preset.representation =
+            Representation::parse(token).ok_or("the preset representation is unknown")?;
+    }
+    preset.colour_set = typed(prim, "steel:preset:colourSet", "string")?
+        .and_then(text)
+        .map(str::to_owned);
+    preset.grids_visible = match typed(prim, "steel:preset:grids", "bool")? {
         None => true,
         Some(Value::Bool(b)) => *b,
         Some(_) => return Err("the preset grids mark is not a bool"),
@@ -208,24 +193,13 @@ fn decode_view(prim: &Prim) -> Result<ViewPreset, &'static str> {
     for kind in strings(prim, "steel:preset:hiddenKinds", "token[]")? {
         hidden = hidden.hiding(ElementKind::parse(&kind).ok_or("a hidden kind is unknown")?);
     }
-    let overrides = strings(prim, "steel:preset:overrides", "string[]")?
+    preset.hidden_kinds = hidden;
+    preset.overrides = strings(prim, "steel:preset:overrides", "string[]")?
         .iter()
         .map(|spec| {
             FilterOverride::parse_spec(spec).map_err(|_| "a view preset override is not valid")
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let preset = ViewPreset {
-        name,
-        projection,
-        span_mm: double("steel:preset:spanMm")?.unwrap_or(beamcraft_engine::views::DEFAULT_SPAN_MM),
-        depth,
-        render_mode,
-        grids_visible: grids,
-        hidden_kinds: hidden,
-        color,
-        opacity: double("steel:preset:opacity")?.unwrap_or(1.0),
-        overrides,
-    };
     preset
         .validate()
         .map_err(|_| "the view preset is not valid")?;

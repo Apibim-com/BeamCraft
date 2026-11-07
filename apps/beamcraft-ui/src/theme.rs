@@ -292,6 +292,27 @@ pub fn icon_text_button(
     response
 }
 
+/// Whether the operating system draws the window controls. On macOS the window keeps its native
+/// frame with a transparent title bar under our own header, so the traffic lights are the
+/// system's own (with their fullscreen, zoom and window-tiling menus); elsewhere the frameless
+/// window draws its controls itself, at the right as Windows and most Linux desktops do.
+pub const NATIVE_WINDOW_CONTROLS: bool = cfg!(target_os = "macos");
+
+/// The width the system's window controls take at the left of a title bar, in points; zero
+/// where the window draws its own controls.
+pub const NATIVE_CONTROLS_INSET: f32 = if NATIVE_WINDOW_CONTROLS { 72.0 } else { 0.0 };
+
+/// Reserves the room the system's window controls take at the start of a title bar row.
+pub fn native_controls_inset(ui: &mut Ui) {
+    if NATIVE_WINDOW_CONTROLS {
+        ui.add_space(NATIVE_CONTROLS_INSET);
+    }
+}
+
+/// Whether a closable tab puts its close glyph first, as macOS tabs do, rather than last, as
+/// Windows and Linux tabs do.
+pub const TAB_CLOSE_LEADING: bool = cfg!(target_os = "macos");
+
 /// Native title-bar dragging and double-click maximization, without an extra OS title bar.
 pub fn titlebar_drag(ui: &mut Ui) {
     titlebar_drag_with_maximize(ui, true);
@@ -319,8 +340,12 @@ pub fn window_controls(ui: &mut Ui) {
     window_controls_with_maximize(ui, true);
 }
 
-/// Equal-sized window controls, omitting maximize for the fixed-size welcome window.
+/// Equal-sized window controls, omitting maximize for the fixed-size welcome window. Nothing is
+/// drawn where the operating system draws the controls ([`NATIVE_WINDOW_CONTROLS`]).
 pub fn window_controls_with_maximize(ui: &mut Ui, maximize: bool) {
+    if NATIVE_WINDOW_CONTROLS {
+        return;
+    }
     let maximized = ui.input(|input| input.viewport().maximized.unwrap_or(false));
     let size = vec2(if maximize { 40.0 } else { 28.0 }, 28.0);
     ui.scope(|ui| {
@@ -536,6 +561,14 @@ pub enum Icon {
     Arrange,
     /// A view frame with a section line: a model view.
     ViewFrame,
+    /// A horizontal slab seen from above with the cut level line: a plan view.
+    PlanView,
+    /// A vertical frame standing on a ground line: an elevation or section view.
+    ElevationView,
+    /// A tilted frame on a ground line: an inclined view.
+    InclinedView,
+    /// A funnel: filter what a list shows.
+    Filter,
     /// A page with a folded corner and text lines: a drawing sheet.
     Sheet,
     /// A table of rows and columns: a schedule.
@@ -889,6 +922,41 @@ pub fn paint_icon(painter: &Painter, rect: Rect, icon: Icon, line: Color32) {
             polyline(&[[3.0, 8.0], [21.0, 8.0]]);
             polyline(&[[7.0, 17.0], [17.0, 11.0]]);
         }
+        Icon::PlanView => {
+            // A slab in plan: a parallelogram seen from above, with the cut level across it.
+            polyline(&[
+                [3.0, 15.0],
+                [9.0, 9.0],
+                [21.0, 9.0],
+                [15.0, 15.0],
+                [3.0, 15.0],
+            ]);
+            polyline(&[[6.0, 19.0], [18.0, 19.0]]);
+            polyline(&[[12.0, 3.0], [12.0, 7.0]]);
+            polyline(&[[10.0, 5.0], [12.0, 7.0], [14.0, 5.0]]);
+        }
+        Icon::ElevationView => {
+            // A frame standing upright on a ground line, looked at from the side.
+            polyline(&[[6.0, 19.0], [6.0, 5.0], [18.0, 5.0], [18.0, 19.0]]);
+            polyline(&[[3.0, 19.0], [21.0, 19.0]]);
+            polyline(&[[6.0, 12.0], [18.0, 12.0]]);
+        }
+        Icon::Filter => {
+            polyline(&[
+                [4.0, 5.0],
+                [20.0, 5.0],
+                [14.0, 12.5],
+                [14.0, 19.0],
+                [10.0, 17.0],
+                [10.0, 12.5],
+                [4.0, 5.0],
+            ]);
+        }
+        Icon::InclinedView => {
+            // A frame tilted off the vertical, standing on a ground line.
+            polyline(&[[5.0, 19.0], [10.0, 5.0], [20.0, 5.0], [15.0, 19.0]]);
+            polyline(&[[3.0, 19.0], [21.0, 19.0]]);
+        }
         Icon::Sheet => {
             polyline(&[
                 [5.0, 3.0],
@@ -1171,6 +1239,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(target_os = "macos"))]
     fn window_controls_have_equal_hit_areas_and_send_native_commands() {
         for theme in [Theme::Light, Theme::Dark] {
             for maximize in [false, true] {

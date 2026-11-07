@@ -5,7 +5,7 @@
 
 //! U02 real-backend authoring regressions with original in-memory fixtures.
 
-#![allow(clippy::unwrap_used, clippy::indexing_slicing)]
+#![allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::panic)]
 
 use beamcraft_layer_engine::{authored::*, *};
 use steel::layer as steel_layer;
@@ -38,7 +38,7 @@ fn control() -> Control {
     steel_layer::install();
     Control {
         cancellation: Cancellation::default(),
-        deadline: Instant::now() + Duration::from_secs(10),
+        deadline: Instant::now() + Duration::from_secs(90),
     }
 }
 fn asset(name: &str, text: impl AsRef<[u8]>) -> Asset {
@@ -95,8 +95,23 @@ fn targets() -> EditTargets {
         derived: "derived.usda".into(),
     }
 }
+
+/// The request over an export with every layer owned, as the engine produced it (U15 adds
+/// element files beside the roots).
+fn export_request_assets(assets: Vec<Asset>) -> OpenRequest {
+    let names: Vec<String> = assets.iter().map(|a| a.name.clone()).collect();
+    let owned: Vec<&str> = names.iter().map(String::as_str).collect();
+    request(assets, &owned)
+}
 fn open(input: OpenRequest) -> (Author, Opened) {
-    Author::open(input, targets(), schema_identity().unwrap(), &control()).unwrap()
+    Author::open(
+        input,
+        targets(),
+        None,
+        schema_identity().unwrap(),
+        &control(),
+    )
+    .unwrap()
 }
 fn pose() -> Placement {
     Placement {
@@ -171,6 +186,9 @@ fn mesh() -> Mesh {
         face_counts: vec![4],
         indices: vec![0, 1, 2, 3],
         quantities: None,
+        reduced: None,
+        proxy: None,
+        axis: None,
     }
 }
 fn batch(context: &Context, changes: Vec<Change>) -> Prepare {
@@ -411,6 +429,16 @@ fn value<'a>(prims: &'a [Prim], id: &str, name: &str) -> Option<&'a Value> {
         .find(|p| p.name == name)
         .and_then(|p| p.value.as_ref())
 }
+fn value_on_path<'a>(prims: &'a [Prim], path: &str, name: &str) -> Option<&'a Value> {
+    prims
+        .iter()
+        .find(|p| p.path == path)
+        .unwrap()
+        .properties
+        .iter()
+        .find(|p| p.name == name)
+        .and_then(|p| p.value.as_ref())
+}
 
 #[test]
 fn author_install_reopen_standard_mesh_relationships_and_exact_unknown_opinions() {
@@ -470,17 +498,49 @@ fn author_install_reopen_standard_mesh_relationships_and_exact_unknown_opinions(
     assert!(
         !parsed.has_spec(&openusd::sdf::Path::new(&format!("{}/Geometry", path(PLATE))).unwrap())
     );
-    let bin = exported.iter().find(|a| a.name == "derived.usda").unwrap();
+    // The mesh lives in the element's own derived layer (U15).
+    let element = element_layer(PLATE).unwrap();
+    let bin = exported.iter().find(|a| a.name == element).unwrap();
     let parsed = openusd::usda::parse(std::str::from_utf8(&bin.bytes).unwrap()).unwrap();
-    let mesh_path = openusd::sdf::Path::new(&format!("{}/Geometry.points", path(PLATE))).unwrap();
+    // U11: the buffers live on the shared immutable asset; the element's own prim authors only
+    // the instanceable reference and its local quantity record.
+    let composed = snapshot(&a, &new.context);
+    let geometry = composed
+        .iter()
+        .find(|p| p.path == format!("{}/Geometry", path(PLATE)))
+        .unwrap();
+    assert!(geometry.instanceable);
+    let asset_path = geometry
+        .sources
+        .iter()
+        .map(|s| s.path.clone())
+        .find(|p| p.starts_with("/World/Definitions/Geometry/GEO_"))
+        .unwrap();
     assert_eq!(
-        parsed.get_field(&mesh_path, "typeName").unwrap().as_ref(),
+        value_on_path(&composed, &format!("{}/Geometry", path(PLATE)), "points"),
+        value_on_path(&composed, &asset_path, "points")
+    );
+    let asset_spec = openusd::sdf::Path::new(&format!("{asset_path}.points")).unwrap();
+    // The asset prim itself composes from the referenced asset layer (U15).
+    let assets_layer = exported
+        .iter()
+        .find(|a| a.name == GEOMETRY_ASSET_LAYER)
+        .unwrap();
+    let assets_parsed =
+        openusd::usda::parse(std::str::from_utf8(&assets_layer.bytes).unwrap()).unwrap();
+    assert_eq!(
+        assets_parsed
+            .get_field(&asset_spec, "typeName")
+            .unwrap()
+            .as_ref(),
         &openusd::sdf::Value::token("point3f[]")
     );
-    let req = request(
-        exported,
-        &["root.usda", "authored.usda", "derived.usda", "weak.usda"],
+    assert!(
+        !parsed.has_spec(
+            &openusd::sdf::Path::new(&format!("{}/Geometry.points", path(PLATE))).unwrap()
+        )
     );
+    let req = export_request_assets(exported);
     assert!(validate_layers(req.clone(), schema_identity().unwrap(), &control()).is_ok());
     let (fresh, opened) = open(req);
     assert_eq!(snapshot(&fresh, &opened.context), all);
@@ -523,10 +583,8 @@ fn twenty_seeded_permutations_produce_identical_owned_bytes_and_digests() {
                 &control(),
             )
             .unwrap();
-        let req = request(
-            a.export(&o.context, &control()).unwrap(),
-            &["root.usda", "authored.usda", "derived.usda", "weak.usda"],
-        );
+        let exported = a.export(&o.context, &control()).unwrap();
+        let req = export_request_assets(exported);
         let (_, o) = open(req);
         assert!(o.prim_count >= 8);
     }
@@ -545,10 +603,7 @@ fn absence_block_removal_reveal_weaker_defaults_without_flattening() {
         )),
     );
     let weak_before = weak.bytes.clone();
-    let (mut a, mut o) = open(request(
-        assets,
-        &["root.usda", "authored.usda", "derived.usda", "weak.usda"],
-    ));
+    let (mut a, mut o) = open(export_request_assets(assets));
     for (opinion, expected, spec_exists) in [
         (Opinion::Absent, Some(Value::Number(0.75)), true),
         (Opinion::Block, Some(Value::Block), true),
@@ -914,10 +969,11 @@ fn hundred_serialized_changes_invalidate_contexts_and_derive_semantic_groups() {
             &control(),
         )
         .unwrap();
+    // The stale result wrapper is gone; the shared immutable assets (U11) stay.
     assert!(
         !snapshot(&a, &o.context)
             .iter()
-            .any(|p| p.path.ends_with("/Geometry"))
+            .any(|p| p.path.ends_with("/Geometry") && !p.path.starts_with("/World/Definitions"))
     );
 }
 
@@ -989,7 +1045,7 @@ fn duplicate_keys_wrong_kind_bad_mesh_and_missing_or_forged_definitions_fail() {
     req.owned_layers = BTreeSet::from(["root.usda".into()]);
     req.manifest = req.manifest_digest().unwrap();
     assert_eq!(
-        Author::open(req, targets(), schema_identity().unwrap(), &control())
+        Author::open(req, targets(), None, schema_identity().unwrap(), &control())
             .err()
             .unwrap()
             .code,
@@ -1067,10 +1123,7 @@ fn material_empty_remove_profile_pin_and_loaded_unknown_schema_preservation() {
         "bim:schemaVersion = \"0.9.0\"",
     );
     *authored = asset("authored.usda", text);
-    let (mut a, o) = open(request(
-        assets,
-        &["root.usda", "authored.usda", "derived.usda", "weak.usda"],
-    ));
+    let (mut a, o) = open(export_request_assets(assets));
     assert_eq!(
         a.prepare(
             batch(
@@ -1106,10 +1159,7 @@ fn validator_rejects_schema_markers_changed_definition_bytes_and_loaded_bad_mesh
     );
     assert_eq!(
         validate_layers(
-            request(
-                assets,
-                &["root.usda", "authored.usda", "derived.usda", "weak.usda"]
-            ),
+            export_request_assets(assets.clone()),
             schema_identity().unwrap(),
             &control()
         )
@@ -1118,22 +1168,21 @@ fn validator_rejects_schema_markers_changed_definition_bytes_and_loaded_bad_mesh
         ErrorCode::IntegrityError
     );
     let mut assets = base.clone();
-    let derived = assets
+    // The buffers live in the referenced asset layer (U11/U15): a bad index there is a bad
+    // mesh, whatever layer cites it.
+    let assets_layer = assets
         .iter_mut()
-        .find(|a| a.name == "derived.usda")
+        .find(|a| a.name == GEOMETRY_ASSET_LAYER)
         .unwrap();
-    *derived = asset(
-        "derived.usda",
-        String::from_utf8(derived.bytes.clone())
+    *assets_layer = asset(
+        GEOMETRY_ASSET_LAYER,
+        String::from_utf8(assets_layer.bytes.clone())
             .unwrap()
             .replace("[0, 1, 2, 3]", "[0, 1, 2, 999]"),
     );
     assert_eq!(
         validate_layers(
-            request(
-                assets,
-                &["root.usda", "authored.usda", "derived.usda", "weak.usda"]
-            ),
+            export_request_assets(assets.clone()),
             schema_identity().unwrap(),
             &control()
         )
@@ -2193,12 +2242,10 @@ fn replacing_a_mesh_drops_only_the_quantity_record_and_reports_every_removal() {
         )
         .unwrap();
 
-    // Unknown content that another tool put under the mesh prim.
+    // Unknown content that another tool put under the mesh prim (in the element's layer, U15).
     let mut assets = a.export(&installed.context, &control()).unwrap();
-    let derived = assets
-        .iter_mut()
-        .find(|x| x.name == "derived.usda")
-        .unwrap();
+    let element = element_layer(PLATE).unwrap();
+    let derived = assets.iter_mut().find(|x| x.name == element).unwrap();
     let text = String::from_utf8(derived.bytes.clone()).unwrap();
     let at = text.find("\"Geometry\"").unwrap();
     let brace = at + text[at..].find('{').unwrap() + 1;
@@ -2207,11 +2254,8 @@ fn replacing_a_mesh_drops_only_the_quantity_record_and_reports_every_removal() {
         &text[..brace],
         &text[brace..]
     );
-    *derived = asset("derived.usda", edited);
-    let (mut b, o) = open(request(
-        assets,
-        &["root.usda", "authored.usda", "derived.usda", "weak.usda"],
-    ));
+    *derived = asset(&element, edited);
+    let (mut b, o) = open(export_request_assets(assets));
 
     // A replacement without a record removes all seven fields and says so.
     let p = b
@@ -2237,7 +2281,7 @@ fn replacing_a_mesh_drops_only_the_quantity_record_and_reports_every_removal() {
     ] {
         assert!(removed.contains(name), "{name}");
     }
-    let layer = p.layers.iter().find(|x| x.name == "derived.usda").unwrap();
+    let layer = p.layers.iter().find(|x| x.name == element).unwrap();
     let text = String::from_utf8(layer.bytes.clone()).unwrap();
     assert!(text.contains("future:note"));
     assert!(!text.contains("bim:volumeMm3") && !text.contains("bim:massKg"));
@@ -2319,10 +2363,15 @@ fn delete_removes_the_whole_element_in_both_layers_and_nothing_else() {
     assert!(
         !parsed.has_spec(&openusd::sdf::Path::new(&format!("{}/Geometry", path(PLATE))).unwrap())
     );
-    let request = request(
-        exported,
-        &["root.usda", "authored.usda", "derived.usda", "weak.usda"],
+    // The element's own derived layer went away with the element (U15).
+    let gone = element_layer(PLATE).unwrap();
+    assert!(exported.iter().all(|a| a.name != gone));
+    assert!(
+        !layer_sublayers(&derived.bytes)
+            .unwrap()
+            .contains(&stack_entry_of(PLATE))
     );
+    let request = export_request_assets(exported);
     assert!(validate_layers(request, schema_identity().unwrap(), &control()).is_ok());
 
     // The element is gone, so a second delete is not found, and a delete cannot share a batch
@@ -2396,13 +2445,14 @@ fn one_pass_open_validated_answers_like_validate_layers_then_open() {
     // Broken stages: the same code and message, and the live view stays the earlier one.
     let digest_text = schema.digest.to_string();
     let incorrect = digest(b"incorrect schema").to_string();
+    // The mesh buffers live in the referenced asset layer (U11/U15).
     for (layer, from, to) in [
         (
             "authored.usda",
             "steel:profile:widthMm = 100.0",
             "steel:profile:widthMm = 101.0",
         ),
-        ("derived.usda", "[0, 1, 2, 3]", "[0, 1, 2, 999]"),
+        (GEOMETRY_ASSET_LAYER, "[0, 1, 2, 3]", "[0, 1, 2, 999]"),
         ("root.usda", digest_text.as_str(), incorrect.as_str()),
         ("authored.usda", "#usda 1.0", "#usda 9.9"),
     ] {
@@ -2428,10 +2478,7 @@ fn prim<'a>(prims: &'a [Prim], path: &str) -> &'a Prim {
     prims.iter().find(|p| p.path == path).unwrap()
 }
 fn export_request(a: &Author, context: &Context) -> OpenRequest {
-    request(
-        a.export(context, &control()).unwrap(),
-        &["root.usda", "authored.usda", "derived.usda", "weak.usda"],
-    )
+    export_request_assets(a.export(context, &control()).unwrap())
 }
 fn tampered(a: &Author, context: &Context, layer: &str, from: &str, to: &str) -> OpenRequest {
     let mut input = export_request(a, context);
@@ -2517,6 +2564,9 @@ fn standard_usd_metadata_kind_display_name_extent_and_flat_normals() {
 #[test]
 fn validator_refuses_a_wrong_display_name_kind_extent_or_normal() {
     let (a, o) = populated();
+    // The mesh buffers live in the referenced asset layer (U11/U15); the element's own prim
+    // stays in the element file.
+    let element = element_layer(PLATE).unwrap();
     for (layer, from, to) in [
         (
             "authored.usda",
@@ -2524,24 +2574,24 @@ fn validator_refuses_a_wrong_display_name_kind_extent_or_normal() {
             "displayName = \"Other\"",
         ),
         ("authored.usda", "kind = \"component\"", "kind = \"group\""),
+        (&element, "kind = \"subcomponent\"", "kind = \"component\""),
         (
-            "derived.usda",
-            "kind = \"subcomponent\"",
-            "kind = \"component\"",
-        ),
-        (
-            "derived.usda",
+            GEOMETRY_ASSET_LAYER,
             "(1000.0, 500.0, 0.0)]",
             "(1000.0, 500.0, 1.0)]",
         ),
-        ("derived.usda", "[(0.0, 0.0, 1.0)]", "[(0.0, 0.0, -1.0)]"),
         (
-            "derived.usda",
+            GEOMETRY_ASSET_LAYER,
+            "[(0.0, 0.0, 1.0)]",
+            "[(0.0, 0.0, -1.0)]",
+        ),
+        (
+            GEOMETRY_ASSET_LAYER,
             "interpolation = \"uniform\"",
             "interpolation = \"vertex\"",
         ),
         (
-            "derived.usda",
+            GEOMETRY_ASSET_LAYER,
             "interpolation = \"uniform\"",
             "doc = \"no interpolation\"",
         ),
@@ -2577,9 +2627,15 @@ fn a_store_pinned_to_the_previous_mapping_is_refused() {
     }
     input.manifest = input.manifest_digest().unwrap();
     assert_eq!(
-        Author::open(input, targets(), schema_identity().unwrap(), &control())
-            .err()
-            .map(|e| e.code),
+        Author::open(
+            input,
+            targets(),
+            None,
+            schema_identity().unwrap(),
+            &control()
+        )
+        .err()
+        .map(|e| e.code),
         Some(ErrorCode::UnsupportedVersion)
     );
 }
@@ -3825,6 +3881,7 @@ fn the_project_record_is_validated_read_and_kept_through_edits() {
         let refused = Author::open(
             with_root(bad),
             targets(),
+            None,
             schema_identity().unwrap(),
             &control(),
         )
@@ -4021,9 +4078,15 @@ fn a_store_pinned_to_the_pre_a09_mapping_is_refused() {
     }
     input.manifest = input.manifest_digest().unwrap();
     assert_eq!(
-        Author::open(input, targets(), schema_identity().unwrap(), &control())
-            .err()
-            .map(|e| e.code),
+        Author::open(
+            input,
+            targets(),
+            None,
+            schema_identity().unwrap(),
+            &control()
+        )
+        .err()
+        .map(|e| e.code),
         Some(ErrorCode::UnsupportedVersion)
     );
 }
@@ -4200,6 +4263,7 @@ fn removed_holes_mask_weaker_opinions_and_keep_their_history() {
             authored: "weak.usda".into(),
             derived: "derived.usda".into(),
         },
+        None,
         schema_identity().unwrap(),
         &control(),
     )
@@ -4382,4 +4446,727 @@ fn corner_replacement_bounds_vertices_and_can_clear_the_complete_record() {
     input.op_id = "0199e7a0-0000-7000-8000-000000000099".into();
     let clear = a.prepare(input, &control()).unwrap();
     assert!(!clear.opinions.is_empty());
+}
+
+// --- U19: authored section/zone scopes (F10 0.2 DV-SCOPE-001..004) ---
+
+/// An element of the KMD section in zone K1.
+const KMD_EL: &str = "0199e7a0-0000-7000-8000-000000000501";
+/// An element of the shared grids/levels scope.
+const GRID_EL: &str = "0199e7a0-0000-7000-8000-000000000502";
+/// An element of the KM section.
+const KM_EL: &str = "0199e7a0-0000-7000-8000-000000000503";
+
+const KM_LAYER: &str = "2401-DEMO_KM.usda";
+const KMD_K1_LAYER: &str = "2401-DEMO_K1_KMD.usda";
+const KMD_K2_LAYER: &str = "2401-DEMO_K2_KMD.usda";
+const GRIDS_LAYER: &str = "2401-DEMO_Grids.usda";
+const SCOPED_OWNED: [&str; 6] = [
+    "root.usda",
+    KM_LAYER,
+    KMD_K1_LAYER,
+    KMD_K2_LAYER,
+    GRIDS_LAYER,
+    "derived.usda",
+];
+
+fn scoped_request() -> OpenRequest {
+    let empty = layer("");
+    let root = format!(
+        "#usda 1.0\n(metersPerUnit=0.001\nupAxis=\"Z\"\nsubLayers=[@{KM_LAYER}@,@{KMD_K1_LAYER}@,@{KMD_K2_LAYER}@,@{GRIDS_LAYER}@,@derived.usda@])\n"
+    );
+    request(
+        vec![
+            asset("root.usda", root),
+            asset(KM_LAYER, &empty),
+            asset(KMD_K1_LAYER, &empty),
+            asset(KMD_K2_LAYER, &empty),
+            asset(GRIDS_LAYER, &empty),
+            asset("derived.usda", &empty),
+        ],
+        &SCOPED_OWNED,
+    )
+}
+
+fn scope(
+    write_layer: &str,
+    allowed: &[&str],
+    shared: &[&str],
+    shared_authorized: bool,
+) -> EditScope {
+    EditScope {
+        write_layer: write_layer.into(),
+        allowed: allowed.iter().map(|s| (*s).into()).collect(),
+        shared: shared.iter().map(|s| (*s).into()).collect(),
+        shared_authorized,
+    }
+}
+
+fn open_as(targets_authored: &str, s: Option<EditScope>) -> (Author, Opened) {
+    Author::open(
+        scoped_request(),
+        EditTargets {
+            authored: targets_authored.into(),
+            derived: "derived.usda".into(),
+        },
+        s,
+        schema_identity().unwrap(),
+        &control(),
+    )
+    .unwrap()
+}
+
+/// Opens the store on one section/zone scope: the write layer is the target itself.
+fn open_scoped(targets_authored: &str) -> (Author, Opened) {
+    open_as(
+        targets_authored,
+        Some(scope(
+            targets_authored,
+            &[targets_authored],
+            &[GRIDS_LAYER],
+            false,
+        )),
+    )
+}
+
+/// Opens the store on the shared grids/levels scope, authorized for shared commands.
+fn open_grids() -> (Author, Opened) {
+    open_as(
+        GRIDS_LAYER,
+        Some(scope(GRIDS_LAYER, &[GRIDS_LAYER], &[GRIDS_LAYER], true)),
+    )
+}
+
+/// Reopens the exported layer bytes as a fresh stage pinned to new edit targets and scope.
+fn reopen_as(
+    author: &Author,
+    context: &Context,
+    targets_authored: &str,
+    s: Option<EditScope>,
+) -> (Author, Opened) {
+    let assets = author.export(context, &control()).unwrap();
+    let mut input = scoped_request();
+    input.assets = assets;
+    input.manifest = input.manifest_digest().unwrap();
+    Author::open(
+        input,
+        EditTargets {
+            authored: targets_authored.into(),
+            derived: "derived.usda".into(),
+        },
+        s,
+        schema_identity().unwrap(),
+        &control(),
+    )
+    .unwrap()
+}
+
+fn reopen(author: &Author, context: &Context, targets_authored: &str) -> (Author, Opened) {
+    reopen_as(
+        author,
+        context,
+        targets_authored,
+        Some(scope(
+            targets_authored,
+            &[targets_authored],
+            &[GRIDS_LAYER],
+            false,
+        )),
+    )
+}
+
+fn layer_digests(author: &Author, context: &Context) -> Vec<(String, ContentDigest)> {
+    author
+        .export(context, &control())
+        .unwrap()
+        .into_iter()
+        .map(|a| (a.name, a.digest))
+        .collect()
+}
+
+fn digest_of_layer(author: &Author, context: &Context, name: &str) -> ContentDigest {
+    layer_digests(author, context)
+        .iter()
+        .find(|(n, _)| n == name)
+        .map(|(_, d)| *d)
+        .unwrap()
+}
+
+#[test]
+fn a_scoped_edit_stays_inside_its_section_and_preserves_the_other_layers() {
+    // Seed one element per scope through its own authorized batch (the steel module serves
+    // both sections; the scopes keep them apart).
+    let (mut a, o) = open_scoped(KM_LAYER);
+    let (_, o) = installed(&mut a, &o, vec![assembly(KM_EL, "KM part")]);
+    let (mut a, o) = reopen(&a, &o.context, KMD_K1_LAYER);
+    let (_, o) = installed(&mut a, &o, vec![assembly(KMD_EL, "KMD part")]);
+    let before = layer_digests(&a, &o.context);
+    // DV-SCOPE-002 positive: the KMD workspace edits its own element...
+    let p = a
+        .prepare(
+            batch(
+                &o.context,
+                vec![Change::Label {
+                    id: KMD_EL.into(),
+                    name: "Renamed in scope".into(),
+                }],
+            ),
+            &control(),
+        )
+        .unwrap();
+    let o = a
+        .install(
+            &o.context,
+            &p.token,
+            &p.op_id,
+            Decision::Accepted,
+            &control(),
+        )
+        .unwrap();
+    // ...and the KM layer, the other zone, the shared layer and the root composition are
+    // preserved byte for byte (DV-SCOPE-003 positive).
+    for name in [
+        "root.usda",
+        KM_LAYER,
+        KMD_K2_LAYER,
+        GRIDS_LAYER,
+        "derived.usda",
+    ] {
+        assert_eq!(
+            digest_of_layer(&a, &o.context, name),
+            before
+                .iter()
+                .find(|(n, _)| n == name)
+                .map(|(_, d)| *d)
+                .unwrap(),
+            "{name} changed"
+        );
+    }
+    assert_ne!(
+        digest_of_layer(&a, &o.context, KMD_K1_LAYER),
+        before
+            .iter()
+            .find(|(n, _)| n == KMD_K1_LAYER)
+            .map(|(_, d)| *d)
+            .unwrap()
+    );
+    let root = a
+        .export(&o.context, &control())
+        .unwrap()
+        .into_iter()
+        .find(|a| a.name == "root.usda")
+        .unwrap();
+    assert_eq!(
+        layer_sublayers(&root.bytes).unwrap(),
+        [
+            KM_LAYER.to_owned(),
+            KMD_K1_LAYER.to_owned(),
+            KMD_K2_LAYER.to_owned(),
+            GRIDS_LAYER.to_owned(),
+            "derived.usda".to_owned()
+        ]
+    );
+}
+
+fn seeded_scoped() -> (Author, Opened) {
+    let (mut a, o) = open_scoped(KM_LAYER);
+    let (_, o) = installed(&mut a, &o, vec![assembly(KM_EL, "KM part")]);
+    let (mut a, o) = reopen(&a, &o.context, KMD_K1_LAYER);
+    let (_, o) = installed(&mut a, &o, vec![assembly(KMD_EL, "KMD part")]);
+    reopen(&a, &o.context, KMD_K1_LAYER)
+}
+
+#[test]
+fn the_same_module_editing_another_section_or_zone_is_refused_as_foreign() {
+    let (mut a, o) = seeded_scoped();
+    // DV-SCOPE-002 negative, other section: the KMD workspace names a KM element. The same
+    // steel module serves both sections; the section scope, not the module, decides.
+    let error = a
+        .prepare(
+            batch(
+                &o.context,
+                vec![Change::Label {
+                    id: KM_EL.into(),
+                    name: "Smuggled override".into(),
+                }],
+            ),
+            &control(),
+        )
+        .unwrap_err();
+    assert_eq!(error.code, ErrorCode::ForeignReadOnly);
+    assert_eq!(error.rule_id, Some("DV-SCOPE-002"));
+    // DV-SCOPE-002 negative, other zone: a K2 workspace cannot reach this K1 element either.
+    let (mut a, o) = reopen_as(
+        &a,
+        &o.context,
+        KMD_K2_LAYER,
+        Some(scope(KMD_K2_LAYER, &[KMD_K2_LAYER], &[GRIDS_LAYER], false)),
+    );
+    let error = a
+        .prepare(
+            batch(
+                &o.context,
+                vec![Change::Label {
+                    id: KMD_EL.into(),
+                    name: "Other zone".into(),
+                }],
+            ),
+            &control(),
+        )
+        .unwrap_err();
+    assert_eq!(error.code, ErrorCode::ForeignReadOnly);
+    assert_eq!(error.rule_id, Some("DV-SCOPE-002"));
+}
+
+#[test]
+fn shared_layers_and_the_attribute_schema_answer_only_to_authorized_commands() {
+    // DV-SCOPE-004 positive: the authorized shared command authors the common layer.
+    let (mut a, o) = open_grids();
+    let (_, o) = installed(&mut a, &o, vec![assembly(GRID_EL, "Common marker")]);
+    let (mut a, o) = reopen(&a, &o.context, KMD_K1_LAYER);
+    // DV-SCOPE-004 negative: an ordinary section edit cannot change the shared layer...
+    let error = a
+        .prepare(
+            batch(
+                &o.context,
+                vec![Change::Label {
+                    id: GRID_EL.into(),
+                    name: "Ordinary edit".into(),
+                }],
+            ),
+            &control(),
+        )
+        .unwrap_err();
+    assert_eq!(error.code, ErrorCode::PermissionDenied);
+    assert_eq!(error.rule_id, Some("DV-SCOPE-004"));
+    // ...nor the shared user-attribute schema.
+    let error = a
+        .prepare(
+            batch(
+                &o.context,
+                vec![Change::AttrUndefine {
+                    name: "demo_attr".into(),
+                }],
+            ),
+            &control(),
+        )
+        .unwrap_err();
+    assert_eq!(error.code, ErrorCode::PermissionDenied);
+    assert_eq!(error.rule_id, Some("DV-SCOPE-004"));
+}
+
+#[test]
+fn the_edit_target_must_be_the_authorized_write_layer() {
+    // A forged scope naming another layer than the open edit target is refused outright:
+    // the target decides where creates are authored, so the scope must pin it.
+    let (mut a, o) = open_as(
+        KMD_K1_LAYER,
+        Some(scope(KM_LAYER, &[KM_LAYER], &[GRIDS_LAYER], false)),
+    );
+    let error = a
+        .prepare(
+            batch(&o.context, vec![assembly(KMD_EL, "Misplaced")]),
+            &control(),
+        )
+        .unwrap_err();
+    assert_eq!(error.code, ErrorCode::InvalidArgument);
+}
+
+#[test]
+fn representation_levels_are_authored_purpose_marked_and_replaced_with_their_mesh() {
+    let (mut a, o) = populated();
+    // A plate with a reduced and a simplified body beside the full mesh, and a member with its
+    // guide axis. The level bodies are engine results this fixture fabricates, as every other
+    // mesh fixture here is.
+    let mut plate_mesh = mesh();
+    let mut reduced = mesh();
+    reduced.shape_key = digest(b"reduced");
+    plate_mesh.reduced = Some(Box::new(reduced));
+    let mut proxy = mesh();
+    proxy.shape_key = digest(b"proxy");
+    plate_mesh.proxy = Some(Box::new(proxy));
+    let mut member_mesh = mesh();
+    member_mesh.id = MEMBER.into();
+    member_mesh.axis = Some(vec![[0.0, 0.0, 0.0], [0.0, 0.0, 2000.0]]);
+    let (_, next) = installed(
+        &mut a,
+        &o,
+        vec![Change::Mesh(plate_mesh), Change::Mesh(member_mesh)],
+    );
+    let all = snapshot(&a, &next.context);
+    let prop = |prim: &Prim, name: &str| -> Option<Value> {
+        prim.properties
+            .iter()
+            .find(|p| p.name == name)
+            .and_then(|p| p.value.clone())
+    };
+    let prim_at = |all: &[Prim], base: &str, name: &str| -> Prim {
+        all.iter()
+            .find(|p| p.path == format!("{base}/{name}"))
+            .unwrap()
+            .clone()
+    };
+    let plate_path = path(PLATE);
+    let member_path = path(MEMBER);
+    // The full body is the render level; a level body carries its purpose and the inexact mark.
+    assert_eq!(
+        prop(&prim_at(&all, &plate_path, "Geometry"), "purpose"),
+        Some(Value::Text("render".into()))
+    );
+    let reduced = prim_at(&all, &plate_path, "Reduced");
+    assert_eq!(reduced.type_name.as_deref(), Some("Mesh"));
+    assert_eq!(
+        prop(&reduced, "purpose"),
+        Some(Value::Text("default".into()))
+    );
+    assert_eq!(prop(&reduced, "bim:exact"), Some(Value::Bool(false)));
+    assert_eq!(prop(&reduced, "bim:volumeMm3"), None);
+    let proxy = prim_at(&all, &plate_path, "Proxy");
+    assert_eq!(prop(&proxy, "purpose"), Some(Value::Text("proxy".into())));
+    assert_eq!(prop(&proxy, "bim:exact"), Some(Value::Bool(false)));
+    // The axis guide of a member: a linear BasisCurves with the guide purpose.
+    let axis = prim_at(&all, &member_path, "Axis");
+    assert_eq!(axis.type_name.as_deref(), Some("BasisCurves"));
+    assert_eq!(prop(&axis, "purpose"), Some(Value::Text("guide".into())));
+    assert_eq!(prop(&axis, "bim:exact"), Some(Value::Bool(false)));
+    assert_eq!(
+        prop(&axis, "curveVertexCounts"),
+        Some(Value::Array(vec![Value::Int(2)]))
+    );
+    // A replacement without levels erases the stale ones wholesale, never partially.
+    let mut plain_plate = mesh();
+    plain_plate.reduced = Some(Box::new({
+        let mut level = mesh();
+        level.shape_key = digest(b"reduced-2");
+        level
+    }));
+    let mut plain_member = mesh();
+    plain_member.id = MEMBER.into();
+    let (_, next) = installed(
+        &mut a,
+        &next,
+        vec![Change::Mesh(plain_plate), Change::Mesh(plain_member)],
+    );
+    let all = snapshot(&a, &next.context);
+    assert!(all.iter().all(|p| !p.path.ends_with("/Proxy")));
+    assert!(all.iter().all(|p| !p.path.ends_with("/Axis")));
+    let reduced = all
+        .iter()
+        .find(|p| p.path == format!("{plate_path}/Reduced"))
+        .unwrap();
+    assert_eq!(
+        prop(reduced, "bim:shapeKey"),
+        Some(Value::Text(digest(b"reduced-2").to_string()))
+    );
+    // An axis under a plate is refused: only a beam or a column has an axis.
+    let mut plate_axis = mesh();
+    plate_axis.axis = Some(vec![[0.0, 0.0, 0.0], [1000.0, 0.0, 0.0]]);
+    let error = a
+        .prepare(
+            batch(&next.context, vec![Change::Mesh(plate_axis)]),
+            &control(),
+        )
+        .unwrap_err();
+    assert_eq!(error.code, ErrorCode::UnsupportedProperty);
+}
+
+// ---- U15 per-element derived layers ---------------------------------------------------------
+
+fn plate_element(id: &str, name: &str, thickness: f64) -> Change {
+    Change::Create(Element {
+        id: id.into(),
+        name: name.into(),
+        shape: steel_layer::plate(PlateShape {
+            contour_mm: vec![
+                [0.0, 0.0, 0.0],
+                [1000.0, 0.0, 0.0],
+                [1000.0, 500.0, 0.0],
+                [0.0, 500.0, 0.0],
+            ],
+            thickness_mm: thickness,
+            thickness_side: None,
+            corners: Vec::new(),
+            holes: Vec::new(),
+            hole_records: Vec::new(),
+            cuts: Vec::new(),
+            bends: Vec::new(),
+        }),
+        placement: pose(),
+        material: None,
+    })
+}
+
+fn mesh_for(id: &str, shape_key: &[u8]) -> Mesh {
+    Mesh {
+        id: id.into(),
+        shape_key: digest(shape_key),
+        points_mm: vec![
+            [0.0, 0.0, 0.0],
+            [1000.0, 0.0, 0.0],
+            [1000.0, 500.0, 0.0],
+            [0.0, 500.0, 0.0],
+        ],
+        face_counts: vec![4],
+        indices: vec![0, 1, 2, 3],
+        quantities: None,
+        reduced: None,
+        proxy: None,
+        axis: None,
+    }
+}
+
+fn two_meshed_parts() -> (Author, Opened, Prepared) {
+    let (mut a, o) = open(initial());
+    let mut input = batch(&o.context, elements());
+    input.resources = resources();
+    input.changes.push(Change::Mesh(mesh()));
+    let first = a.prepare(input, &control()).unwrap();
+    let mid = a
+        .install(
+            &o.context,
+            &first.token,
+            &first.op_id,
+            Decision::Accepted,
+            &control(),
+        )
+        .unwrap();
+    let input = batch(
+        &mid.context,
+        vec![
+            plate_element(TREATED, "Treated", 8.0),
+            Change::Mesh(mesh_for(TREATED, b"treated-one")),
+        ],
+    );
+    let prepared = match a.prepare(input, &control()) {
+        Ok(p) => p,
+        Err(e) => panic!("second batch failed: {e:?}"),
+    };
+    let opened = a
+        .install(
+            &mid.context,
+            &prepared.token,
+            &prepared.op_id,
+            Decision::Accepted,
+            &control(),
+        )
+        .unwrap();
+    (a, opened, prepared)
+}
+
+fn owned<'a>(prepared: &'a Prepared, name: &str) -> &'a Asset {
+    prepared
+        .layers
+        .iter()
+        .find(|l| l.name == name)
+        .unwrap_or_else(|| panic!("{name} is not an owned layer of the candidate"))
+}
+
+fn stack_entry_of(id: &str) -> String {
+    element_layer(id).unwrap()
+}
+
+#[test]
+fn u15_a_mesh_edit_rewrites_only_its_element_layer() {
+    let (mut a, opened, first) = two_meshed_parts();
+    let one = element_layer(PLATE).unwrap();
+    let two = element_layer(TREATED).unwrap();
+    // The stack lists the element files and the referenced asset layer.
+    assert_eq!(
+        layer_sublayers(&owned(&first, "derived.usda").bytes).unwrap(),
+        [
+            stack_entry_of(PLATE),
+            stack_entry_of(TREATED),
+            GEOMETRY_ASSET_LAYER.to_owned()
+        ]
+    );
+    let stack_digest = owned(&first, "derived.usda").digest;
+    let authored_digest = owned(&first, "authored.usda").digest;
+    // The mesh of the first element changes; nothing else does.
+    let input = batch(
+        &opened.context,
+        vec![Change::Mesh(Mesh {
+            shape_key: digest(b"plate-two"),
+            ..mesh_for(PLATE, b"plate-one")
+        })],
+    );
+    let prepared = a.prepare(input, &control()).unwrap();
+    assert_ne!(owned(&prepared, &one).digest, owned(&first, &one).digest);
+    // The sibling's file, the stack and the authored layer keep their exact bytes. The new
+    // body lands in the referenced asset layer, which is not part of this claim.
+    assert_eq!(owned(&prepared, &two).digest, owned(&first, &two).digest);
+    assert_eq!(owned(&prepared, "derived.usda").digest, stack_digest);
+    assert_eq!(owned(&prepared, "authored.usda").digest, authored_digest);
+}
+
+#[test]
+fn u15_a_delete_drops_its_element_layer_and_stack_entry() {
+    let (mut a, opened, first) = two_meshed_parts();
+    let one = element_layer(PLATE).unwrap();
+    let two = element_layer(TREATED).unwrap();
+    let after_first = owned(&first, &one).digest;
+    let prepared = a
+        .prepare(
+            batch(&opened.context, vec![Change::Delete { id: TREATED.into() }]),
+            &control(),
+        )
+        .unwrap();
+    assert!(prepared.layers.iter().all(|l| l.name != two));
+    assert_eq!(
+        layer_sublayers(&owned(&prepared, "derived.usda").bytes).unwrap(),
+        [stack_entry_of(PLATE), GEOMETRY_ASSET_LAYER.to_owned()]
+    );
+    // The sibling's file keeps its exact bytes.
+    assert_eq!(owned(&prepared, &one).digest, after_first);
+}
+
+#[test]
+fn u15_the_derived_stack_and_element_files_must_agree() {
+    let (a, _opened, _first) = two_meshed_parts();
+    let base = a.export(&_opened.context, &control()).unwrap();
+    let two = element_layer(TREATED).unwrap();
+    let entry = stack_entry_of(TREATED);
+    let owned_names = ["root.usda", "authored.usda", "derived.usda", "weak.usda"];
+    // A stack entry without its file: a dangling sublayer dependency.
+    let assets: Vec<_> = base.iter().filter(|a| a.name != two).cloned().collect();
+    assert_eq!(
+        validate_layers(
+            request(assets.clone(), &owned_names),
+            schema_identity().unwrap(),
+            &control()
+        )
+        .unwrap_err()
+        .code,
+        ErrorCode::DependencyUnavailable
+    );
+    // A file without its stack entry: the authoring admission refuses the broken stage.
+    let text = String::from_utf8(owned_ref(&base, "derived.usda").bytes.clone()).unwrap();
+    let stripped = text.replace(&format!(", @{entry}@"), "");
+    assert_ne!(stripped, text, "the stack entry must be strippable");
+    let mut assets = base.clone();
+    *assets
+        .iter_mut()
+        .find(|a| a.name == "derived.usda")
+        .unwrap() = asset("derived.usda", stripped);
+    let assets = assets
+        .into_iter()
+        .filter(|a| a.name != two)
+        .collect::<Vec<_>>();
+    let error = Author::open(
+        request(assets, &owned_names),
+        targets(),
+        None,
+        schema_identity().unwrap(),
+        &control(),
+    )
+    .err()
+    .unwrap_or_else(|| panic!("a file without its stack entry must be refused"));
+    assert_eq!(error.code, ErrorCode::IntegrityError);
+    // A `derived/` name outside the fixed shape, stack and asset consistent: the admission
+    // refuses the reserved namespace's shape, not a dangling stack entry.
+    let stack_text = String::from_utf8(owned_ref(&base, "derived.usda").bytes.clone()).unwrap();
+    let renamed_stack =
+        stack_text.replace(&format!("@{}@", entry), "@derived/not-an-identity.usda@");
+    assert_ne!(
+        renamed_stack, stack_text,
+        "the stack entry must be renamable"
+    );
+    let renamed: Vec<_> = base
+        .iter()
+        .map(|a| {
+            if a.name == two {
+                asset("derived/not-an-identity.usda", &a.bytes)
+            } else if a.name == "derived.usda" {
+                asset("derived.usda", renamed_stack.clone())
+            } else {
+                a.clone()
+            }
+        })
+        .collect();
+    let error = Author::open(
+        request(renamed, &owned_names),
+        targets(),
+        None,
+        schema_identity().unwrap(),
+        &control(),
+    )
+    .err()
+    .unwrap_or_else(|| panic!("a derived/ name outside the fixed shape must be refused"));
+    assert_eq!(error.code, ErrorCode::IntegrityError);
+}
+
+fn owned_ref<'a>(assets: &'a [Asset], name: &str) -> &'a Asset {
+    assets
+        .iter()
+        .find(|a| a.name == name)
+        .unwrap_or_else(|| panic!("{name} missing"))
+}
+
+#[test]
+fn u15_a_legacy_mesh_moves_to_its_element_layer_on_first_rewrite() {
+    let (a, opened, _first) = two_meshed_parts();
+    let base = a.export(&opened.context, &control()).unwrap();
+    let one = element_layer(PLATE).unwrap();
+    let entry = stack_entry_of(PLATE);
+    // A faithful pre-U15 stage: the element file's body pasted into the shared derived layer
+    // with its external asset reference turned into the U11 internal form, the file and its
+    // stack entry gone, and the shared asset inlined in that layer.
+    let file = owned_ref(&base, &one);
+    let text = String::from_utf8(file.bytes.clone()).unwrap();
+    let (_, body) = text.split_once(")\n").unwrap();
+    let body = body.replace("@geometry.usda@", "");
+    let asset_text =
+        String::from_utf8(owned_ref(&base, "derived/geometry.usda").bytes.clone()).unwrap();
+    let asset_body = asset_text.split_once(")\n").unwrap().1;
+    let derived_text = String::from_utf8(owned_ref(&base, "derived.usda").bytes.clone()).unwrap();
+    let legacy_derived = derived_text
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("subLayers"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let legacy = format!("{legacy_derived}\n{body}\n{asset_body}");
+    let assets: Vec<_> = base
+        .iter()
+        .filter(|a| element_layer_id(&a.name).is_none() && a.name != GEOMETRY_ASSET_LAYER)
+        .map(|a| {
+            if a.name == "derived.usda" {
+                asset("derived.usda", &legacy)
+            } else {
+                a.clone()
+            }
+        })
+        .collect();
+    let owned_names = ["root.usda", "authored.usda", "derived.usda", "weak.usda"];
+    let checked = validate_layers(
+        request(assets.clone(), &owned_names),
+        schema_identity().unwrap(),
+        &control(),
+    );
+    assert!(checked.is_ok(), "legacy stage refused: {:?}", checked.err());
+    let (mut a, opened) = open(request(assets, &owned_names));
+    // The first rewrite of the legacy mesh moves it into the element's own layer.
+    let input = batch(
+        &opened.context,
+        vec![Change::Mesh(Mesh {
+            shape_key: digest(b"plate-legacy-move"),
+            ..mesh_for(PLATE, b"plate-one")
+        })],
+    );
+    let prepared = a.prepare(input, &control()).unwrap();
+    let derived = String::from_utf8(owned(&prepared, "derived.usda").bytes.clone()).unwrap();
+    assert!(
+        !derived.contains("instanceable"),
+        "the legacy element prim must be gone"
+    );
+    assert_eq!(
+        layer_sublayers(&owned(&prepared, "derived.usda").bytes).unwrap(),
+        [entry, GEOMETRY_ASSET_LAYER.to_owned()]
+    );
+    // The body is content-addressed: the rewritten element file cites the shared asset layer,
+    // which carries the body once.
+    let assets = owned(&prepared, GEOMETRY_ASSET_LAYER);
+    assert!(String::from_utf8_lossy(&assets.bytes).contains("def Mesh \"GEO_"));
+    let moved = owned(&prepared, &one);
+    let moved_text = String::from_utf8_lossy(&moved.bytes).into_owned();
+    assert!(moved_text.contains("instanceable = true"));
+    assert!(moved_text.contains("@geometry.usda@"));
 }

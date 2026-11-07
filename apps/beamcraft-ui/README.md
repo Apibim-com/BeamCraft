@@ -52,7 +52,8 @@ beamcraft-ui --store ROOT --perf-run PLAN [--samples 1|4] [--cli PATH]
   from the CLI snapshot on a single background worker, cached for up to 20 models.
   Thumbnails have an 8,192-triangle budget; failures and larger models show an explicit message
   and Retry, not a fabricated or incomplete preview. Uninspected rows retain generic symbols.
-- The model workspace has a custom draggable title bar, native window controls, a project/save-state
+- The model workspace has a custom draggable title bar, window controls (on macOS the system's own
+  traffic lights over a transparent title bar; elsewhere drawn at the right), a project/save-state
   header and Publish for personal workspaces; Menu, Steel, Edit, View
   and Manage ribbon tabs; resizable project-browser and inspector panes; the native 3D viewport;
   and the compact selection/snap toolbar and status line. Views are listed in the browser.
@@ -78,15 +79,18 @@ beamcraft-ui --store ROOT --perf-run PLAN [--samples 1|4] [--cli PATH]
   as a properties grid with a view preset picker and the filters table: clicking empty space in
   the viewport or a view in the browser shows them, and the free 3D view offers "Save as view".
   View > Filters edits the filters (rows of field, operator and value). The project browser is a
-  tree by view type (3D views, Plans, Elevations, Sections) with folders inside, search, quick
-  access, previews, drag to a folder or into the work area, and a context menu; a double click
+  tree by the orientation of each view's plane (Plans, Elevations & sections, Inclined; 3D is a
+  way of looking at any view, not a kind) under the default view on its own row, with folders
+  inside, a search field, a filter menu (quick access, favourites, previews), drag to a folder or into the work area, and a context menu; a double click
   opens a view. 3D / plane (Ctrl+P, shown in its tooltip) toggles 3D and the view plane, and
   Ctrl+Tab cycles the open views. Views open as tabs in tab groups that split the work area: a
   tab dragged onto a group's edge splits it, dividers resize the groups, and the active tab takes
   selection, picking, snapping and tools. Windows: Open beside, Close inactive, Tab views, Tile
   views, Arrange (Tabs, Tile, Tile horizontal, Tile vertical, Maximize / restore). Filters and
-  view presets also come from the environment's presets file, like the part presets.
-  Views are display state beside the store and never change the model.
+  view presets also come from the environment's presets file, like the part presets; the
+  user's own view presets are kept in `view-presets.json` in the configuration directory.
+  On macOS a tab's close glyph sits first and shows under the pointer, as macOS tabs do;
+  elsewhere it sits last. Views are display state beside the store and never change the model.
   See [model views](../../docs/design/v12-named-views.md).
 - View retains all five render modes (Wireframe, Transparent, Grey, Shaded, Selected only)
   and the upstream remappable Ctrl+1 through Ctrl+5 shortcuts. Mode changes never reload the

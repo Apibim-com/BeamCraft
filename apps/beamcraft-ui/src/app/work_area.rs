@@ -7,7 +7,8 @@
 //! the accessors here read and write its display state.
 
 use super::{
-    App, View, annotation_panel, draw_selection, navigation, target_size, viewport_sense, workbench,
+    App, View, annotation_panel, contour_grips, draw_selection, navigation, target_size,
+    viewport_sense, workbench,
 };
 use crate::edit::{ndc_of, ray_through};
 use crate::panes;
@@ -483,10 +484,15 @@ impl App {
                 vec2(width, chrome.title.height() - 2.0),
             );
             x += width + 2.0;
-            let close_rect = egui::Rect::from_center_size(
-                pos2(tab.max.x - 12.0, tab.center().y),
-                vec2(16.0, 16.0),
-            );
+            // The close glyph sits where the platform's tabs keep it: first on macOS, last
+            // elsewhere.
+            let close_x = if theme::TAB_CLOSE_LEADING {
+                tab.min.x + 12.0
+            } else {
+                tab.max.x - 12.0
+            };
+            let close_rect =
+                egui::Rect::from_center_size(pos2(close_x, tab.center().y), vec2(16.0, 16.0));
             let response = child.interact(
                 tab,
                 egui::Id::unique(("view-tab", *key)),
@@ -533,12 +539,20 @@ impl App {
                     Stroke::new(2.0, accent),
                 );
             }
-            let text = painter.with_clip_rect(
-                egui::Rect::from_min_max(tab.min, pos2(close_rect.min.x - 2.0, tab.max.y))
-                    .intersect(painter.clip_rect()),
-            );
+            let (text_rect, text_inset) = if theme::TAB_CLOSE_LEADING {
+                (
+                    egui::Rect::from_min_max(pos2(close_rect.max.x + 2.0, tab.min.y), tab.max),
+                    24.0,
+                )
+            } else {
+                (
+                    egui::Rect::from_min_max(tab.min, pos2(close_rect.min.x - 2.0, tab.max.y)),
+                    8.0,
+                )
+            };
+            let text = painter.with_clip_rect(text_rect.intersect(painter.clip_rect()));
             text.text(
-                tab.left_center() + vec2(8.0, 0.0),
+                tab.left_center() + vec2(text_inset, 0.0),
                 egui::Align2::LEFT_CENTER,
                 &title,
                 egui::FontId::proportional(12.0),
@@ -547,10 +561,14 @@ impl App {
             if close.hovered() {
                 painter.rect_filled(close_rect, 3, palette.rule);
             }
-            let line = Stroke::new(1.0, palette.text);
-            let c = close_rect.center();
-            painter.line_segment([c + vec2(-3.5, -3.5), c + vec2(3.5, 3.5)], line);
-            painter.line_segment([c + vec2(-3.5, 3.5), c + vec2(3.5, -3.5)], line);
+            // macOS tabs show their close glyph only under the pointer; elsewhere it stays.
+            let glyph = !theme::TAB_CLOSE_LEADING || response.hovered() || close.hovered();
+            if glyph {
+                let line = Stroke::new(1.0, palette.text);
+                let c = close_rect.center();
+                painter.line_segment([c + vec2(-3.5, -3.5), c + vec2(3.5, 3.5)], line);
+                painter.line_segment([c + vec2(-3.5, 3.5), c + vec2(3.5, -3.5)], line);
+            }
             if close.clicked() || response.middle_clicked() {
                 out.close = Some(*key);
             } else if response.double_clicked() {
@@ -661,6 +679,13 @@ impl App {
             zoom_out,
             self.invert_zoom,
         );
+        // A contour grip holding the pointer takes the primary drag from the camera (V18): a
+        // trackpad's primary drag would otherwise orbit while the grip is being dragged.
+        let (orbit, pan) = if self.contour.holds_pointer() {
+            ([0.0; 2], [0.0; 2])
+        } else {
+            (orbit, pan)
+        };
         let aspect = pane.target.aspect();
         // Zoom toward the cursor: keep the point under the pointer still while zooming. A
         // hostile cursor or an extreme distance falls back to the view centre.
@@ -848,6 +873,24 @@ impl App {
                     l.summary.origin_mm,
                     &self.selection_edges.1,
                 );
+                // The selected plate's contour grips (V18): dormant while a creation tool or a
+                // view pick owns the pointer, and on any bench other than Select, whose click
+                // pickers (weld pairs, annotations) would lose their clicks to a grip.
+                if let Some(contour) = selected.contour.as_ref()
+                    && !self.beam_mode
+                    && !self.plate_mode
+                    && self.views.picking.is_none()
+                    && self.bench == workbench::Bench::Select
+                {
+                    contour_grips::paint(
+                        &painter,
+                        response.rect,
+                        &view,
+                        l.summary.origin_mm,
+                        contour,
+                        &self.contour,
+                    );
+                }
             } else {
                 self.selection_edges = Default::default();
             }
@@ -872,9 +915,15 @@ impl App {
         let view = &draw.view;
         let mut picked = None;
         let mut picked_grid = None;
-        let finished_creation = !swallow && self.finish_creation_gesture(response, view);
+        // The contour grips (V18) see the pointer before any click: a grip drag is not a
+        // selection or a camera move, and its release commits one contour edit. The corner
+        // editor's window belongs to the active pane too.
+        let grip_hold = !swallow && self.contour_input(ui, response, view);
+        self.contour_editor_ui(ui.ctx());
+        let finished_creation = !grip_hold && self.finish_creation_gesture(response, view);
         // A closure gesture consumes the click before it can append another point.
         if !swallow
+            && !grip_hold
             && !finished_creation
             && response.clicked_by(egui::PointerButton::Primary)
             && let Some(pos) = response.interact_pointer_pos()
@@ -1005,6 +1054,10 @@ impl App {
                 self.place_beam(ray);
             } else if self.bench == workbench::Bench::Annotations {
                 self.annotation_click(ray);
+            } else if self.bench == workbench::Bench::Weld {
+                self.weld_click(ray);
+            } else if self.bench == workbench::Bench::Bolt {
+                self.bolt_click(ray);
             } else if !self.other_command_running() {
                 self.start_select(ray);
             }

@@ -11,25 +11,29 @@
 //! ordinary [`crate::engine::member::evaluate_member`] replay and commits the result as one
 //! transaction. A rejection changes nothing.
 //!
-//! Replay cuts each record with the kernel's certified through-hole operation. The cutter is
-//! mapped into the hole's own frame by an exact axis permutation, so a body whose member frame
-//! is axis-aligned (unit components `0.0`/`+-1.0`, which includes every member whose axis is
-//! parallel to a coordinate axis and carries no roll) is cut with bit-exact coordinates. Every
-//! other case — a section profile, a polybeam or curved path, a roll that moves the frame off
-//! the coordinate axes, a ranged extent, a body that is not a prism in the hole frame — is
-//! refused with `UNSUPPORTED_GEOMETRY` naming the kernel slice (G14.1) that will lift it. A
-//! stored record the replay can no longer serve (the member was edited, the hole no longer
-//! fits) refuses the evaluation with the typed hole diagnostic, and the replay runs in ordinal
-//! order, so the member keeps its last valid state as F04 section 4 says.
+//! Replay cuts each record with the kernel's certified section-aware member-hole operation
+//! (G14.1 with the G14.2 directed cutters): the body is mapped into the member's own frame by
+//! an exact axis permutation, so a member whose frame axes are the coordinate axes (unit
+//! components `0.0`/`+-1.0`, which includes every member whose axis is parallel to a
+//! coordinate axis and carries no roll) is cut with bit-exact coordinates. The cutter is
+//! directed: any section-plane hole direction and a `through` or a `range` extent are
+//! certified, on flat walls and on faceted, sloped or multi-facet chains alike. Still refused
+//! with `UNSUPPORTED_GEOMETRY`: a roll or a non-coordinate member axis (the permutation must
+//! stay exact), a curved member or polybeam, and a hole direction with an axial component
+//! (the kernel cutter is perpendicular to the member axis). A stored record the replay can no
+//! longer serve (the member was edited, the hole no longer fits) refuses the evaluation with
+//! the typed hole diagnostic, and the replay runs in ordinal order, so the member keeps its
+//! last valid state as F04 section 4 says.
 
 use crate::engine::member::AuthoredMember;
+use crate::kernel::member_hole::{MemberHoleCutter, member_through_hole};
 use crate::model::command::{
     AddHole, HoleExtent, HoleSpec, MAX_HOLES, MemberHoleRecord, UpdateHole,
 };
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_engine::solid::SolidMesh;
 use beamcraft_geom::Frame3;
-use beamcraft_kernel::ops::{Body, HoleCutter, OpCode, OpFailure, through_hole};
+use beamcraft_kernel::ops::{Body, OpCode, OpDefect, OpFailure};
 use beamcraft_kernel::profile::{Cavity, Point2};
 use beamcraft_model::command::CommandError;
 use beamcraft_model::digest::ContentDigest;
@@ -270,17 +274,6 @@ impl Axes {
             z: [x2, y2, z2],
         }
     }
-
-    /// The map that applies `self` after `outer` (`self(outer(v))`): the rows of the
-    /// composition combine the outer rows by the inner rows, exact for the signed unit
-    /// components.
-    fn after(self, outer: Self) -> Self {
-        Self {
-            x: combined(self.x, outer),
-            y: combined(self.y, outer),
-            z: combined(self.z, outer),
-        }
-    }
 }
 
 /// The exact dot of a signed unit row and a vector; the zero components contribute nothing.
@@ -290,19 +283,6 @@ fn weighted(row: [f64; 3], v: [f64; 3]) -> f64 {
     let partial = if a == 0.0 { 0.0 } else { a * x };
     let partial = partial + if b == 0.0 { 0.0 } else { b * y };
     partial + if c == 0.0 { 0.0 } else { c * z }
-}
-
-/// The inner rows combined by one exact signed outer row.
-fn combined(row: [f64; 3], inner: Axes) -> [f64; 3] {
-    let [a, b, c] = row;
-    let part = |s: f64, r: [f64; 3]| {
-        let [x, y, z] = r;
-        [zeroed(s * x), zeroed(s * y), zeroed(s * z)]
-    };
-    let [ax, ay, az] = part(a, inner.x);
-    let [bx, by, bz] = part(b, inner.y);
-    let [cx, cy, cz] = part(c, inner.z);
-    [ax + bx + cx, ay + by + cy, az + bz + cz]
 }
 
 /// Normalizes negative zero.
@@ -341,17 +321,27 @@ fn record_refusal(failure: &OpFailure) -> CommandError {
     )
 }
 
-/// The fixed message for one kernel refusal of a member-hole record.
+/// The fixed message for one kernel refusal of a member-hole record. The defect decides
+/// where it can: a blind, tangent or sub-floor range is the cutter's own refusal, a body that
+/// stopped being a straight prism says so.
 fn record_refusal_message(failure: &OpFailure) -> &'static str {
-    match failure.code {
-        OpCode::ContourInvalid | OpCode::UnsupportedContour => {
-            "a member hole record does not fit strictly inside a wall face, clear of its edges and the other holes"
+    match failure.defect {
+        OpDefect::CutterNotThrough | OpDefect::CutterTangent | OpDefect::CutterMargin => {
+            "a member hole record's range ends inside the member or touches a wall"
         }
-        OpCode::OpNoEffect | OpCode::OpUnsupported => {
-            "a member hole record no longer fits the member"
+        OpDefect::BodyNotPrism => {
+            "a member hole record no longer fits: the body is not a straight prism for the kernel"
         }
-        OpCode::AboveLimit => "a member hole record exceeds the kernel capacity",
-        _ => "the kernel refused a member hole record",
+        _ => match failure.code {
+            OpCode::ContourInvalid | OpCode::UnsupportedContour => {
+                "a member hole record does not fit strictly inside a wall face, clear of its edges and the other holes"
+            }
+            OpCode::OpNoEffect | OpCode::OpUnsupported => {
+                "a member hole record no longer fits the member"
+            }
+            OpCode::AboveLimit => "a member hole record exceeds the kernel capacity",
+            _ => "the kernel refused a member hole record",
+        },
     }
 }
 
@@ -415,65 +405,95 @@ fn permuted_body(body: &Body, axes: &Axes) -> Result<Body, CommandError> {
 }
 
 /// Replays the member's hole records over `body` (the base shape with its plane cuts), in
-/// ordinal order, with the kernel's certified through-hole operation. The records come from the
-/// member frame; `frame` is the member frame's axes in element coordinates. The returned mesh
-/// is in element coordinates.
+/// ordinal order, with the kernel's certified section-aware member-hole operation. The records
+/// come from the member frame; `frame` is the member frame's axes in element coordinates and
+/// `origin_mm` is the frame origin in element coordinates (the member's first axis point). The
+/// returned mesh is in element coordinates.
 ///
-/// The first slice serves a straight member whose frame axes are exact coordinate axes and
-/// whose records are `through`; everything else is the pending-kernel-slice refusal. A record
-/// the kernel refuses (it left the member, reaches a free edge, meets another hole) refuses the
-/// evaluation with a diagnostic naming the record, so the member keeps its last valid state.
+/// A straight member whose frame axes are exact coordinate axes is served with any
+/// section-plane hole direction and a `through` or a `range` extent; a roll or a
+/// non-coordinate axis, a curved member or polybeam, and an axial hole direction are refused.
+/// A record the kernel refuses (it left the member, ends inside a wall, meets another hole)
+/// refuses the evaluation with a diagnostic naming the record, so the member keeps its last
+/// valid state.
 pub(crate) fn replay_member_holes(
     frame: &Frame3,
+    origin_mm: [f64; 3],
     body: &Body,
     records: &[MemberHoleRecord],
 ) -> Result<SolidMesh, CommandError> {
     let (bx, by, bz) = basis_of(frame);
     let Some(axes_frame) = Axes::of_rows(bx, by, bz) else {
         return Err(pending_member_holes(
-            "the member hole needs the kernel slice G14.1: the member frame is not axis-aligned in this slice",
+            "a member hole needs a member frame whose axes are the coordinate axes, without roll",
         ));
     };
-    // Each record cuts the body in its own hole frame; between records the result comes back
+    // The kernel frame is the exact cyclic rotation of the member frame: X = the member axis
+    // `Z_m`, Y = `X_r`, Z = `Y_r`. A cyclic rotation of a proper rotation stays proper, so the
+    // inverse below is its transpose and the body becomes the X-extrusion the kernel op serves.
+    let axes_kernel = Axes {
+        x: axes_frame.z,
+        y: axes_frame.x,
+        z: axes_frame.y,
+    };
+    let back = axes_kernel.inverse();
+    // Each record cuts the body in the kernel frame; between records the result comes back
     // to element coordinates, so the next record maps it afresh.
     let mut solid: Option<SolidMesh> = None;
     let mut element_body = body.clone();
     for record in records {
-        if !matches!(record.extent, HoleExtent::Through) {
+        // The hole axis: normalized exactly as the kernel normalizes its `(axis_y, axis_z)`,
+        // so the footprint frame here and the kernel's are the same line bit for bit.
+        let [du, dv, dw] = record.axis_direction;
+        if dw != 0.0 {
             return Err(pending_member_holes(
-                "the member hole needs the kernel slice G14.1: a ranged cutter is not certified in this slice",
+                "a member hole axis must stay in the member's section plane",
             ));
         }
-        // The hole frame, in member-frame coordinates: x along +Z_m, y along `axis_direction x
-        // +Z_m`, z along the axis direction. The stored polygon is clockwise in this frame (the
-        // plate generator's winding) and the kernel expects a clockwise cavity in body XY seen
-        // from +Z. The tokens are exact, so the mapping is exact.
-        let direction = record.axis_direction;
-        let x2d = [0.0, 0.0, 1.0];
-        let y2d = cross(&direction, &x2d);
-        let Some(to_hole) = Axes::of_rows(x2d, y2d, direction) else {
+        let norm = (du * du + dv * dv).sqrt();
+        if !(norm.is_finite() && norm > 0.0) {
             return Err(pending_member_holes(
-                "the hole frame is not axis-aligned in this slice",
+                "a member hole axis direction needs a nonzero transverse part",
             ));
-        };
-        // Compose: element -> member frame -> hole frame.
-        let full = to_hole.after(axes_frame);
-        let hole_body = permuted_body(&element_body, &full)?;
-        let z0 = hole_body
+        }
+        let (dy, dz) = (du / norm, dv / norm);
+        let hole_body = permuted_body(&element_body, &axes_kernel)?;
+        // The cutter range along the axis: `through` spans the body's full height past both
+        // walls; a range runs from the axis point along the axis (the model refuses from >= to,
+        // and a range ending inside a wall is the kernel's blind refusal).
+        let height = |p: &[f64; 3]| p[1].mul_add(dy, p[2] * dz);
+        let (t_lo, t_hi) = hole_body
             .mesh()
             .vertices()
             .iter()
-            .map(|p| p[2])
-            .fold(f64::INFINITY, f64::min);
-        let z1 = hole_body
-            .mesh()
-            .vertices()
-            .iter()
-            .map(|p| p[2])
-            .fold(f64::NEG_INFINITY, f64::max);
-        // The axis point in hole-frame XY: an exact signed component pick through the hole rows.
+            .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), p| {
+                (lo.min(height(p)), hi.max(height(p)))
+            });
         let point = record.axis_point_mm;
-        let centre = [weighted(to_hole.x, point), weighted(to_hole.y, point)];
+        // The stored member-frame point `(u, v, w)` resolves through the frame origin into
+        // element coordinates, then into the kernel frame's `a`, transverse line and height
+        // coordinates. For a frame origin at the coordinate origin each resolved component is
+        // the stored one (the cross terms vanish exactly on the signed unit rows), so the
+        // origin-based members keep their byte-exact results.
+        let element = [
+            origin_mm[0] + weighted([bx[0], by[0], bz[0]], point),
+            origin_mm[1] + weighted([bx[1], by[1], bz[1]], point),
+            origin_mm[2] + weighted([bx[2], by[2], bz[2]], point),
+        ];
+        let (a, y_k, z_k) = (
+            weighted(bz, element),
+            weighted(bx, element),
+            weighted(by, element),
+        );
+        let t0 = y_k.mul_add(dy, z_k * dz);
+        let (from, to) = match record.extent {
+            HoleExtent::Through => (t_lo - CUTTER_OVERSHOOT_MM, t_hi + CUTTER_OVERSHOOT_MM),
+            HoleExtent::Range { from_mm, to_mm } => (t0 + from_mm, t0 + to_mm),
+        };
+        // The axis point in the footprint plane: `a` along the member axis, `b` along the
+        // axis' `e2 = d x e1`. The stored polygon is clockwise in exactly this frame — its
+        // hole-frame XY is `(Z_m, axis_direction x Z_m)` — so the coordinates carry unchanged.
+        let centre = [a, dz * y_k - dy * z_k];
         let cavity = Cavity::polygon(
             record
                 .polygon_mm
@@ -487,15 +507,9 @@ pub(crate) fn replay_member_holes(
             .ok_or_else(|| {
                 pending_member_holes("the record ordinal exceeds the kernel capacity")
             })?;
-        let cutter = HoleCutter::new(
-            cavity,
-            z0 - CUTTER_OVERSHOOT_MM,
-            z1 + CUTTER_OVERSHOOT_MM,
-            ordinal,
-        );
+        let cutter = MemberHoleCutter::directed(cavity, dy, dz, from, to, ordinal);
         let applied =
-            through_hole(&hole_body, &cutter).map_err(|failure| record_refusal(&failure))?;
-        let back = full.inverse();
+            member_through_hole(&hole_body, &cutter).map_err(|failure| record_refusal(&failure))?;
         let result = permuted_body(applied.body(), &back)?;
         let volume = applied.volume_mm3().midpoint();
         solid = Some(
@@ -515,6 +529,7 @@ mod tests {
     use super::*;
     use crate::engine::member::{MemberBody, ProfileInfo, evaluate_member};
     use crate::model::command::{MemberKind, RemoveHole};
+    use crate::model::section::{ParametricSection, SectionFamily, SectionShape};
     use beamcraft_model::command::Placement;
     use beamcraft_model::digest::ContentDigest;
     use beamcraft_model::id::{ElementId, OpId};
@@ -688,7 +703,7 @@ mod tests {
                 .scene_mesh()
                 .face_table
                 .iter()
-                .any(|id| id == "cut:f.h0.s0")
+                .any(|id| id == "cut:f.h0.w0.s0")
         );
         // A hole along Y_r removes area x height.
         let authored_y = add_member_hole_after(
@@ -712,6 +727,71 @@ mod tests {
     }
 
     #[test]
+    fn a_member_off_the_origin_replays_its_hole_records() {
+        let (width, height) = (200.0, 300.0);
+        // The same beam as `member()`, based at a non-zero offset: the frame axes stay the
+        // coordinate axes and the frame origin (the first axis point) is (500, 200, 100).
+        let mut placed = member();
+        placed.axis_points_mm = vec![[500.0, 200.0, 100.0], [1500.0, 200.0, 100.0]];
+        let gross = evaluate(&placed, width, height).volume_mm3;
+        // A through hole at the section centre, mid-length: the stored record is the
+        // member-frame point (u, v, w) = (0, 0, 500) and must resolve through the frame
+        // origin, not read as an element coordinate (which would land the cutter near the
+        // world origin, far off this member, and refuse the evaluation).
+        let authored = add_member_hole_after(
+            &member_hole(100.0, [0.0, 0.0, 500.0], [1.0, 0.0, 0.0]),
+            &placed,
+            &|_| false,
+            0,
+        )
+        .unwrap()
+        .authored;
+        let body = evaluate(&authored, width, height);
+        let area = polygon_area(&authored.hole_records[0].polygon_mm);
+        assert!(
+            (body.volume_mm3 - (gross - area * width)).abs() <= 1.0,
+            "through removed {}",
+            gross - body.volume_mm3
+        );
+        // The same cut on the origin-based member certifies the same removed volume: the
+        // record means the same local geometry, wherever the member is placed.
+        let origin = add_member_hole_after(
+            &member_hole(100.0, [0.0, 0.0, 500.0], [1.0, 0.0, 0.0]),
+            &member(),
+            &|_| false,
+            0,
+        )
+        .unwrap()
+        .authored;
+        let origin_volume = evaluate(&origin, width, height).volume_mm3;
+        assert!((body.volume_mm3 - origin_volume).abs() <= 1.0);
+        // A range extent is measured along the axis direction from the resolved axis point
+        // too: 10 mm past both u-walls removes exactly `area x width`.
+        let ranged = AddHole {
+            hole: HoleSpec::Member(crate::model::command::MemberHole {
+                axis_point_mm: [0.0, 0.0, 500.0],
+                axis_direction: [1.0, 0.0, 0.0],
+                extent: HoleExtent::Range {
+                    from_mm: -110.0,
+                    to_mm: 110.0,
+                },
+                diameter_mm: 50.0,
+            }),
+            ..member_hole(50.0, [0.0, 0.0, 500.0], [1.0, 0.0, 0.0])
+        };
+        let served = add_member_hole_after(&ranged, &placed, &|_| false, 0)
+            .unwrap()
+            .authored;
+        let body_r = evaluate(&served, width, height);
+        let area_r = polygon_area(&served.hole_records[0].polygon_mm);
+        assert!(
+            (body_r.volume_mm3 - (gross - area_r * width)).abs() <= 1.0,
+            "range removed {}",
+            gross - body_r.volume_mm3
+        );
+    }
+
+    #[test]
     fn a_hole_that_no_longer_fits_refuses_the_evaluation() {
         let head = member();
         // The axis point's transverse coordinate outside the section (v along Y_r is beyond
@@ -728,7 +808,7 @@ mod tests {
     }
 
     #[test]
-    fn pending_cases_refuse_with_the_kernel_slice_note() {
+    fn the_unserved_member_frames_refuse_with_the_typed_error() {
         let width = 200.0;
         let height = 300.0;
         // A roll that moves the frame off the coordinate axes.
@@ -746,26 +826,490 @@ mod tests {
         });
         let error = evaluate_member(&rolled, rectangle(width, height)).unwrap_err();
         assert_eq!(error.code, ErrorCode::UnsupportedGeometry);
-        assert!(error.message.contains("G14.1"));
-        // A ranged record.
-        let mut ranged = member();
-        ranged.hole_records.push(MemberHoleRecord {
-            extent: HoleExtent::Range {
-                from_mm: 10.0,
-                to_mm: 50.0,
-            },
-            ..rolled.hole_records[0].clone()
-        });
-        assert!(
-            evaluate_member(&ranged, rectangle(width, height))
-                .unwrap_err()
-                .message
-                .contains("G14.1")
-        );
+        assert!(error.message.contains("without roll"));
+        assert!(!error.message.contains("G14.1"));
         // A non-axis-aligned member axis.
         let mut skewed = member();
         skewed.axis_points_mm = vec![[0.0, 0.0, 0.0], [1000.0, 300.0, 0.0]];
         skewed.hole_records = rolled.hole_records.clone();
         assert!(evaluate_member(&skewed, rectangle(width, height)).is_err());
+    }
+
+    /// The shoelace area of one authored hole polygon (clockwise, so the sum is negative).
+    fn polygon_area(polygon: &[[f64; 2]]) -> f64 {
+        let mut twice = 0.0;
+        for (a, b) in polygon.iter().zip(polygon.iter().cycle().skip(1)) {
+            twice += a[0] * b[1] - b[0] * a[1];
+        }
+        (twice / 2.0).abs()
+    }
+
+    #[test]
+    fn an_oblique_hole_direction_cuts_with_the_certified_volume() {
+        let (width, height) = (200.0, 300.0);
+        let head = member();
+        let gross = evaluate(&head, width, height).volume_mm3;
+        // Direction (3, 4) across the section centre: the cutter crosses both u-walls
+        // obliquely and removes `area x width / |n . d|` with |n . d| = 3/5. The diameter
+        // stays at 16 because the two opposite u-faces overlap in the footprint coordinate
+        // only `2 * (3/5 * 150 - 4/5 * 100)` = 20 mm for this direction, so a wider hole
+        // would breach the faces' hard edges and the replay would refuse it.
+        let authored = add_member_hole_after(
+            &member_hole(16.0, [0.0, 0.0, 500.0], [3.0, 4.0, 0.0]),
+            &head,
+            &|_| false,
+            0,
+        )
+        .unwrap()
+        .authored;
+        let body = evaluate(&authored, width, height);
+        let area = polygon_area(&authored.hole_records[0].polygon_mm);
+        let expected = gross - area * width * 5.0 / 3.0;
+        assert!((body.volume_mm3 - expected).abs() <= 1.0);
+        assert!(
+            body.solid
+                .scene_mesh()
+                .face_table
+                .iter()
+                .any(|id| id == "cut:f.h0.w0.s0")
+        );
+    }
+
+    #[test]
+    fn a_non_unit_direction_normalizes_to_the_same_cut() {
+        // (6, 8) normalizes to the same line as (3, 4): both quotients are the same doubles
+        // (6/10 and 3/5 round to one 0.6), so the magnitude names nothing and the evaluated
+        // bodies must be equal.
+        let unit = add_member_hole_after(
+            &member_hole(16.0, [0.0, 0.0, 500.0], [3.0, 4.0, 0.0]),
+            &member(),
+            &|_| false,
+            0,
+        )
+        .unwrap()
+        .authored;
+        let scaled = add_member_hole_after(
+            &member_hole(16.0, [0.0, 0.0, 500.0], [6.0, 8.0, 0.0]),
+            &member(),
+            &|_| false,
+            0,
+        )
+        .unwrap()
+        .authored;
+        assert_eq!(
+            evaluate(&unit, 200.0, 300.0),
+            evaluate(&scaled, 200.0, 300.0)
+        );
+    }
+
+    #[test]
+    fn a_ranged_extent_cuts_through_and_a_blind_one_refuses() {
+        let (width, height) = (200.0, 300.0);
+        let head = member();
+        let gross = evaluate(&head, width, height).volume_mm3;
+        let ranged = |from_mm: f64, to_mm: f64| AddHole {
+            hole: HoleSpec::Member(crate::model::command::MemberHole {
+                axis_point_mm: [0.0, 0.0, 500.0],
+                axis_direction: [1.0, 0.0, 0.0],
+                extent: HoleExtent::Range { from_mm, to_mm },
+                diameter_mm: 50.0,
+            }),
+            ..member_hole(50.0, [0.0, 0.0, 500.0], [1.0, 0.0, 0.0])
+        };
+        // The range reaches 10 mm past both u-walls, so it cuts exactly `area x width`.
+        let served = add_member_hole_after(&ranged(-110.0, 110.0), &head, &|_| false, 0)
+            .unwrap()
+            .authored;
+        let body = evaluate(&served, width, height);
+        let area = polygon_area(&served.hole_records[0].polygon_mm);
+        assert!((body.volume_mm3 - (gross - area * width)).abs() <= 1.0);
+        // A range that ends 50 mm inside the material is the kernel's blind refusal.
+        let blind = add_member_hole_after(&ranged(-110.0, -50.0), &head, &|_| false, 0)
+            .unwrap()
+            .authored;
+        let error = evaluate_member(&blind, rectangle(width, height)).unwrap_err();
+        assert_eq!(error.code, ErrorCode::UnsupportedGeometry);
+        assert!(error.message.contains("range ends inside"));
+    }
+
+    #[test]
+    fn the_admission_matrix_for_the_hole_direction() {
+        let hole = |direction: [f64; 3]| crate::model::command::MemberHole {
+            axis_point_mm: [0.0, 0.0, 500.0],
+            axis_direction: direction,
+            extent: HoleExtent::Through,
+            diameter_mm: 20.0,
+        };
+        for direction in [
+            [3.0, 4.0, 0.0],
+            [6.0, 8.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, -1.0, 0.0],
+        ] {
+            assert!(
+                hole(direction).validate().is_ok(),
+                "{direction:?} names a served section direction"
+            );
+        }
+        assert_eq!(
+            hole([0.0, 0.0, 1.0]).validate().unwrap_err().code,
+            ErrorCode::UnsupportedGeometry
+        );
+        assert_eq!(
+            hole([0.0, 0.0, 0.0]).validate().unwrap_err().code,
+            ErrorCode::InvalidArgument
+        );
+        assert_eq!(
+            hole([f64::NAN, 1.0, 0.0]).validate().unwrap_err().code,
+            ErrorCode::NonFiniteNumber
+        );
+        assert_eq!(
+            hole([1e300, 0.0, 0.0]).validate().unwrap_err().code,
+            ErrorCode::LimitExceeded
+        );
+    }
+
+    #[test]
+    fn a_chs_member_hole_certifies_the_removed_volume_within_the_engine_bound() {
+        let chs = || ProfileInfo::Section {
+            shape: SectionShape::Parametric(
+                ParametricSection::new(SectionFamily::Chs, vec![114.0, 5.0]).unwrap(),
+            ),
+            declared_area_mm2: None,
+        };
+        let head = member();
+        // The gross stays the uncut P-Mass volume across every hole of the triplet.
+        let gross_mm3 = evaluate_member(&head, chs()).unwrap().volume_mm3;
+        for diameter in [6.0, 10.0, 20.0] {
+            let authored = add_member_hole_after(
+                &member_hole(diameter, [0.0, 0.0, 500.0], [1.0, 0.0, 0.0]),
+                &head,
+                &|_| false,
+                0,
+            )
+            .unwrap()
+            .authored;
+            let body = evaluate_member(&authored, chs()).unwrap();
+            // The measured rule: the drop is the mesh before the hole minus the mesh after,
+            // both belonging to the faceted outline, so it certifies against the faceted
+            // value (`from_section` stores that polygon's analytic volume, the F06 regular
+            // 32-gon hole area times both wall crossings).
+            let drop = gross_mm3 - body.volume_mm3;
+            let area = polygon_area(&authored.hole_records[0].polygon_mm);
+            let expected = 2.0 * area * 5.0;
+            assert!(
+                (drop - expected).abs() <= 0.12 * expected,
+                "d={diameter}: {drop} vs {expected}"
+            );
+            // The analytic bound of the smooth tube: the hole circle area through both walls
+            // of the 5 mm ring. The drop must never leave it (the old constant did).
+            let bound = 2.0 * std::f64::consts::PI * (diameter / 2.0) * (diameter / 2.0) * 5.0;
+            assert!(drop <= bound, "d={diameter}: {drop} past {bound}");
+            // The reported triple agrees with the drop, and the gross stays the nominal one.
+            assert!((body.removed_volume_mm3 - drop).abs() <= 1e-6 * drop);
+            let quantities = crate::engine::member::member_quantities(&body, None).unwrap();
+            assert!(
+                (quantities.volume_gross_mm3 - gross_mm3).abs() <= 1e-9 * gross_mm3,
+                "d={diameter}: gross {} vs {gross_mm3}",
+                quantities.volume_gross_mm3
+            );
+            assert!((quantities.volume_mm3 - body.volume_mm3).abs() <= 1e-9 * gross_mm3);
+            // The replay is byte-stable: a second evaluation returns the same body.
+            let again = evaluate_member(&authored, chs()).unwrap();
+            assert_eq!(body, again);
+            assert!(
+                body.solid
+                    .scene_mesh()
+                    .face_table
+                    .iter()
+                    .any(|id| id == "cut:f.h0.w0.s0")
+            );
+        }
+    }
+
+    #[test]
+    fn a_degenerate_direction_record_refuses_the_replay() {
+        for direction in [[0.0, 0.0, 0.0], [0.0, 0.0, 1.0]] {
+            let mut authored = member();
+            authored.hole_records.push(MemberHoleRecord {
+                operation_id: op(2),
+                ordinal: 0,
+                axis_point_mm: [0.0, 0.0, 500.0],
+                axis_direction: direction,
+                extent: HoleExtent::Through,
+                polygon_mm: member_hole(20.0, [0.0, 0.0, 0.0], [1.0, 0.0, 0.0])
+                    .polygon()
+                    .unwrap(),
+            });
+            let error = evaluate_member(&authored, rectangle(200.0, 300.0)).unwrap_err();
+            assert_eq!(error.code, ErrorCode::UnsupportedGeometry);
+        }
+    }
+
+    #[test]
+    fn a_holed_member_keeps_its_named_features() {
+        // The G14.2 cutter's band ids carry the amendment's `.w<k>` crossing (and `.p<run>`
+        // suffixes on the merge walk). The feature-id grammar must admit them, or the named
+        // feature layer of the holed member dies whole and every pick, dimension anchor and
+        // drawing reference to the surviving faces loses its address.
+        let authored = add_member_hole_after(
+            &member_hole(20.0, [0.0, 0.0, 500.0], [1.0, 0.0, 0.0]),
+            &member(),
+            &|_| false,
+            0,
+        )
+        .unwrap()
+        .authored;
+        let body = evaluate(&authored, 100.0, 50.0);
+        let snapshot = beamcraft_engine::query::snapshot::ViewSnapshot::build(
+            beamcraft_engine::query::snapshot::ViewPin::new(
+                beamcraft_model::digest::Sha256::digest(b"member-hole-features").unwrap(),
+                1,
+            ),
+            vec![beamcraft_engine::scene::SceneElement::new(
+                id(9),
+                beamcraft_engine::element::ElementKind::Column,
+                beamcraft_geom::Translation3::new(0.0, 0.0, 0.0).unwrap(),
+                body.solid.scene_mesh(),
+            )],
+            &beamcraft_engine::limits::Limits::default(),
+        )
+        .unwrap();
+        let features = beamcraft_engine::query::feature::list_features(&snapshot, &id(9)).unwrap();
+        assert!(
+            features
+                .iter()
+                .any(|f| f.to_string() == format!("fid1:{}:member:f.x0", id(9)))
+        );
+        let corner = beamcraft_engine::query::feature::lookup_feature(
+            &snapshot,
+            &format!("fid1:{}:member:v.x0.y0.z0", id(9)),
+        )
+        .unwrap();
+        assert!(matches!(
+            corner.world,
+            beamcraft_engine::query::feature::FeatureGeometry::Vertex { .. }
+        ));
+        let band = beamcraft_engine::query::feature::lookup_feature(
+            &snapshot,
+            &format!("fid1:{}:cut:f.h0.w0.s0", id(9)),
+        )
+        .unwrap();
+        assert!(matches!(
+            band.world,
+            beamcraft_engine::query::feature::FeatureGeometry::Surface { .. }
+        ));
+    }
+
+    #[test]
+    fn two_records_cut_in_ordinal_order_and_the_replay_repeats_byte_for_byte() {
+        let (width, height) = (200.0, 300.0);
+        let head = member();
+        let gross = evaluate(&head, width, height).volume_mm3;
+        // Two separated through holes on one member, both along Y_r: the second record
+        // replays over the already-holed body in ordinal order, so the expected net is
+        // the exact closed form `(area0 + area1) x height` removed from the gross. The
+        // positions keep the two footprints clear of each other on every wall.
+        let first = add_member_hole_after(
+            &member_hole(40.0, [0.0, 0.0, 500.0], [0.0, 1.0, 0.0]),
+            &head,
+            &|_| false,
+            0,
+        )
+        .unwrap();
+        let second_command = member_hole(30.0, [60.0, 0.0, 300.0], [0.0, 1.0, 0.0]);
+        let with_second_id = AddHole {
+            operation_id: op(2),
+            ..second_command
+        };
+        let both = add_member_hole_after(&with_second_id, &first.authored, &|_| false, 1)
+            .unwrap()
+            .authored;
+        assert_eq!(
+            both.hole_records
+                .iter()
+                .map(|r| r.ordinal)
+                .collect::<Vec<_>>(),
+            vec![0, 1]
+        );
+        let body = evaluate(&both, width, height);
+        let area_first = polygon_area(&both.hole_records[0].polygon_mm);
+        let area_second = polygon_area(&both.hole_records[1].polygon_mm);
+        let expected = gross - (area_first + area_second) * height;
+        assert!(
+            (body.volume_mm3 - expected).abs() <= 1.0,
+            "two holes removed {}",
+            gross - body.volume_mm3
+        );
+        // Every record names its own wall bands in the feature table, in its own ordinal.
+        let faces = body.solid.scene_mesh().face_table;
+        assert!(faces.iter().any(|f| f == "cut:f.h0.w0.s0"));
+        assert!(faces.iter().any(|f| f == "cut:f.h1.w0.s0"));
+        // The replay is byte-stable: a second evaluation returns the same body.
+        assert_eq!(body, evaluate(&both, width, height));
+    }
+
+    #[test]
+    fn a_record_meeting_another_hole_refuses_the_evaluation() {
+        let head = member();
+        // Two concentric through holes along the same direction: the second footprint
+        // contains the first's opening, and a fit condition is "clear of its edges and
+        // the other holes". Admission passes (distinct ids, fresh ordinals); the replay
+        // must refuse the second record instead of serving a merged cut, and the
+        // evaluation fails whole, so the member keeps its last valid state.
+        let first = add_member_hole_after(
+            &member_hole(40.0, [0.0, 0.0, 500.0], [0.0, 1.0, 0.0]),
+            &head,
+            &|_| false,
+            0,
+        )
+        .unwrap();
+        let overlapping = AddHole {
+            operation_id: op(2),
+            ..member_hole(100.0, [0.0, 0.0, 500.0], [0.0, 1.0, 0.0])
+        };
+        let authored = add_member_hole_after(&overlapping, &first.authored, &|_| false, 1)
+            .unwrap()
+            .authored;
+        let error = evaluate_member(&authored, rectangle(200.0, 300.0)).unwrap_err();
+        assert_eq!(error.code, ErrorCode::InvalidArgument);
+        assert!(
+            error
+                .message
+                .contains("clear of its edges and the other holes"),
+            "the overlap refused as: {}",
+            error.message
+        );
+    }
+
+    #[test]
+    fn mixed_record_directions_refuse_the_replay_after_the_first_cut() {
+        let head = member();
+        // One hole along X_r and one along Y_r: the first cut's walls are not parallel
+        // to the second cutter's axis, so the kernel cannot serve the second record off
+        // the already-holed body and the replay refuses the evaluation whole. The
+        // authored records stay valid; only the mixed set has no servable replay.
+        let first = add_member_hole_after(
+            &member_hole(40.0, [0.0, 0.0, 500.0], [1.0, 0.0, 0.0]),
+            &head,
+            &|_| false,
+            0,
+        )
+        .unwrap();
+        let transverse = AddHole {
+            operation_id: op(2),
+            ..member_hole(30.0, [0.0, 0.0, 300.0], [0.0, 1.0, 0.0])
+        };
+        let authored = add_member_hole_after(&transverse, &first.authored, &|_| false, 1)
+            .unwrap()
+            .authored;
+        let error = evaluate_member(&authored, rectangle(200.0, 300.0)).unwrap_err();
+        assert_eq!(error.code, ErrorCode::UnsupportedGeometry);
+        assert!(
+            error
+                .message
+                .contains("the body is not a straight prism for the kernel"),
+            "the mixed set refused as: {}",
+            error.message
+        );
+    }
+
+    #[test]
+    fn the_member_admission_refusals_pin_their_typed_errors() {
+        let head = member();
+        let none = |_: OpId| false;
+        // A hole command naming another element is a NotFound on the target, on every
+        // member-hole verb.
+        let elsewhere = AddHole {
+            target_id: id(8),
+            ..member_hole(20.0, [0.0, 0.0, 500.0], [1.0, 0.0, 0.0])
+        };
+        assert_eq!(
+            add_member_hole_after(&elsewhere, &head, &none, 0)
+                .unwrap_err()
+                .code,
+            ErrorCode::NotFound
+        );
+        let removal = RemoveHole {
+            target_id: id(8),
+            operation_id: op(1),
+        };
+        assert_eq!(
+            remove_member_hole(&removal, &head).unwrap_err().code,
+            ErrorCode::NotFound
+        );
+        // An update naming a record the target does not hold is a NotFound on the id.
+        let unknown = UpdateHole {
+            hole: member_hole(40.0, [0.0, 0.0, 500.0], [1.0, 0.0, 0.0]),
+        };
+        assert_eq!(
+            update_member_hole(&unknown, &head).unwrap_err().code,
+            ErrorCode::NotFound
+        );
+        // The adapter's persistent counter never regresses: a pinned ordinal below the
+        // last live record's is an InvalidArgument.
+        let mut advanced = member();
+        advanced.hole_records.push(MemberHoleRecord {
+            operation_id: op(3),
+            ordinal: 5,
+            axis_point_mm: [0.0, 0.0, 500.0],
+            axis_direction: [1.0, 0.0, 0.0],
+            extent: HoleExtent::Through,
+            polygon_mm: member_hole(20.0, [0.0, 0.0, 0.0], [1.0, 0.0, 0.0])
+                .polygon()
+                .unwrap(),
+        });
+        assert_eq!(
+            add_member_hole_after(
+                &member_hole(20.0, [0.0, 0.0, 500.0], [1.0, 0.0, 0.0]),
+                &advanced,
+                &none,
+                3
+            )
+            .unwrap_err()
+            .code,
+            ErrorCode::InvalidArgument
+        );
+        // The per-member capacity is 64 records: the 65th is a LimitExceeded under the
+        // shared DV-LIM-001 rule, before any replay runs.
+        let mut full = member();
+        let base = MemberHoleRecord {
+            operation_id: op(4),
+            ordinal: 0,
+            axis_point_mm: [0.0, 0.0, 500.0],
+            axis_direction: [1.0, 0.0, 0.0],
+            extent: HoleExtent::Through,
+            polygon_mm: member_hole(20.0, [0.0, 0.0, 0.0], [1.0, 0.0, 0.0])
+                .polygon()
+                .unwrap(),
+        };
+        full.hole_records = (0..MAX_HOLES)
+            .map(|i| MemberHoleRecord {
+                operation_id: op(i as u8 + 10),
+                ordinal: i,
+                ..base.clone()
+            })
+            .collect();
+        let overflow = add_member_hole_after(
+            &member_hole(20.0, [0.0, 0.0, 500.0], [1.0, 0.0, 0.0]),
+            &full,
+            &none,
+            MAX_HOLES,
+        )
+        .unwrap_err();
+        assert_eq!(overflow.code, ErrorCode::LimitExceeded);
+        assert_eq!(overflow.rule_id, Some("DV-LIM-001"));
+        // A curved member or a polybeam has no straight body to replay the records on:
+        // the refusal names the straight-member requirement (the admission passed).
+        let mut curved = advanced.clone();
+        curved.curved = true;
+        let error = evaluate_member(&curved, rectangle(200.0, 300.0)).unwrap_err();
+        assert_eq!(error.code, ErrorCode::UnsupportedGeometry);
+        assert!(error.message.contains("straight member"));
+        let mut polybeam = advanced;
+        polybeam.axis_points_mm = vec![[0.0, 0.0, 0.0], [500.0, 0.0, 0.0], [1000.0, 0.0, 0.0]];
+        let error = evaluate_member(&polybeam, rectangle(200.0, 300.0)).unwrap_err();
+        assert_eq!(error.code, ErrorCode::UnsupportedGeometry);
+        assert!(error.message.contains("straight member"));
     }
 }

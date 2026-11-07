@@ -17,15 +17,15 @@ use crate::publication::{PublicationTail, prepare_and_publish};
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_host::revision::{CommitHook, RevisionStore, Uuid7};
 use beamcraft_layer_engine::Reader;
-use beamcraft_layer_engine::authored::{Author, Change, EditTargets, schema_identity};
+use beamcraft_layer_engine::authored::{Change, schema_identity};
 use beamcraft_layer_engine::index::{ElementId as LayerElementId, LinkTarget};
 use beamcraft_model::command::CommandError;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{OpId, ProjectId, RevisionId, WorkspaceId};
 use session::Refusal;
 use session::pipeline::{
-    AUTHORED_LAYER, Base, DERIVED_LAYER, RevisionSummary, control, digest_of, host_uuid, integrity,
-    load_base, open_base, summarize,
+    Base, RevisionSummary, control, digest_of, host_uuid, integrity, load_base, open_base,
+    summarize,
 };
 use steel::engine::transaction::PriorOp;
 use steel::model::command::ArrayElements;
@@ -245,15 +245,8 @@ pub fn array_elements(
     }
     let footprint = footprint.ok_or_else(|| integrity("the array produced no copies"))?;
     let schema = schema_identity()?;
-    let (mut author, opened) = Author::open(
-        base_request,
-        EditTargets {
-            authored: AUTHORED_LAYER.into(),
-            derived: DERIVED_LAYER.into(),
-        },
-        schema,
-        &control,
-    )?;
+    let (mut author, opened) =
+        crate::scope::open_author(store, base_request, false, schema, &control)?;
     // The links the adapter does not carry over must not be dropped silently: the layer engine
     // plans every copy, dropping assembly membership and connections (DV-REL-011) and keeping
     // the definition and level links.

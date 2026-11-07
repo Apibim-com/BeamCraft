@@ -2,16 +2,21 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 
 //! The eframe window: a side panel with the revision, counts, units and adapter, and the viewport
-//! navigated through one of two input presets: `Mouse` (the default: wheel-button drag pans,
+//! navigated through one of two input presets: `Mouse` (wheel-button drag pans,
 //! Ctrl + wheel-button drag orbits, the left button stays free for selection) or `Trackpad`
-//! (primary drag orbits, Shift + primary drag pans, pinch zooms). In both the wheel zooms toward
+//! (primary drag orbits, Shift + primary drag pans, pinch zooms); the start preset follows the
+//! platform (`Trackpad` on macOS, `Mouse` elsewhere). In both the wheel zooms toward
 //! the cursor, F fits and R reloads.
 
 mod annotation_panel;
+mod bolt_panel;
+mod contour_grips;
 mod creation_panel;
+mod export_panel;
 mod grid_panel;
 mod switches;
 mod view_panel;
+mod weld_panel;
 mod work_area;
 mod workbench;
 
@@ -32,6 +37,7 @@ use crate::{Error, check_font, command, json_string, source};
 use beamcraft_engine::ViewSnapshot;
 use beamcraft_engine::element::ElementId;
 use beamcraft_model::command::Placement;
+use session::settings::{self, CameraPreference, Settings};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -66,7 +72,8 @@ pub struct Source {
     /// The author's name, shown in the header.
     pub author: Option<String>,
     /// The user's configuration directory (`--config-dir`); `None` is the platform default. The
-    /// render-mode shortcuts are read from it, nothing else.
+    /// render-mode shortcuts are read from it, and the side-panel camera choice is read from
+    /// and saved to its settings file.
     pub config_dir: Option<PathBuf>,
 }
 
@@ -138,7 +145,9 @@ pub struct App {
     edit_note: Option<Result<String, String>>,
     /// Flips the scroll zoom direction (macOS natural scrolling inverts it); pinch and keys keep theirs.
     invert_zoom: bool,
-    /// The active viewport input binding preset; `Mouse` is the default.
+    /// The active viewport input binding preset. A window starts on the side-panel choice
+    /// saved in the settings file, or on the platform default when nothing is saved
+    /// (`Trackpad` on macOS, `Mouse` elsewhere); a click in the side panel saves the choice.
     preset: Preset,
     props: Properties,
     props_job: Option<Receiver<Result<Edited, ToolError>>>,
@@ -146,6 +155,8 @@ pub struct App {
     props_note: Option<Result<String, String>>,
     /// The D05 sheet editor: hand placement of a drawing document's views.
     sheet_editor: crate::sheet::SheetEditor,
+    /// The D03 drawing document window: freshness, publication and version-bound export.
+    drawing_manager: crate::drawing::Manager,
     publisher: Publisher,
     publish_job: Option<Receiver<Result<Published, ToolError>>>,
     status_job: Option<Receiver<Result<Status, ToolError>>>,
@@ -177,8 +188,14 @@ pub struct App {
     grid_refresh_edit: bool,
     /// D06 annotations: placement tool, listed rows and their jobs.
     annotation: annotation_panel::Panel,
+    /// The V10 Weld bench: the picked pair, the form and its commit job.
+    weld: weld_panel::Panel,
+    /// The V19 Bolt bench: the picked parts and points, the form and its jobs.
+    bolt: bolt_panel::Panel,
     /// The bottom bar's selection switches and snap panel (V11): picking-only state.
     selection: crate::selection::Selection,
+    /// The selected plate's contour grips (V18): the drag in progress and the commit in flight.
+    contour: contour_grips::Grips,
     /// The page the application menu shows.
     menu_section: workbench::MenuSection,
     /// What the last menu action reported, shown under the page heading.
@@ -188,6 +205,9 @@ pub struct App {
     menu_new: crate::library::NewModelForm,
     /// The menu's Open page: the recent models and "Browse…".
     menu_models: crate::library::ModelPicker,
+    /// The menu's Export page: the IFC form, kept while the window lives so a typed path
+    /// survives leaving the page.
+    menu_export: export_panel::Form,
     /// A model the window should switch to, set by the menu's New and Open; Shell reads it
     /// after the frame.
     pub(crate) open_request: Option<PathBuf>,
@@ -273,14 +293,71 @@ struct ColourJob {
 /// The viewport input binding preset. `Mouse` keeps the left button free for selection: the
 /// camera moves with the wheel button only. `Trackpad` is the laptop mapping for users without
 /// a wheel: primary drag orbits, Shift + primary drag or secondary drag pans, pinch zooms.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Preset {
-    /// Default mouse bindings: wheel zooms toward the cursor, wheel-button drag pans,
+    /// Mouse bindings: wheel zooms toward the cursor, wheel-button drag pans,
     /// Ctrl + wheel-button drag orbits, and the left button never moves the camera.
-    #[default]
     Mouse,
-    /// Trackpad (macOS) bindings, selected in the side panel.
+    /// Trackpad (macOS) bindings: the start preset on macOS, selectable in the side panel
+    /// everywhere.
     Trackpad,
+}
+
+impl Default for Preset {
+    /// The bindings a fresh viewport starts on. A macOS laptop usually has no wheel button,
+    /// so macOS starts on the trackpad mapping; every other platform starts on the mouse
+    /// mapping. An explicit side-panel choice keeps winning over this start value: it is
+    /// saved in the settings file and read back at the next start.
+    fn default() -> Self {
+        if cfg!(target_os = "macos") {
+            Self::Trackpad
+        } else {
+            Self::Mouse
+        }
+    }
+}
+
+impl Preset {
+    /// The stored spelling of this preset in the settings file.
+    const fn stored(self) -> CameraPreference {
+        match self {
+            Self::Mouse => CameraPreference::Mouse,
+            Self::Trackpad => CameraPreference::Trackpad,
+        }
+    }
+
+    /// The preset a window starts on: the choice saved in the settings file, else the
+    /// platform default.
+    fn from_stored(choice: Option<CameraPreference>) -> Self {
+        choice.map_or_else(Self::default, |choice| match choice {
+            CameraPreference::Mouse => Self::Mouse,
+            CameraPreference::Trackpad => Self::Trackpad,
+        })
+    }
+}
+
+/// The camera preset saved in the user's settings; `None` is nothing saved. A settings file
+/// that cannot be read reads as nothing saved too: the viewport then follows the platform
+/// default, and a damaged file is the start page's complaint, not this window's.
+fn stored_camera(config_dir: Option<&Path>) -> Option<CameraPreference> {
+    let dir = config_dir
+        .map(Path::to_path_buf)
+        .or_else(settings::default_dir)?;
+    Settings::load(&dir).ok()?.camera
+}
+
+/// Saves `preset` as the user's side-panel choice, keeping every other stored setting.
+fn remember_camera(config_dir: Option<&Path>, preset: Preset) -> Result<(), String> {
+    let dir = config_dir
+        .map(Path::to_path_buf)
+        .or_else(settings::default_dir)
+        .ok_or("no configuration directory is known")?;
+    Settings::update(&dir, |settings| {
+        settings.camera = Some(preset.stored());
+        Ok(true)
+    })
+    .map(|_| ())
+    .map_err(|e| format!("the camera preset could not be saved: {}", e.message))
 }
 
 /// One frame of viewport navigation in `Camera::navigate` argument space: orbit radians, a
@@ -793,6 +870,9 @@ impl App {
             .first()
             .map(|set| set.name.clone())
             .unwrap_or_default();
+        // The side-panel camera choice comes back across restarts; nothing saved means the
+        // platform default.
+        let preset = Preset::from_stored(stored_camera(source.config_dir.as_deref()));
         let perf = perf.map(|(phases, report)| {
             let header = format!(
                 "\"adapter\":{},\"device_type\":{},\"backend\":{},\"samples\":{},\"text\":{}",
@@ -818,6 +898,11 @@ impl App {
             Ok(book) => views.book = book,
             Err(note) => views.note = Some(Err(note)),
         }
+        let (presets, presets_note) = crate::views::load_presets(source.config_dir.as_deref());
+        views.presets = presets;
+        if let Some(note) = presets_note {
+            views.note = Some(Err(note));
+        }
         // The main viewport is the first pane: the free 3D view, shaded, grid guides on, on the
         // target built above.
         views.pane_serial = views.pane_serial.saturating_add(1);
@@ -839,10 +924,13 @@ impl App {
             grid_job: None,
             grid_note: None,
             annotation: annotation_panel::Panel::empty(),
+            weld: weld_panel::Panel::empty(),
+            bolt: bolt_panel::Panel::empty(),
             menu_section: workbench::MenuSection::default(),
             menu_note: None,
             menu_new: crate::library::NewModelForm::new(),
             menu_models: crate::library::ModelPicker::new(),
+            menu_export: export_panel::Form::new(),
             open_request: None,
             project_job: None,
             project_facts: None,
@@ -886,9 +974,10 @@ impl App {
             select_epoch: Epoch::default(),
             edit_note: None,
             invert_zoom: false,
-            preset: Preset::default(),
+            preset,
             props: Properties::default(),
             sheet_editor: crate::sheet::SheetEditor::default(),
+            drawing_manager: crate::drawing::Manager::default(),
             props_job: None,
             props_note: None,
             publisher,
@@ -907,6 +996,7 @@ impl App {
             grid_edit: None,
             grid_refresh_edit: false,
             selection: crate::selection::Selection::default(),
+            contour: contour_grips::Grips::default(),
             details: false,
             pending_fit: false,
             logo: None,
@@ -1512,6 +1602,10 @@ impl App {
             || self.colour_job.is_some()
             || self.annotation.list_job.is_some()
             || self.annotation.commit_job.is_some()
+            || self.weld.commit_job.is_some()
+            || self.bolt.commit_job.is_some()
+            || self.bolt.entries_job.is_some()
+            || self.bolt.groups_job.is_some()
     }
 
     /// Starts the committed property edit on a worker: the same `update-element` the CLI runs.
@@ -1782,40 +1876,39 @@ impl App {
                     field(ui, axis, value, 170.0);
                 }
             });
-            egui::CollapsingHeader::new("Quantities")
-                .default_open(true)
-                .show(ui, |ui| {
-                    let quantities = &details.quantities;
-                    for (label, number, unit, status, stored_freshness) in [
-                        (
-                            "Volume",
-                            quantities.volume_mm3,
-                            "mm³",
-                            quantities.volume_status.as_deref(),
-                            quantities.stored_volume_freshness.as_deref(),
-                        ),
-                        (
-                            "Mass",
-                            quantities.mass_kg,
-                            "kg",
-                            quantities.mass_status.as_deref(),
-                            quantities.stored_mass_freshness.as_deref(),
-                        ),
-                    ] {
-                        let mut value = match (number, status) {
-                            (Some(value), Some("current")) => format!("{value} {unit}"),
-                            (Some(value), Some("stale")) => format!("{value} {unit} · out of date"),
-                            _ => "Not available".into(),
-                        };
-                        if stored_freshness == Some("stale") {
-                            value.push_str(" · stored value out of date");
+            crate::kit::section(ui, "part", "Quantities", true, |ui| {
+                let quantities = &details.quantities;
+                for (label, number, unit, status, stored_freshness) in [
+                    (
+                        "Volume",
+                        quantities.volume_mm3,
+                        "mm³",
+                        quantities.volume_status.as_deref(),
+                        quantities.stored_volume_freshness.as_deref(),
+                    ),
+                    (
+                        "Mass",
+                        quantities.mass_kg,
+                        "kg",
+                        quantities.mass_status.as_deref(),
+                        quantities.stored_mass_freshness.as_deref(),
+                    ),
+                ] {
+                    let (value, unit) = match (number, status) {
+                        (Some(value), Some("current")) => (format!("{value}"), Some(unit)),
+                        (Some(value), Some("stale")) => {
+                            (format!("{value} · out of date"), Some(unit))
                         }
-                        ui.horizontal(|ui| {
-                            ui.label(label);
-                            ui.label(value);
-                        });
-                    }
-                });
+                        _ => ("Not available".to_owned(), None),
+                    };
+                    let value = if stored_freshness == Some("stale") {
+                        format!("{value} · stored value out of date")
+                    } else {
+                        value
+                    };
+                    crate::kit::prop_value(ui, label, &value, unit);
+                }
+            });
             if !editable {
                 ui.label("Editing is off until the properties are current.");
             }
@@ -2129,6 +2222,7 @@ impl App {
             || self.edit_job.is_some()
             || self.job.is_some()
             || self.grid_job.is_some()
+            || self.contour.running()
     }
 
     /// Clears the overlay and colours nothing again.
@@ -2794,13 +2888,13 @@ impl App {
         ui.horizontal(|ui| {
             ui.label("Navigation:");
             if ui.radio(self.preset == Preset::Mouse, "Mouse").clicked() {
-                self.preset = Preset::Mouse;
+                self.choose_preset(Preset::Mouse);
             }
             if ui
                 .radio(self.preset == Preset::Trackpad, "Trackpad (macOS)")
                 .clicked()
             {
-                self.preset = Preset::Trackpad;
+                self.choose_preset(Preset::Trackpad);
             }
         });
         ui.label(match self.preset {
@@ -2817,6 +2911,16 @@ impl App {
         );
         if let Some(error) = &self.error {
             ui.colored_label(egui::Color32::from_rgb(230, 80, 60), error);
+        }
+    }
+
+    /// Chooses a navigation preset in the side panel and remembers it in the settings file, so
+    /// the choice comes back after a restart. The choice applies to this window even when the
+    /// save fails; the failure is reported where the choice was made.
+    fn choose_preset(&mut self, preset: Preset) {
+        self.preset = preset;
+        if let Err(why) = remember_camera(self.source.config_dir.as_deref(), preset) {
+            self.error = Some(why);
         }
     }
 }
@@ -2848,6 +2952,9 @@ impl eframe::App for App {
         self.poll_commit();
         self.poll_grid();
         self.poll_annotations();
+        self.poll_weld();
+        self.poll_bolt();
+        self.poll_contour();
         self.poll_edit();
         self.poll_props();
         self.poll_publish();
@@ -2921,6 +3028,13 @@ impl eframe::App for App {
                 self.source.actor.as_deref(),
                 &self.stats,
             );
+            self.drawing_manager.window(
+                &ctx,
+                &self.source.cli,
+                Some(self.source.store.as_path()),
+                self.source.actor.as_deref(),
+                &self.stats,
+            );
         }
         egui::CentralPanel::default().show(ui, |ui| {
             self.work_area(ui, zoom_in, zoom_out);
@@ -2932,7 +3046,7 @@ impl eframe::App for App {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::{
-        App, Source, WATCH_INTERVAL, load_icon, needs_refit, revisions_token, spawn_watch,
+        App, Preset, Source, WATCH_INTERVAL, load_icon, needs_refit, revisions_token, spawn_watch,
         target_size,
     };
 
@@ -3331,6 +3445,36 @@ pub(crate) mod tests {
         assert!(!app.menu_open);
         assert_eq!(app.menu_section, MenuSection::default());
         assert_eq!(app.open_request, None);
+    }
+
+    #[test]
+    fn the_ifc_row_belongs_to_the_export_page_not_the_import_page() {
+        use super::workbench::MenuSection;
+        let Some(mut app) = headless() else { return };
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        assert!(crate::app::inter(&ctx));
+        on_the_menu(&mut app);
+        // The Import page lists IFC among its commands; its import does not exist, so the row
+        // is disabled and a click neither opens the export form nor leaves the page.
+        app.menu_section = MenuSection::Import;
+        let ifc = app_frame(&mut app, &ctx, vec![])
+            .iter()
+            .find(|(label, _)| label == "IFC")
+            .map(|(_, pos)| *pos)
+            .expect("the Import page shows the IFC row");
+        app_frame(&mut app, &ctx, click(ifc));
+        assert_eq!(app.menu_section, MenuSection::Import);
+        assert!(!app.menu_export_open());
+        // The Export page's own IFC row opens the form.
+        app.menu_section = MenuSection::Export;
+        let ifc = app_frame(&mut app, &ctx, vec![])
+            .iter()
+            .find(|(label, _)| label == "IFC")
+            .map(|(_, pos)| *pos)
+            .expect("the Export page shows the IFC row");
+        app_frame(&mut app, &ctx, click(ifc));
+        assert!(app.menu_export_open());
     }
 
     #[test]
@@ -4083,6 +4227,1076 @@ pub(crate) mod tests {
             || text.contains(member_id)
             || text.contains("--")));
         output.drop_without_applying_deltas();
+        drop(app);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn the_weld_ribbon_button_picks_two_parts_and_commits_the_cli_weld_command() {
+        let mut app =
+            headless().expect("a native/software adapter is required for modelling acceptance");
+        let executable = std::env::current_exe().unwrap();
+        let cli = executable
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        assert!(
+            cli.is_file(),
+            "build beamcraft-cli before native modelling tests"
+        );
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("bc-weld-{}-{nanos}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let store = root.join("model");
+        let hand = root.join("hand");
+        for folder in [&store, &hand] {
+            std::fs::create_dir_all(folder).unwrap();
+        }
+        app.source.store = store.clone();
+        app.source.cli = cli.clone();
+        // The plates the weld connects, made by hand in both stores so the tool's result and
+        // the CLI's must agree.
+        let run = |store: &std::path::Path, args: &[&str]| {
+            let output = std::process::Command::new(&cli)
+                .args(args)
+                .args(["--store", store.to_str().unwrap()])
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+            beamcraft_json::decode(&output.stdout, &beamcraft_json::Limits::DEFAULT).unwrap()
+        };
+        let plate = |store: &std::path::Path, width: &str, name: &str, x: &str| {
+            run(
+                store,
+                &[
+                    "create-plate",
+                    "--width",
+                    width,
+                    "--length",
+                    "500",
+                    "--thickness",
+                    "10",
+                    "--name",
+                    name,
+                    "--translation",
+                    &format!("{x},0,0"),
+                ],
+            );
+            let listing = run(store, &["inspect-elements"]);
+            listing
+                .get("plates")
+                .and_then(|j| j.array())
+                .unwrap()
+                .iter()
+                .find(|p| p.get("name").ok().and_then(|j| j.string().ok()) == Some(name))
+                .and_then(|p| p.get("element_id").ok())
+                .and_then(|j| j.string().ok())
+                .map(str::to_owned)
+                .unwrap_or_else(|| panic!("{name} is not listed"))
+        };
+        let (a, b) = (
+            plate(&store, "1000", "Plate A", "0"),
+            plate(&store, "2000", "Plate B", "3000"),
+        );
+        let (hand_a, hand_b) = (
+            plate(&hand, "1000", "Plate A", "0"),
+            plate(&hand, "2000", "Plate B", "3000"),
+        );
+        // The window shows the accepted revision, as a reload delivers it.
+        let snapshot =
+            Arc::new(crate::source::load(&cli, &store, &crate::stats::Stats::default()).unwrap());
+        let scene = Scene::from_snapshot(&snapshot, Representation::Full).unwrap();
+        let uploaded =
+            crate::render::Uploaded::new(&app.state.device, &app.state.queue, &scene, &app.stats)
+                .unwrap();
+        app.loaded = Some(super::Loaded {
+            snapshot: Arc::clone(&snapshot),
+            summary: scene.summary(),
+            uploaded,
+        });
+        let ctx = egui::Context::default();
+        super::inter(&ctx);
+        crate::theme::install(&ctx);
+        let frame = |app: &mut App, events| {
+            let output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1400.0, 900.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    app.header(ui);
+                    app.ribbon(ui);
+                    app.status_bar(ui);
+                    app.inspector(ui);
+                    app.project_browser(ui);
+                    egui::CentralPanel::default().show(ui, |_| {});
+                },
+            );
+            let labels: Vec<(String, egui::Pos2)> = output
+                .shapes
+                .iter()
+                .filter_map(|shape| {
+                    if let egui::Shape::Text(text) = &shape.shape {
+                        Some((
+                            text.galley.text().to_owned(),
+                            text.pos + text.galley.size() / 2.0,
+                        ))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            output.drop_without_applying_deltas();
+            labels
+        };
+        let click = |pos| {
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]
+        };
+        // The ribbon's Weld button opens the bench, as a user's click does.
+        let weld_button = frame(&mut app, vec![])
+            .iter()
+            .find(|(text, _)| text == "Weld")
+            .map(|(_, pos)| *pos)
+            .expect("the ribbon shows the Weld button");
+        frame(&mut app, click(weld_button));
+        assert_eq!(app.bench, super::workbench::Bench::Weld);
+        // The picks resolve on the snapshot on screen: the two plates, in order.
+        let ray = |x, y| crate::edit::Ray {
+            origin: [x, y, 5000.0],
+            direction: [0.0, 0.0, -1.0],
+        };
+        app.weld_click(ray(500.0, 250.0));
+        assert_eq!(app.weld.main.as_deref(), Some(a.as_str()));
+        app.weld_click(ray(4000.0, 250.0));
+        assert_eq!(app.weld.secondary.as_deref(), Some(b.as_str()));
+        app.weld.name = "Weld 1".into();
+        app.weld.size = "6".into();
+        app.weld.location = super::weld_panel::Location::Workshop;
+        app.weld.side = super::weld_panel::Side::Both;
+        // The panel's Create weld button starts the same `weld create-weld` a user types.
+        let labels = frame(&mut app, vec![]);
+        let create = labels
+            .iter()
+            .find(|(text, _)| text == "Create weld")
+            .map(|(_, pos)| *pos)
+            .expect("the Weld bench shows Create weld");
+        frame(&mut app, click(create));
+        assert!(app.weld.commit_job.is_some(), "the click starts the commit");
+        let wait = |app: &mut App| {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+            while app.weld.commit_job.is_some() && std::time::Instant::now() < deadline {
+                app.poll_weld();
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            assert!(app.weld.commit_job.is_none(), "the weld commit timed out");
+        };
+        wait(&mut app);
+        assert!(matches!(app.weld.note, Some(Ok(_))), "{:?}", app.weld.note);
+        assert!(app.weld.main.is_none() && app.weld.secondary.is_none());
+        let listing = |store: &std::path::Path| {
+            let reply = run(store, &["welds"]);
+            let welds = reply.get("welds").and_then(|j| j.array()).unwrap();
+            assert_eq!(welds.len(), 1);
+            welds[0].clone()
+        };
+        let made = listing(&store);
+        let expected = [
+            ("name", "Weld 1"),
+            ("main", a.as_str()),
+            ("secondary", b.as_str()),
+            ("type", "fillet"),
+            ("size_mm", "6"),
+            ("location", "workshop"),
+            ("side", "both"),
+        ];
+        for (key, value) in expected {
+            assert_eq!(
+                made.get(key).ok().and_then(|j| j.string().ok()),
+                Some(value),
+                "{key}"
+            );
+        }
+        // The same command by hand saves the same weld: every user-visible field agrees.
+        let _ = run(
+            &hand,
+            &[
+                "create-weld",
+                "--name",
+                "Weld 1",
+                "--main",
+                hand_a.as_str(),
+                "--secondary",
+                hand_b.as_str(),
+                "--type",
+                "fillet",
+                "--size",
+                "6",
+                "--location",
+                "workshop",
+                "--side",
+                "both",
+            ],
+        );
+        let by_hand = listing(&hand);
+        for (key, _) in expected {
+            let user_visible = !matches!(key, "main" | "secondary");
+            let left = made.get(key).ok().and_then(|j| j.string().ok());
+            let right = by_hand.get(key).ok().and_then(|j| j.string().ok());
+            if user_visible {
+                assert_eq!(left, right, "{key}");
+            } else {
+                assert_ne!(left, right, "{key} names each store's own part");
+            }
+        }
+        assert_eq!(
+            by_hand.get("main").ok().and_then(|j| j.string().ok()),
+            Some(hand_a.as_str())
+        );
+        // A non-positive size is the engine's refusal through the real command path: it
+        // reaches the panel and publishes nothing.
+        app.weld.size = "0".into();
+        app.weld_click(ray(500.0, 250.0));
+        app.weld_click(ray(4000.0, 250.0));
+        // The panel's layout moved with the note and the new picks; click where it is now.
+        let create_now = frame(&mut app, vec![])
+            .iter()
+            .find(|(text, _)| text == "Create weld")
+            .map(|(_, pos)| *pos)
+            .expect("the Weld bench still shows Create weld");
+        frame(&mut app, click(create_now));
+        assert!(
+            app.weld.commit_job.is_some(),
+            "the click starts the refused commit"
+        );
+        wait(&mut app);
+        let refused = match &app.weld.note {
+            Some(Err(message)) => message.clone(),
+            other => panic!("a zero size must be refused, got {other:?}"),
+        };
+        assert!(refused.contains("size must be greater than 0"), "{refused}");
+        assert_eq!(
+            run(&store, &["welds"])
+                .get("welds")
+                .and_then(|j| j.array())
+                .map(|w| w.len())
+                .ok(),
+            Some(1),
+            "the refusal published nothing"
+        );
+        drop(app);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn the_bolt_ribbon_button_picks_parts_and_points_and_commits_the_cli_bolt_command() {
+        let mut app =
+            headless().expect("a native/software adapter is required for modelling acceptance");
+        let executable = std::env::current_exe().unwrap();
+        let cli = executable
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        assert!(
+            cli.is_file(),
+            "build beamcraft-cli before native modelling tests"
+        );
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("bc-bolt-{}-{nanos}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let store = root.join("model");
+        let hand = root.join("hand");
+        for folder in [&store, &hand] {
+            std::fs::create_dir_all(folder).unwrap();
+        }
+        app.source.store = store.clone();
+        app.source.cli = cli.clone();
+        // The two stacked plates the group connects, made by hand in both stores so the tool's
+        // result and the CLI's must agree.
+        let run = |store: &std::path::Path, args: &[&str]| {
+            let output = std::process::Command::new(&cli)
+                .args(args)
+                .args(["--store", store.to_str().unwrap()])
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+            beamcraft_json::decode(&output.stdout, &beamcraft_json::Limits::DEFAULT).unwrap()
+        };
+        let library = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../assets/libraries/synthetic-fasteners.usda");
+        let plate = |store: &std::path::Path, id: &str, z: &str| {
+            run(
+                store,
+                &[
+                    "create-plate",
+                    "--width",
+                    "1000",
+                    "--length",
+                    "500",
+                    "--thickness",
+                    "10",
+                    "--name",
+                    "P",
+                    "--new-id",
+                    id,
+                    "--translation",
+                    &format!("0,0,{z}"),
+                ],
+            );
+            let listing = run(store, &["inspect-elements"]);
+            listing
+                .get("plates")
+                .and_then(|j| j.array())
+                .unwrap()
+                .iter()
+                .find(|p| p.get("element_id").ok().and_then(|j| j.string().ok()) == Some(id))
+                .and_then(|p| p.get("element_id").ok())
+                .and_then(|j| j.string().ok())
+                .map(str::to_owned)
+                .unwrap_or_else(|| panic!("plate {id} is not listed"))
+        };
+        let (a, b) = (
+            plate(&store, "019a7bf0-0000-7000-8000-00000071b001", "0"),
+            plate(&store, "019a7bf0-0000-7000-8000-00000071b002", "10"),
+        );
+        let (hand_a, hand_b) = (
+            plate(&hand, "019a7bf0-0000-7000-8000-00000071b101", "0"),
+            plate(&hand, "019a7bf0-0000-7000-8000-00000071b102", "10"),
+        );
+        // The window shows the accepted revision, as a reload delivers it.
+        let snapshot =
+            Arc::new(crate::source::load(&cli, &store, &crate::stats::Stats::default()).unwrap());
+        let scene = Scene::from_snapshot(&snapshot, Representation::Full).unwrap();
+        let uploaded =
+            crate::render::Uploaded::new(&app.state.device, &app.state.queue, &scene, &app.stats)
+                .unwrap();
+        app.loaded = Some(super::Loaded {
+            snapshot: Arc::clone(&snapshot),
+            summary: scene.summary(),
+            uploaded,
+        });
+        let ctx = egui::Context::default();
+        super::inter(&ctx);
+        crate::theme::install(&ctx);
+        let frame = |app: &mut App, events| {
+            let output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1400.0, 900.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    app.header(ui);
+                    app.ribbon(ui);
+                    app.status_bar(ui);
+                    app.inspector(ui);
+                    app.project_browser(ui);
+                    egui::CentralPanel::default().show(ui, |_| {});
+                },
+            );
+            let labels: Vec<(String, egui::Pos2)> = output
+                .shapes
+                .iter()
+                .filter_map(|shape| {
+                    if let egui::Shape::Text(text) = &shape.shape {
+                        Some((
+                            text.galley.text().to_owned(),
+                            text.pos + text.galley.size() / 2.0,
+                        ))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            output.drop_without_applying_deltas();
+            labels
+        };
+        let click = |pos| {
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]
+        };
+        // The ribbon's Bolts button opens the bench, as a user's click does.
+        let bolts_button = frame(&mut app, vec![])
+            .iter()
+            .find(|(text, _)| text == "Bolts")
+            .map(|(_, pos)| *pos)
+            .expect("the ribbon shows the Bolts button");
+        frame(&mut app, click(bolts_button));
+        assert_eq!(app.bench, super::workbench::Bench::Bolt);
+        // The bench's opening groups listing runs on a worker; the picks wait for it, as any
+        // click waits for a command.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while app.bolt.groups_job.is_some() && std::time::Instant::now() < deadline {
+            app.poll_bolt();
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(
+            app.bolt.groups_job.is_none(),
+            "the groups listing timed out"
+        );
+        // The picks resolve on the snapshot on screen. The low plate is picked through its side
+        // face (the upper plate hides it from above), the high one through its top.
+        let ray = |x, y| crate::edit::Ray {
+            origin: [x, y, 5000.0],
+            direction: [0.0, 0.0, -1.0],
+        };
+        let side = crate::edit::Ray {
+            origin: [-500.0, 250.0, 5.0],
+            direction: [1.0, 0.0, 0.0],
+        };
+        app.bolt_click(side);
+        assert_eq!(app.bolt.parts.first().map(String::as_str), Some(a.as_str()));
+        app.bolt_click(ray(500.0, 250.0));
+        assert_eq!(app.bolt.parts.last().map(String::as_str), Some(b.as_str()));
+        // The two points lie on the active work plane, as a placement click resolves them.
+        for kind in beamcraft_engine::query::pick::SnapKind::ALL {
+            app.selection.set_snap(kind, false);
+        }
+        app.selection.snap_nearest = false;
+        app.tools.plane =
+            Some(beamcraft_engine::work_plane::WorkPlane::parallel("xy", 0.0).unwrap());
+        app.bolt_click(ray(150.0, 250.0));
+        assert_eq!(app.bolt.point1, Some([150.0, 250.0, 0.0]));
+        app.bolt_click(ray(400.0, 250.0));
+        assert_eq!(app.bolt.point2, Some([400.0, 250.0, 0.0]));
+        app.bolt.name = "Bolts 1".into();
+        app.bolt.library = library.to_string_lossy().into_owned();
+        app.bolt.designation = "SYN-BOLT-12x50".into();
+        app.bolt.offset_start = "50".into();
+        app.bolt.spacings = "150".into();
+        // The panel's Create bolts button starts the same `create-bolt-group` a user types.
+        let labels = frame(&mut app, vec![]);
+        let create = labels
+            .iter()
+            .find(|(text, _)| text == "Create bolts")
+            .map(|(_, pos)| *pos)
+            .unwrap_or_else(|| panic!("the Bolt bench shows Create bolts, got {:?}", labels));
+        frame(&mut app, click(create));
+        assert!(app.bolt.commit_job.is_some(), "the click starts the commit");
+        let wait = |app: &mut App| {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+            while app.bolt.commit_job.is_some() && std::time::Instant::now() < deadline {
+                app.poll_bolt();
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            assert!(app.bolt.commit_job.is_none(), "the bolt commit timed out");
+        };
+        wait(&mut app);
+        assert!(matches!(app.bolt.note, Some(Ok(_))), "{:?}", app.bolt.note);
+        assert!(
+            app.bolt.parts.is_empty() && app.bolt.point1.is_none() && app.bolt.point2.is_none()
+        );
+        let group = |store: &std::path::Path| {
+            let reply = run(store, &["bolts"]);
+            let groups = reply.get("bolt_groups").and_then(|j| j.array()).unwrap();
+            assert_eq!(groups.len(), 1);
+            groups[0].clone()
+        };
+        let made = group(&store);
+        let value = |json: &beamcraft_json::Json, key: &str| {
+            json.get(key)
+                .ok()
+                .and_then(|j| j.string().ok())
+                .map(str::to_owned)
+        };
+        let expected = [
+            ("name", "Bolts 1"),
+            ("count", "2"),
+            ("rotation_rad", "0"),
+            ("on_plane_mm", "0"),
+            ("depth_mm", "0"),
+            ("offset_start_mm", "50"),
+            ("spacing_mode", "spacings"),
+            ("spacing_value_mm", "0"),
+            ("length_mode", "auto"),
+            ("washer_under_head", "true"),
+            ("washer_under_nut", "true"),
+            ("hole_mode", "generate"),
+        ];
+        for (key, want) in expected {
+            assert_eq!(value(&made, key).as_deref(), Some(want), "{key}");
+        }
+        let strings = |json: &beamcraft_json::Json, key: &str| -> Vec<String> {
+            json.get(key)
+                .ok()
+                .and_then(|j| j.array().ok())
+                .map(|list| {
+                    list.iter()
+                        .filter_map(|v| v.string().ok().map(str::to_owned))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        assert_eq!(strings(&made, "parts"), [a.as_str(), b.as_str()]);
+        assert_eq!(strings(&made, "point1_mm"), ["150", "250", "0"]);
+        assert_eq!(strings(&made, "point2_mm"), ["400", "250", "0"]);
+        assert_eq!(strings(&made, "plane_normal_mm"), ["0", "0", "1"]);
+        assert_eq!(strings(&made, "spacings_mm"), ["150"]);
+        // The same command by hand saves the same group: every user-visible field agrees.
+        let _ = run(
+            &hand,
+            &[
+                "create-bolt-group",
+                "--name",
+                "Bolts 1",
+                "--parts",
+                &format!("{hand_a},{hand_b}"),
+                "--fastener-library",
+                library.to_str().unwrap(),
+                "--designation",
+                "SYN-BOLT-12x50",
+                "--point1",
+                "150,250,0",
+                "--point2",
+                "400,250,0",
+                "--plane-normal",
+                "0,0,1",
+                "--rotation-deg",
+                "0",
+                "--on-plane",
+                "0",
+                "--depth",
+                "0",
+                "--offset-start",
+                "50",
+                "--spacings",
+                "150",
+                "--washer-under-head",
+                "true",
+                "--washer-under-nut",
+                "true",
+                "--hole-mode",
+                "generate",
+            ],
+        );
+        let by_hand = group(&hand);
+        for (key, _) in expected {
+            if key == "name" {
+                continue;
+            }
+            assert_eq!(value(&made, key), value(&by_hand, key), "{key}");
+        }
+        for key in [
+            "point1_mm",
+            "point2_mm",
+            "plane_normal_mm",
+            "spacings_mm",
+            "fastener",
+        ] {
+            assert_eq!(strings(&made, key), strings(&by_hand, key), "{key}");
+        }
+        assert_ne!(
+            value(&made, "id"),
+            value(&by_hand, "id"),
+            "each store names its own group"
+        );
+        // A non-positive spacing is the engine's refusal through the real command path: it
+        // reaches the panel and publishes nothing. The success refreshed the groups listing;
+        // the picks wait for it, as any click waits for a command.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while (app.bolt.groups_job.is_some()) && std::time::Instant::now() < deadline {
+            app.poll_bolt();
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(
+            app.bolt.groups_job.is_none(),
+            "the groups listing timed out"
+        );
+        app.bolt_click(side);
+        app.bolt_click(ray(500.0, 250.0));
+        app.bolt_click(ray(150.0, 250.0));
+        app.bolt_click(ray(400.0, 250.0));
+        app.bolt.spacings = "0".into();
+        let create_now = frame(&mut app, vec![])
+            .iter()
+            .find(|(text, _)| text == "Create bolts")
+            .map(|(_, pos)| *pos)
+            .expect("the Bolt bench still shows Create bolts");
+        frame(&mut app, click(create_now));
+        assert!(
+            app.bolt.commit_job.is_some(),
+            "the click starts the refused commit"
+        );
+        wait(&mut app);
+        let refused = match &app.bolt.note {
+            Some(Err(message)) => message.clone(),
+            other => panic!("a zero spacing must be refused, got {other:?}"),
+        };
+        assert!(refused.contains("a spacing is positive"), "{refused}");
+        assert_eq!(
+            run(&store, &["bolts"])
+                .get("bolt_groups")
+                .and_then(|j| j.array())
+                .map(|g| g.len())
+                .ok(),
+            Some(1),
+            "the refusal published nothing"
+        );
+        // Cancel forgets the picks and publishes nothing.
+        app.bolt_click(side);
+        app.bolt_click(ray(500.0, 250.0));
+        app.bolt_click(ray(150.0, 250.0));
+        let cancel = frame(&mut app, vec![])
+            .iter()
+            .find(|(text, _)| text == "Cancel")
+            .map(|(_, pos)| *pos)
+            .expect("the Bolt bench shows Cancel");
+        frame(&mut app, click(cancel));
+        assert_eq!(app.bench, super::workbench::Bench::Select);
+        assert!(app.bolt.parts.is_empty() && app.bolt.point1.is_none() && app.bolt.note.is_none());
+        assert_eq!(
+            run(&store, &["bolts"])
+                .get("bolt_groups")
+                .and_then(|j| j.array())
+                .map(|g| g.len())
+                .ok(),
+            Some(1),
+            "the cancel published nothing"
+        );
+        drop(app);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn the_bolt_bench_loads_a_placed_group_and_updates_it_through_the_cli() {
+        let mut app =
+            headless().expect("a native/software adapter is required for modelling acceptance");
+        let executable = std::env::current_exe().unwrap();
+        let cli = executable
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        assert!(
+            cli.is_file(),
+            "build beamcraft-cli before native modelling tests"
+        );
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root =
+            std::env::temp_dir().join(format!("bc-bolt-edit-{}-{nanos}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let store = root.join("model");
+        let hand = root.join("hand");
+        for folder in [&store, &hand] {
+            std::fs::create_dir_all(folder).unwrap();
+        }
+        app.source.store = store.clone();
+        app.source.cli = cli.clone();
+        let run = |store: &std::path::Path, args: &[&str]| {
+            let output = std::process::Command::new(&cli)
+                .args(args)
+                .args(["--store", store.to_str().unwrap()])
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+            beamcraft_json::decode(&output.stdout, &beamcraft_json::Limits::DEFAULT).unwrap()
+        };
+        let library = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../assets/libraries/synthetic-fasteners.usda");
+        // Two stacked plates, then one placed group, in both stores by hand, so the bench's
+        // update and the CLI's must agree field by field.
+        let parts_of = |store: &std::path::Path, low: &str, high: &str| {
+            for (id, z) in [(low, "0"), (high, "10")] {
+                run(
+                    store,
+                    &[
+                        "create-plate",
+                        "--width",
+                        "1000",
+                        "--length",
+                        "500",
+                        "--thickness",
+                        "10",
+                        "--name",
+                        "P",
+                        "--new-id",
+                        id,
+                        "--translation",
+                        &format!("0,0,{z}"),
+                    ],
+                );
+            }
+            vec![low.to_owned(), high.to_owned()]
+        };
+        let group_args = |store_parts: &[String]| {
+            let joined = store_parts.join(",");
+            let args = vec![
+                "create-bolt-group".to_owned(),
+                "--name".to_owned(),
+                "G1".to_owned(),
+                "--parts".to_owned(),
+                joined,
+                "--fastener-library".to_owned(),
+                library.to_string_lossy().into_owned(),
+                "--designation".to_owned(),
+                "SYN-BOLT-12x50".to_owned(),
+                "--point1".to_owned(),
+                "100,250,0".to_owned(),
+                "--point2".to_owned(),
+                "600,250,0".to_owned(),
+                "--plane-normal".to_owned(),
+                "0,0,1".to_owned(),
+                "--rotation-deg".to_owned(),
+                "0".to_owned(),
+                "--on-plane".to_owned(),
+                "0".to_owned(),
+                "--depth".to_owned(),
+                "0".to_owned(),
+                "--offset-start".to_owned(),
+                "50".to_owned(),
+                "--spacings".to_owned(),
+                "150".to_owned(),
+                "--washer-under-head".to_owned(),
+                "true".to_owned(),
+                "--washer-under-nut".to_owned(),
+                "true".to_owned(),
+                "--hole-mode".to_owned(),
+                "generate".to_owned(),
+            ];
+            args
+        };
+        let store_parts = parts_of(
+            &store,
+            "019a7bf0-0000-7000-8000-00000071d001",
+            "019a7bf0-0000-7000-8000-00000071d002",
+        );
+        let hand_parts = parts_of(
+            &hand,
+            "019a7bf0-0000-7000-8000-00000071d101",
+            "019a7bf0-0000-7000-8000-00000071d102",
+        );
+        run(
+            &store,
+            &group_args(&store_parts)
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+        );
+        run(
+            &hand,
+            &group_args(&hand_parts)
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+        );
+        let group_id = |store: &std::path::Path| {
+            let reply = run(store, &["bolts"]);
+            let groups = reply.get("bolt_groups").and_then(|j| j.array()).unwrap();
+            assert_eq!(groups.len(), 1);
+            groups[0]
+                .get("id")
+                .ok()
+                .and_then(|j| j.string().ok())
+                .unwrap()
+                .to_owned()
+        };
+        // The bench's opening listing carries the placed group, as a reload delivers the model.
+        let snapshot =
+            Arc::new(crate::source::load(&cli, &store, &crate::stats::Stats::default()).unwrap());
+        let scene = Scene::from_snapshot(&snapshot, Representation::Full).unwrap();
+        let uploaded =
+            crate::render::Uploaded::new(&app.state.device, &app.state.queue, &scene, &app.stats)
+                .unwrap();
+        app.loaded = Some(super::Loaded {
+            snapshot: Arc::clone(&snapshot),
+            summary: scene.summary(),
+            uploaded,
+        });
+        let ctx = egui::Context::default();
+        super::inter(&ctx);
+        crate::theme::install(&ctx);
+        let frame = |app: &mut App, events| {
+            let output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1400.0, 900.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    app.header(ui);
+                    app.ribbon(ui);
+                    app.status_bar(ui);
+                    app.inspector(ui);
+                    app.project_browser(ui);
+                    egui::CentralPanel::default().show(ui, |_| {});
+                },
+            );
+            let labels: Vec<(String, egui::Pos2)> = output
+                .shapes
+                .iter()
+                .filter_map(|shape| {
+                    if let egui::Shape::Text(text) = &shape.shape {
+                        Some((
+                            text.galley.text().to_owned(),
+                            text.pos + text.galley.size() / 2.0,
+                        ))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            output.drop_without_applying_deltas();
+            labels
+        };
+        let click = |pos| {
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]
+        };
+        app.set_bench(super::workbench::Bench::Bolt);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while app.bolt.groups_job.is_some() && std::time::Instant::now() < deadline {
+            app.poll_bolt();
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(
+            app.bolt.groups_job.is_none(),
+            "the groups listing timed out"
+        );
+        assert_eq!(app.bolt.groups.len(), 1);
+        // Loading the listed group fills the form with the stored spec, as the combo's click
+        // does.
+        let listed = app.bolt.groups.first().cloned().unwrap();
+        app.bolt.load_group(&listed);
+        assert_eq!(
+            app.bolt.edit_target.as_deref(),
+            Some(group_id(&store).as_str())
+        );
+        assert_eq!(app.bolt.name, "G1");
+        assert_eq!(app.bolt.parts, store_parts);
+        assert_eq!(app.bolt.point1, Some([100.0, 250.0, 0.0]));
+        assert_eq!(app.bolt.offset_start, "50");
+        assert_eq!(app.bolt.spacings, "150");
+        assert_eq!(app.bolt.normal, Some([0.0, 0.0, 1.0]));
+        assert!(frame(&mut app, vec![]).iter().any(|(text, _)| text == "G1"));
+        // The edit moves the offset start and adds a fastener; Update group runs the same
+        // `update-bolt-group` a user types.
+        app.bolt.offset_start = "70".into();
+        app.bolt.spacings = "120,130".into();
+        let edit_labels = frame(&mut app, vec![]);
+        let update = edit_labels
+            .iter()
+            .find(|(text, _)| text == "Update group")
+            .map(|(_, pos)| *pos)
+            .unwrap_or_else(|| panic!("the edit form shows Update group, got {:?}", edit_labels));
+        frame(&mut app, click(update));
+        assert!(app.bolt.commit_job.is_some(), "the click starts the update");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while app.bolt.commit_job.is_some() && std::time::Instant::now() < deadline {
+            app.poll_bolt();
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(app.bolt.commit_job.is_none(), "the update timed out");
+        assert!(matches!(app.bolt.note, Some(Ok(_))), "{:?}", app.bolt.note);
+        let value = |json: &beamcraft_json::Json, key: &str| {
+            json.get(key)
+                .ok()
+                .and_then(|j| j.string().ok())
+                .map(str::to_owned)
+        };
+        let strings = |json: &beamcraft_json::Json, key: &str| -> Vec<String> {
+            json.get(key)
+                .ok()
+                .and_then(|j| j.array().ok())
+                .map(|list| {
+                    list.iter()
+                        .filter_map(|v| v.string().ok().map(str::to_owned))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        let made = run(&store, &["bolts"]);
+        let made = made.get("bolt_groups").and_then(|j| j.array()).unwrap()[0].clone();
+        assert_eq!(value(&made, "offset_start_mm").as_deref(), Some("70"));
+        assert_eq!(value(&made, "count").as_deref(), Some("3"));
+        assert_eq!(strings(&made, "spacings_mm"), ["120", "130"]);
+        // The same command by hand saves the same edit: every user-visible field agrees. The
+        // hand update carries the bench's new values and names no library entry, keeping the
+        // pinned definition as the bench's update does.
+        let hand_target = group_id(&hand);
+        run(
+            &hand,
+            &[
+                "update-bolt-group",
+                "--target",
+                &hand_target,
+                "--name",
+                "G1",
+                "--parts",
+                &hand_parts.join(","),
+                "--point1",
+                "100,250,0",
+                "--point2",
+                "600,250,0",
+                "--plane-normal",
+                "0,0,1",
+                "--rotation-deg",
+                "0",
+                "--on-plane",
+                "0",
+                "--depth",
+                "0",
+                "--offset-start",
+                "70",
+                "--spacings",
+                "120,130",
+                "--washer-under-head",
+                "true",
+                "--washer-under-nut",
+                "true",
+                "--hole-mode",
+                "generate",
+            ],
+        );
+        let by_hand = run(&hand, &["bolts"]);
+        let by_hand = by_hand.get("bolt_groups").and_then(|j| j.array()).unwrap()[0].clone();
+        for key in [
+            "name",
+            "count",
+            "rotation_rad",
+            "on_plane_mm",
+            "depth_mm",
+            "offset_start_mm",
+            "spacing_mode",
+            "spacing_value_mm",
+            "length_mode",
+            "length_mm",
+            "washer_under_head",
+            "washer_under_nut",
+            "hole_mode",
+            "hole_clearance_mm",
+        ] {
+            assert_eq!(value(&made, key), value(&by_hand, key), "{key}");
+        }
+        for key in [
+            "point1_mm",
+            "point2_mm",
+            "plane_normal_mm",
+            "spacings_mm",
+            "fastener",
+        ] {
+            assert_eq!(strings(&made, key), strings(&by_hand, key), "{key}");
+        }
+        // A repin without the library fields refuses in the form and starts no command. The
+        // update refreshed the groups listing; the buttons wait for it.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while app.bolt.groups_job.is_some() && std::time::Instant::now() < deadline {
+            app.poll_bolt();
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        app.bolt.repin = true;
+        // The update cleared the picks; reload the group from the refreshed listing so the
+        // form is complete again, then ask for a repin with no library named.
+        let listed = app.bolt.groups.first().cloned().unwrap();
+        let target = listed.id.clone();
+        app.bolt.load_group(&listed);
+        assert_eq!(app.bolt.edit_target.as_deref(), Some(target.as_str()));
+        app.bolt.repin = true;
+        let update_now = frame(&mut app, vec![])
+            .iter()
+            .find(|(text, _)| text == "Update group")
+            .map(|(_, pos)| *pos)
+            .expect("the edit form still shows Update group");
+        frame(&mut app, click(update_now));
+        assert!(app.bolt.commit_job.is_none(), "the form refused the repin");
+        let refused = match &app.bolt.note {
+            Some(Err(message)) => message.clone(),
+            other => panic!("a repin without a library must refuse, got {other:?}"),
+        };
+        assert!(refused.contains("Library"), "{refused}");
+        // New group returns the bench to the create flow.
+        app.bolt.repin = false;
+        let new_group = frame(&mut app, vec![])
+            .iter()
+            .find(|(text, _)| text == "New group")
+            .map(|(_, pos)| *pos)
+            .expect("the edit form shows New group");
+        frame(&mut app, click(new_group));
+        assert!(app.bolt.edit_target.is_none());
+        assert!(app.bolt.parts.is_empty());
+        assert_eq!(
+            run(&store, &["bolts"])
+                .get("bolt_groups")
+                .and_then(|j| j.array())
+                .map(|g| g.len())
+                .ok(),
+            Some(1),
+            "the update remained one atomic edit"
+        );
         drop(app);
         std::fs::remove_dir_all(root).unwrap();
     }
@@ -6035,7 +7249,7 @@ pub(crate) mod tests {
         app.views.book.insert(planned).unwrap();
         let labels = app_frame(&mut app, &ctx, vec![]);
         let shown: Vec<&str> = labels.iter().map(|(t, _)| t.as_str()).collect();
-        for expected in ["3D views", "3D View", "Plans", "Elevation A", "Level 1"] {
+        for expected in ["3D View", "Plans", "Elevation A", "Level 1"] {
             assert!(shown.contains(&expected), "{expected} is listed: {shown:?}");
         }
         for gone in [
@@ -6260,6 +7474,172 @@ pub(crate) mod tests {
             crate::views::MAX_WINDOWS - 1,
             "the close button did not close the pane"
         );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_section_by_two_picked_points_looks_across_the_line_and_restores() {
+        use crate::views::Construction;
+        let Some(mut app) = headless() else { return };
+        let dir = std::env::temp_dir().join(format!("beamcraft-v09-picks-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        app.source.store = dir.clone();
+        deliver(&mut app, refreshed(2));
+        let token = app.loaded.as_ref().unwrap().snapshot.token().clone();
+        let spatial = app
+            .views
+            .active_pane()
+            .unwrap()
+            .camera
+            .frame(app.view_origin())
+            .unwrap();
+        // The section line lies on the XY work plane 50 m below the model, so the picks land
+        // on that plane and no snap takes them.
+        let input = beamcraft_engine::work_plane::WorkPlane::parallel("xy", -50_000.0).unwrap();
+        app.install_plane(Some(input));
+        let down = |x: f64, y: f64| crate::edit::Ray {
+            origin: [x, y, 0.0],
+            direction: [0.0, 0.0, -1.0],
+        };
+        app.begin_view(Construction::TwoPoints);
+        app.views.form.name = "Section A-B".into();
+        app.view_click(down(500_000.0, 500_000.0));
+        app.view_click(down(501_000.0, 500_500.0));
+        // Two picks fill the plane; nothing is created before Apply.
+        assert!(app.views.picking.is_none());
+        assert!(app.views.form.picked);
+        assert!(app.views.book.find("Section A-B").is_none());
+        app.submit_view();
+        assert!(
+            matches!(app.views.note, Some(Ok(_))),
+            "{:?}",
+            app.views.note
+        );
+        let view = app.views.book.find("Section A-B").unwrap().clone();
+        let ab = [1000.0, 500.0, 0.0];
+        assert_eq!(view.plane.origin(), [500_000.0, 500_000.0, -50_000.0]);
+        let n = view.plane.normal();
+        assert!(n[2].abs() < 1e-9, "the section stands vertically: {n:?}");
+        assert!(
+            (n[0] * ab[0] + n[1] * ab[1]).abs() < 1e-9,
+            "the view looks across the line, not along it: {n:?}"
+        );
+        assert_eq!(
+            crate::views::view_kind(&view),
+            crate::views::ViewKind::Vertical
+        );
+        let camera = app.views.active_pane().unwrap().camera;
+        assert!(camera.is_aligned() && camera.is_orthographic());
+        let (frame, _) = camera.frame(app.view_origin()).unwrap();
+        let looked = frame.normal();
+        assert!(
+            looked.iter().zip(n).all(|(a, b)| (a - b).abs() < 1e-6),
+            "the camera looks along the section plane's normal: {looked:?} vs {n:?}"
+        );
+        assert_eq!(
+            app.tools.plane,
+            Some(view.plane),
+            "the view plane is the input frame"
+        );
+        let first = app.views.active_pane().unwrap().camera;
+
+        // Leaving for the free view and coming back restores the camera as the user left it,
+        // not the view's own construction.
+        let mut wandered = app.views.active_pane().unwrap().camera;
+        wandered
+            .navigate([0.5, 0.3], [800.0, -300.0], -1.0)
+            .unwrap();
+        app.views.active_pane_mut().unwrap().camera = wandered;
+        let left = wandered.frame(app.view_origin()).unwrap();
+        app.activate_view(None);
+        assert_eq!(
+            app.views
+                .active_pane()
+                .unwrap()
+                .camera
+                .frame(app.view_origin())
+                .unwrap(),
+            spatial
+        );
+        // The free view comes back with the work plane it had, not the section's.
+        assert_eq!(app.tools.plane, Some(input));
+        app.activate_view(Some(view.id));
+        assert_eq!(
+            app.views
+                .active_pane()
+                .unwrap()
+                .camera
+                .frame(app.view_origin())
+                .unwrap(),
+            left
+        );
+        assert_eq!(app.tools.plane, Some(view.plane));
+
+        // A depth slab clips the display and never the model.
+        app.edit_view(view.id);
+        app.views.form.depth_on = true;
+        app.views.form.depth = ["1200".into(), "800".into()];
+        app.submit_view();
+        assert!(
+            matches!(app.views.note, Some(Ok(_))),
+            "{:?}",
+            app.views.note
+        );
+        let stored = app.views.book.get(&view.id).unwrap().clone();
+        assert_eq!(stored.depth, Some([1200.0, 800.0]));
+        assert_eq!(
+            crate::views::display_clip(None, Some(&stored))
+                .unwrap()
+                .planes
+                .len(),
+            2
+        );
+        let towards = [
+            stored.plane.origin()[0] + n[0] * 1000.0,
+            stored.plane.origin()[1] + n[1] * 1000.0,
+            stored.plane.origin()[2],
+        ];
+        let beyond = [
+            stored.plane.origin()[0] + n[0] * 2000.0,
+            stored.plane.origin()[1] + n[1] * 2000.0,
+            stored.plane.origin()[2],
+        ];
+        assert!(stored.contains(towards));
+        assert!(!stored.contains(beyond));
+
+        // A restart reads the sidecar and rebuilds the same camera deterministically: the
+        // wander is forgotten and the view looks across its line again. The pane leaves the
+        // view first, so the activation below really rebuilds the camera instead of
+        // returning early on a pane that already shows it.
+        app.activate_view(None);
+        app.views.cameras.clear();
+        app.views.book = crate::views::load(&dir).unwrap();
+        app.activate_view(Some(view.id));
+        let restarted = app.views.active_pane().unwrap().camera;
+        // The sidecar is a float document: the round trip may bend the basis by ~1e-16, so
+        // the rebuilt frame is compared to the first one with that slack, componentwise.
+        let (rebuilt, rebuilt_span) = restarted.frame(app.view_origin()).unwrap();
+        let (held, held_span) = first.frame(app.view_origin()).unwrap();
+        let near = |a: [f64; 3], b: [f64; 3]| a.iter().zip(b).all(|(p, q)| (p - q).abs() < 1e-9);
+        assert!(
+            near(rebuilt.origin(), held.origin())
+                && near(rebuilt.x(), held.x())
+                && near(rebuilt.y(), held.y())
+                && near(rebuilt.normal(), held.normal())
+                && (rebuilt_span - held_span).abs() < 1e-6,
+            "the restored camera is the view's own construction: {rebuilt:?} vs {held:?}"
+        );
+        assert_ne!(
+            restarted.frame(app.view_origin()).unwrap(),
+            left,
+            "the session wander does not survive a restart"
+        );
+        assert_eq!(
+            crate::views::load(&dir).unwrap().len(),
+            2,
+            "the sidecar keeps the default view and the section"
+        );
+        assert_eq!(app.loaded.as_ref().unwrap().snapshot.token(), &token);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -6612,6 +7992,7 @@ pub(crate) mod tests {
         let dir = std::env::temp_dir().join(format!("beamcraft-vf-ui-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         app.source.store = dir.join("store");
+        app.source.config_dir = Some(dir.join("config"));
         // The environment offers a filter and a preset that uses it.
         let columns = ViewFilter::new(
             "Columns",
@@ -6629,7 +8010,11 @@ pub(crate) mod tests {
         );
         faded.overrides = vec![FilterOverride::parse_spec("Columns|show|0.5,0.5,0.5|0.7").unwrap()];
         app.tools.definitions.view_filters = vec![columns];
-        app.tools.definitions.view_presets = vec![faded.to_preset("Columns faded")];
+        app.tools.definitions.view_presets =
+            vec![beamcraft_engine::presets::ViewPreset::from_view(
+                "Columns faded",
+                &faded,
+            )];
         let id = Uuid7::parse("019a7bf0-0000-7000-8000-000000000021").unwrap();
         app.views
             .book
@@ -6650,7 +8035,8 @@ pub(crate) mod tests {
         );
         let view = app.views.book.get(&id).unwrap();
         assert_eq!(view.overrides[0].transparency, 0.7);
-        assert_eq!(view.span_mm, 8000.0);
+        // A discipline preset carries no camera: the view keeps its own visible height.
+        assert_eq!(view.span_mm, 5000.0);
         // A new filter from the editor joins the view's form; Apply keeps it.
         app.open_filter_editor(None);
         let (mut filter, previous) = app.views.filter_edit.clone().unwrap();
@@ -6667,7 +8053,10 @@ pub(crate) mod tests {
         assert_eq!(app.views.book.get(&id).unwrap().overrides.len(), 2);
         // The overlay waits for the matches, then hides and colours by the first override.
         app.save_preset_from_form("Two filters");
-        assert!(app.views.book.preset("Two filters").is_some());
+        assert!(app.views.presets.find("Two filters").is_some());
+        // The user's presets are personal configuration: they come back on the next open.
+        let (again, note) = crate::views::load_presets(app.source.config_dir.as_deref());
+        assert!(note.is_none() && again.find("two filters").is_some());
         // A view preset applied from the browser fills the view at once.
         app.browser_action(super::view_panel::BrowserAction::ApplyPreset(
             id,
@@ -6835,6 +8224,374 @@ pub(crate) mod tests {
         // Closing the view's pane gives the free pane its work plane back.
         app.close_pane(plan_pane);
         assert_eq!(app.tools.plane, Some(free));
+    }
+
+    /// A window on `config_dir`, opened the way a restart opens one: a fresh window on the
+    /// render state of an existing one, on a store with no CLI behind it.
+    fn reopened(state: &eframe::egui_wgpu::RenderState, config_dir: std::path::PathBuf) -> App {
+        let missing = std::env::temp_dir().join("beamcraft-window-test-no-cli");
+        App::open(
+            &egui::Context::default(),
+            Some(state),
+            Source {
+                store: missing.clone(),
+                cli: missing,
+                workspace: None,
+                published: None,
+                samples: None,
+                actor: None,
+                environment: None,
+                author: None,
+                config_dir: Some(config_dir),
+            },
+            None,
+            Arc::new(crate::stats::Stats::default()),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn a_window_on_a_fresh_profile_starts_on_the_platform_default() {
+        let Some(app) = headless() else { return };
+        let dir = std::env::temp_dir().join(format!("bc-camera-fresh-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let restarted = reopened(&app.state, dir.clone());
+        // No settings file yet: the window starts where its platform starts.
+        assert_eq!(restarted.preset, Preset::default());
+        assert!(
+            session::settings::Settings::load(&dir)
+                .unwrap()
+                .camera
+                .is_none()
+        );
+        assert!(!dir.join("settings.json").exists(), "a start saves nothing");
+        drop(restarted);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_side_panel_camera_choice_survives_a_restart() {
+        let Some(mut app) = headless() else { return };
+        let dir = std::env::temp_dir().join(format!("bc-camera-choice-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        app.source.config_dir = Some(dir.clone());
+        app.details = true;
+        // The radio that differs from the platform default is the interesting one: only a
+        // saved choice can beat the platform default after a restart.
+        let chosen = if Preset::default() == Preset::Mouse {
+            Preset::Trackpad
+        } else {
+            Preset::Mouse
+        };
+        let target = match chosen {
+            Preset::Mouse => "Mouse",
+            Preset::Trackpad => "Trackpad (macOS)",
+        };
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        assert!(crate::app::inter(&ctx));
+        let mut frame = |events| {
+            let output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1400.0, 900.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    app.header(ui);
+                    app.ribbon(ui);
+                    app.status_bar(ui);
+                    app.inspector(ui);
+                    app.project_browser(ui);
+                    app.details_window(&ctx);
+                    egui::CentralPanel::default().show(ui, |_| {});
+                },
+            );
+            let labels: Vec<_> = output
+                .shapes
+                .iter()
+                .filter_map(|shape| {
+                    if let egui::Shape::Text(text) = &shape.shape {
+                        Some((
+                            text.galley.text().to_owned(),
+                            text.pos + text.galley.size() / 2.0,
+                        ))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            output.drop_without_applying_deltas();
+            labels
+        };
+        let click = |pos| {
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]
+        };
+        // The window places itself on the first frame and paints on the next.
+        let _ = frame(vec![]);
+        let labels = frame(vec![]);
+        let radio = labels
+            .iter()
+            .find(|(text, _)| text == target)
+            .unwrap_or_else(|| {
+                panic!(
+                    "the {target} radio is not on screen; saw {:?}",
+                    labels
+                        .iter()
+                        .map(|(text, _)| text.as_str())
+                        .collect::<Vec<_>>()
+                )
+            })
+            .1;
+        frame(click(radio));
+        frame(vec![]);
+        assert_eq!(app.preset, chosen, "the click chose the preset");
+        assert_eq!(
+            session::settings::Settings::load(&dir).unwrap().camera,
+            Some(chosen.stored()),
+            "the click was saved"
+        );
+        // The restart reads the same settings file: a new window comes back on the choice,
+        // which beats the platform default it would otherwise start on.
+        let restarted = reopened(&app.state, dir.clone());
+        assert_eq!(restarted.preset, chosen);
+        drop(restarted);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_export_ifc_menu_row_writes_the_same_file_as_the_cli_by_hand() {
+        let mut app =
+            headless().expect("a native/software adapter is required for modelling acceptance");
+        let executable = std::env::current_exe().unwrap();
+        let cli = executable
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        assert!(
+            cli.is_file(),
+            "build beamcraft-cli before native modelling tests"
+        );
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("bc-export-{}-{nanos}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        // The command refuses output paths through a symlinked ancestor (macOS maps /var to
+        // /private/var), so the fixture lives under its canonical name.
+        let root = std::fs::canonicalize(&root).unwrap();
+        let store = root.join("model");
+        std::fs::create_dir_all(&store).unwrap();
+        app.source.store = store.clone();
+        app.source.cli = cli.clone();
+        // One plate gives the export something to carry; the store it comes from is the real
+        // store the command reads, made by hand as a user makes one.
+        let run = |store: &std::path::Path, args: &[&str]| {
+            let output = std::process::Command::new(&cli)
+                .args(args)
+                .args(["--store", store.to_str().unwrap()])
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+            beamcraft_json::decode(&output.stdout, &beamcraft_json::Limits::DEFAULT).unwrap()
+        };
+        run(
+            &store,
+            &[
+                "create-plate",
+                "--width",
+                "1000",
+                "--length",
+                "500",
+                "--thickness",
+                "10",
+                "--name",
+                "Plate A",
+            ],
+        );
+        let ctx = egui::Context::default();
+        super::inter(&ctx);
+        crate::theme::install(&ctx);
+        // The menu page replaces the workbench while it is open, as `App::ui` draws it.
+        let frame = |app: &mut App, events| {
+            let output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1400.0, 900.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    app.menu_page(ui);
+                },
+            );
+            let labels: Vec<(String, egui::Pos2)> = output
+                .shapes
+                .iter()
+                .filter_map(|shape| {
+                    if let egui::Shape::Text(text) = &shape.shape {
+                        Some((
+                            text.galley.text().to_owned(),
+                            text.pos + text.galley.size() / 2.0,
+                        ))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            output.drop_without_applying_deltas();
+            labels
+        };
+        let click = |pos| {
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]
+        };
+        app.menu_open = true;
+        // The navigation row is painted before the page heading of the same name, so the first
+        // "Export" label is the row a user clicks.
+        let export_row = frame(&mut app, vec![])
+            .iter()
+            .find(|(text, _)| text == "Export")
+            .map(|(_, pos)| *pos)
+            .expect("the menu shows the Export section");
+        frame(&mut app, click(export_row));
+        assert_eq!(
+            app.menu_section,
+            super::workbench::MenuSection::Export,
+            "the row opens the Export section"
+        );
+        assert!(!app.menu_export_open());
+        let ifc_row = frame(&mut app, vec![])
+            .iter()
+            .find(|(text, _)| text == "IFC")
+            .map(|(_, pos)| *pos)
+            .expect("the Export section shows the IFC row");
+        frame(&mut app, click(ifc_row));
+        assert!(app.menu_export_open());
+        // The form suggests the model's own folder and name.
+        assert_eq!(
+            app.menu_export.path,
+            root.join("model.ifc").to_string_lossy().into_owned()
+        );
+        let wait = |app: &mut App| {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+            while app.menu_export.job.is_some() && std::time::Instant::now() < deadline {
+                frame(app, vec![]);
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            assert!(app.menu_export.job.is_none(), "the export timed out");
+        };
+        let export_button = |app: &mut App| {
+            frame(app, vec![])
+                .iter()
+                .find(|(text, _)| text == "Export IFC")
+                .map(|(_, pos)| *pos)
+                .expect("the form shows Export IFC")
+        };
+        // The click runs the same `export-ifc` a user types.
+        let at = export_button(&mut app);
+        frame(&mut app, click(at));
+        assert!(app.menu_export.job.is_some(), "the click starts the export");
+        wait(&mut app);
+        let note = match &app.menu_export.note {
+            Some(Ok(note)) => note.clone(),
+            other => panic!("the export must succeed, got {other:?}"),
+        };
+        assert!(note.contains("Exported 1 of 1 elements"), "{note}");
+        let ifc = root.join("model.ifc");
+        assert!(ifc.is_file(), "{note}");
+        // The same command by hand writes the same file: the export is the CLI's, and the
+        // IFC stamp is a pure function of the revision, so the bytes agree.
+        let hand = root.join("hand.ifc");
+        run(&store, &["export-ifc", "--out", hand.to_str().unwrap()]);
+        assert_eq!(
+            std::fs::read(&ifc).unwrap(),
+            std::fs::read(&hand).unwrap(),
+            "the window's file equals the CLI's"
+        );
+        // A second export to the same file is the engine's refusal, and the file survives.
+        let before = std::fs::read(&ifc).unwrap();
+        let at = export_button(&mut app);
+        frame(&mut app, click(at));
+        wait(&mut app);
+        let refused = match &app.menu_export.note {
+            Some(Err(message)) => message.clone(),
+            other => panic!("an existing file must be refused, got {other:?}"),
+        };
+        assert!(
+            refused.contains("the output file exists and overwrite was not requested"),
+            "{refused}"
+        );
+        assert_eq!(std::fs::read(&ifc).unwrap(), before);
+        // With the switch on, the export replaces the file, and the bytes still agree.
+        let overwrite = frame(&mut app, vec![])
+            .iter()
+            .find(|(text, _)| text == "Replace an existing file")
+            .map(|(_, pos)| *pos)
+            .expect("the form shows the overwrite switch");
+        frame(&mut app, click(overwrite));
+        let at = export_button(&mut app);
+        frame(&mut app, click(at));
+        wait(&mut app);
+        assert!(
+            matches!(&app.menu_export.note, Some(Ok(note)) if note.contains("Exported 1 of 1 elements")),
+            "{:?}",
+            app.menu_export.note
+        );
+        assert_eq!(
+            std::fs::read(&ifc).unwrap(),
+            std::fs::read(&hand).unwrap(),
+            "the replaced file is still the CLI's"
+        );
+        // An export reads the store and never writes it.
+        assert_eq!(
+            run(&store, &["inspect-elements"])
+                .get("plates")
+                .and_then(|j| j.array())
+                .map(|p| p.len()),
+            Ok(1)
+        );
+        drop(app);
+        std::fs::remove_dir_all(root).unwrap();
     }
 }
 
@@ -7180,6 +8937,18 @@ mod navigation_tests {
             );
             assert_eq!((orbit, pan, zoom), ([0.0; 2], [0.0; 2], 0.0));
         }
+    }
+
+    #[test]
+    fn a_fresh_start_picks_the_preset_of_its_platform() {
+        // The default is compile-time platform knowledge: this lane pins the macOS arm,
+        // the Windows and Linux lanes pin the mouse arm.
+        let expected = if cfg!(target_os = "macos") {
+            Preset::Trackpad
+        } else {
+            Preset::Mouse
+        };
+        assert_eq!(Preset::default(), expected);
     }
 
     #[test]

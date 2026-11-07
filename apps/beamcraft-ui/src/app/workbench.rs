@@ -38,6 +38,11 @@ pub(crate) enum Bench {
     CutPlane,
     /// Colour by a saved representation set (V17); a display overlay, never a model change.
     Colour,
+    /// Create a fillet weld between two picked parts (V10); the A06 create-weld command.
+    Weld,
+    /// Place a bolt group of a library fastener between picked parts (V19); the A14.3
+    /// create-bolt-group command.
+    Bolt,
     /// D06 annotations: place dimensions, marks and leaders, watch their binding states.
     Annotations,
     /// A view's properties, or a new view.
@@ -58,6 +63,8 @@ impl Bench {
             Self::Delete => "Delete",
             Self::CutPlane => "Cut plane",
             Self::Colour => "Colour",
+            Self::Weld => "Weld",
+            Self::Bolt => "Bolt group",
             Self::Annotations => "Annotations",
             Self::View => "View properties",
         }
@@ -76,6 +83,8 @@ impl Bench {
             | Self::Grid
             | Self::CutPlane
             | Self::Colour
+            | Self::Weld
+            | Self::Bolt
             | Self::Annotations
             | Self::View => None,
         }
@@ -433,6 +442,8 @@ impl App {
             Bench::Select => {}
             Bench::CutPlane => {}
             Bench::Colour => {}
+            Bench::Weld => {}
+            Bench::Bolt => self.bolt_load(),
             Bench::Annotations => {}
             Bench::View => {}
             Bench::Grid => {
@@ -460,6 +471,7 @@ impl App {
             .show(ui, |ui| {
                 theme::titlebar_drag(ui);
                 ui.horizontal_centered(|ui| {
+                    theme::native_controls_inset(ui);
                     if self.logo.is_none() && !self.logo_tried {
                         self.logo_tried = true;
                         self.logo = theme::load_logo(ui.ctx(), 96);
@@ -657,8 +669,12 @@ impl App {
                         tool_button(ui, Icon::Beam, "Brace", false, false);
                     });
                     group(ui, "Connect", &mut |ui| {
-                        tool_button(ui, Icon::Bolt, "Bolts", false, false);
-                        tool_button(ui, Icon::Weld, "Weld", false, false);
+                        if tool_button(ui, Icon::Bolt, "Bolts", bench == Bench::Bolt, true).clicked() {
+                            pick = Some(Bench::Bolt);
+                        }
+                        if tool_button(ui, Icon::Weld, "Weld", bench == Bench::Weld, true).clicked() {
+                            pick = Some(Bench::Weld);
+                        }
                     });
                     }
                     if self.ribbon_tab == RibbonTab::Edit {
@@ -926,23 +942,30 @@ impl App {
                             Bench::Move | Bench::Copy | Bench::Delete => self.edit_panel(ui),
                             Bench::CutPlane => self.cut_panel(ui),
                             Bench::Colour => self.colour_panel(ui),
+                            Bench::Weld => self.weld_panel(ui),
+                            Bench::Bolt => self.bolt_panel(ui),
                             Bench::Annotations => self.annotation_panel(ui),
                             Bench::View => self.view_panel(ui),
                         }
                         ui.add_space(12.0);
-                        egui::CollapsingHeader::new("Publishing")
-                            .default_open(false)
-                            .show(ui, |ui| self.publish_panel(ui));
-                        egui::CollapsingHeader::new("Sheet editor")
-                            .default_open(false)
-                            .show(ui, |ui| {
-                                ui.label(
-                                    "Move the placed views of a drawing document on its sheet.",
-                                );
-                                if ui.button("Open sheet editor").clicked() {
-                                    self.sheet_editor.open = true;
-                                }
-                            });
+                        crate::kit::section(ui, "inspector", "Publishing", false, |ui| {
+                            self.publish_panel(ui)
+                        });
+                        crate::kit::section(ui, "inspector", "Sheet editor", false, |ui| {
+                            ui.label("Move the placed views of a drawing document on its sheet.");
+                            if ui.button("Open sheet editor").clicked() {
+                                self.sheet_editor.open = true;
+                            }
+                        });
+                        crate::kit::section(ui, "inspector", "Drawing document", false, |ui| {
+                            ui.label(
+                                "Publish a drawing document version and export one, bound \
+                                     to its archived model source.",
+                            );
+                            if ui.button("Open drawing document").clicked() {
+                                self.drawing_manager.open = true;
+                            }
+                        });
                     });
             });
     }
@@ -1046,6 +1069,8 @@ impl App {
             ("Rectangular grid", Bench::Grid),
             ("Beam", Bench::Beam),
             ("Plate", Bench::Plate),
+            ("Weld", Bench::Weld),
+            ("Bolts", Bench::Bolt),
             ("Move", Bench::Move),
             ("Copy", Bench::Copy),
             ("Delete", Bench::Delete),
@@ -1563,20 +1588,27 @@ impl App {
                     }
                     ui.spacing_mut().item_spacing.y = 0.0;
                     for label in self.menu_section.commands() {
+                        // The IFC row belongs to the Export page only: the Import page lists the
+                        // same label and its import command does not exist yet.
                         let enabled = matches!(
                             *label,
                             "Profile catalog" | "Material catalog" | "About BeamCraft"
-                        );
+                        ) || *label == "IFC"
+                            && self.menu_section == MenuSection::Export;
                         if menu_command(ui, label, enabled).clicked() {
                             match *label {
                                 "Profile catalog" => self.menu_section = MenuSection::Profiles,
                                 "Material catalog" => self.menu_section = MenuSection::Materials,
+                                "IFC" => self.open_menu_export(),
                                 "About BeamCraft" => {
                                     self.menu_section = MenuSection::About;
                                 }
                                 _ => {}
                             }
                         }
+                    }
+                    if self.menu_section == MenuSection::Export && self.menu_export_open() {
+                        self.menu_export_ui(ui, self.other_command_running());
                     }
                     let definitions = match self.menu_section {
                         MenuSection::Profiles => Some(&self.tools.definitions.profiles),

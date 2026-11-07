@@ -30,43 +30,39 @@ fn field(ui: &mut Ui, label: &str, value: &mut String, hint: &str) {
 }
 
 fn family(ui: &mut Ui, title: &str, form: &mut FamilyForm, hint: &str) {
-    egui::CollapsingHeader::new(title)
-        .default_open(true)
-        .show(ui, |ui| {
-            field(
-                ui,
-                "Coordinates (mm)",
-                &mut form.expression,
-                "Start coordinate, then spacings",
-            );
-            if let Ok((_, positions)) =
-                beamcraft_model::grid::parse_grid_expression(form.expression.trim())
-            {
-                ui.label(egui::RichText::new(format!("{} axes", positions.len())).small());
-            }
-            ui.label(
-                egui::RichText::new(
-                    "First position, then positive spacings; N*D repeats a spacing.",
-                )
+    crate::kit::section(ui, "grid", title, true, |ui| {
+        field(
+            ui,
+            "Coordinates (mm)",
+            &mut form.expression,
+            "Start coordinate, then spacings",
+        );
+        if let Ok((_, positions)) =
+            beamcraft_model::grid::parse_grid_expression(form.expression.trim())
+        {
+            ui.label(egui::RichText::new(format!("{} axes", positions.len())).small());
+        }
+        ui.label(
+            egui::RichText::new("First position, then positive spacings; N*D repeats a spacing.")
                 .small(),
-            );
-            field(ui, "Labels", &mut form.labels, hint);
-            ui.label(
+        );
+        field(ui, "Labels", &mut form.labels, hint);
+        ui.label(
                 egui::RichText::new("Missing labels continue from the last one. Extra labels are unused. Leave blank for automatic labels.")
                     .small(),
             );
-            egui::CollapsingHeader::new("Line limits").show(ui, |ui| {
-                let [start, end] = &mut form.span;
-                ui.columns(2, |columns| {
-                    for (column, (label, value)) in columns.iter_mut().zip([
-                        ("Line start (mm)", start),
-                        ("Line end (mm)", end),
-                    ]) {
-                        field(column, label, value, "Automatic");
-                    }
-                });
+        crate::kit::fold(ui, title, "Line limits", false, |ui| {
+            let [start, end] = &mut form.span;
+            ui.columns(2, |columns| {
+                for (column, (label, value)) in columns
+                    .iter_mut()
+                    .zip([("Line start (mm)", start), ("Line end (mm)", end)])
+                {
+                    field(column, label, value, "Automatic");
+                }
             });
         });
+    });
 }
 
 impl App {
@@ -375,13 +371,11 @@ impl App {
                         family(ui, "V family · Y positions", &mut self.grid_form.v, "A B C");
                     }
                     if !drawn || !editing || self.grid_line.action == "update-grid" {
-                        egui::CollapsingHeader::new("Position")
-                            .default_open(false)
-                            .show(ui, |ui| {
-                                field(ui, "Origin X (mm)", &mut self.grid_form.origin[0], "0");
-                                field(ui, "Origin Y (mm)", &mut self.grid_form.origin[1], "0");
-                                field(ui, "Rotation (degrees)", &mut self.grid_form.rotation, "0");
-                            });
+                        crate::kit::section(ui, "grid", "Position", false, |ui| {
+                            field(ui, "Origin X (mm)", &mut self.grid_form.origin[0], "0");
+                            field(ui, "Origin Y (mm)", &mut self.grid_form.origin[1], "0");
+                            field(ui, "Rotation (degrees)", &mut self.grid_form.rotation, "0");
+                        });
                     }
                 });
             });

@@ -20,14 +20,14 @@
 
 use crate::assembly::read_prims;
 use crate::plate::{
-    check_footprint, mesh_change, number, numbers, prior_op_with, property, replay_summary, text,
+    check_footprint, number, numbers, plain_mesh_change, prior_op_with, property, replay_summary,
+    text,
 };
 use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionError, RevisionStore, Uuid7};
 use beamcraft_layer_engine::authored::{
-    Author, Change, EditTargets, Element, Placement as LayerPlacement, Prepare, schema_identity,
-    validate_layers,
+    Change, Element, Placement as LayerPlacement, Prepare, schema_identity, validate_layers,
 };
 use beamcraft_layer_engine::{Control, OpenRequest, Prim, Reader, Value};
 use beamcraft_model::command::CommandError;
@@ -36,8 +36,8 @@ use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
 use session::Refusal;
 use session::pipeline::{
-    AUTHORED_LAYER, DERIVED_LAYER, RevisionSummary, base_of, control, digest_of, host_uuid,
-    integrity, load_base, open_base, summarize,
+    RevisionSummary, base_of, control, digest_of, host_uuid, integrity, load_base, open_base,
+    summarize,
 };
 use std::collections::BTreeMap;
 use steel::engine::quantity::QuantityRecord;
@@ -397,15 +397,8 @@ pub fn create_weld(
         None => None,
     };
     let schema = schema_identity()?;
-    let (mut author, opened) = Author::open(
-        base_request,
-        EditTargets {
-            authored: AUTHORED_LAYER.into(),
-            derived: DERIVED_LAYER.into(),
-        },
-        schema,
-        &control,
-    )?;
+    let (mut author, opened) =
+        crate::scope::open_author(store, base_request, false, schema, &control)?;
     let mut changes = vec![Change::Create(Element {
         id: command.new_id.to_string(),
         name: command.name.clone(),
@@ -431,7 +424,7 @@ pub fn create_weld(
         material: None,
     })];
     if let Some(solid) = &solid {
-        changes.push(mesh_change(
+        changes.push(plain_mesh_change(
             &command.new_id,
             solid.mesh(),
             &weld_record(solid)?,

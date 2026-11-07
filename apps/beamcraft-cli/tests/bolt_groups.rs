@@ -29,6 +29,9 @@ const SYNTHETIC: &str = concat!(
 );
 const GROUP: &str = "019a7bf0-0000-7000-8000-000000710001";
 const GROUP2: &str = "019a7bf0-0000-7000-8000-000000710002";
+const GROUP3: &str = "019a7bf0-0000-7000-8000-000000710003";
+const BRACE: &str = "019a7bf0-0000-7000-8000-0000007100b1";
+const GUSSET: &str = "019a7bf0-0000-7000-8000-0000007100b2";
 const USER: &str = "019a7bf0-0000-7000-8000-000000719001";
 
 /// SYN-BOLT-12x50 of the shipped synthetic library: washered, lengths [30, 40, 50, 60, 80],
@@ -142,6 +145,25 @@ impl Fixture {
         let high = self.plate("019a7bf0-0000-7000-8000-0000007100f2", "10");
         self.fork();
         vec![low, high]
+    }
+    /// The changed layers of a batch that rewrites both parts' meshes (U15): their own derived
+    /// layers and — when the bodies change — the referenced asset layer. A batch that also
+    /// creates or deletes elements adds or removes stack entries, so the derived stack's entry
+    /// list changes with them (`stack_change`).
+    fn mesh_changed(parts: &[String], stack_change: bool, geometry_change: bool) -> Vec<String> {
+        let mut changed: Vec<String> = parts
+            .iter()
+            .map(|p| format!("derived/{}.usda", p.replace('-', "")))
+            .collect();
+        changed.push("authored.usda".to_owned());
+        if geometry_change {
+            changed.push("derived/geometry.usda".to_owned());
+        }
+        if stack_change {
+            changed.push("derived.usda".to_owned());
+        }
+        changed.sort();
+        changed
     }
     /// The create arguments of one group: two points on `y = 250`, the row along `x`, the
     /// plane normal up, offset start 100.
@@ -261,7 +283,7 @@ fn a_group_places_its_row_and_edits_as_one_undo_unit() {
     // derived meshes are rewritten.
     assert_eq!(
         strings(&created, "changed_layers"),
-        ["authored.usda", "derived.usda"]
+        Fixture::mesh_changed(&parts, false, true)
     );
     // The parts' lifecycles and shapes and the pinned definition are read; the group's seven
     // groups, the definition's entry (pinned by the same transaction) and both plates' hole
@@ -348,6 +370,42 @@ fn a_group_places_its_row_and_edits_as_one_undo_unit() {
     assert_eq!(text(&again, "outcome"), "bolt_group_replayed");
     let other = f_args_edit(GROUP, &["--point2", "800,250,0"], &[("--op-id", op)]);
     assert_eq!(f.rejected(&other), "OP_ID_REUSE");
+}
+
+#[test]
+fn a_rename_reaches_the_authored_layer_and_survives_a_reopen() {
+    let mut f = Fixture::new();
+    let parts = f.parts();
+
+    f.group(GROUP, &parts);
+    // The amendment's optional `--name` renames the group: the label is authored layer state,
+    // so the rename declares its write, lands in the committed bytes and survives a reopen.
+    let op = "019a7bf0-0000-7000-8000-0000007100c9";
+    let renamed = f.ok(&f_args_edit(GROUP, &["--name", "G2"], &[("--op-id", op)]));
+    assert_eq!(text(&renamed, "outcome"), "bolt_group_committed");
+    let writes = entries(&renamed, "writes");
+    assert!(
+        writes.contains(&(GROUP.to_owned(), "label".to_owned())),
+        "{writes:?}"
+    );
+    let group = &f.groups()[0];
+    assert_eq!(text(group, "name"), "G2");
+
+    // A retry of the same operation replays; a different name under the same id is reuse:
+    // the label is part of the operation's content.
+    let again = f.ok(&f_args_edit(GROUP, &["--name", "G2"], &[("--op-id", op)]));
+    assert_eq!(text(&again, "outcome"), "bolt_group_replayed");
+    let other = f_args_edit(GROUP, &["--name", "G3"], &[("--op-id", op)]);
+    assert_eq!(f.rejected(&other), "OP_ID_REUSE");
+
+    // An edit that sends no `--name` keeps the stored label.
+    let moved = f.ok(&f_args_edit(GROUP, &["--point2", "700,250,0"], &[]));
+    assert_eq!(text(&moved, "outcome"), "bolt_group_committed");
+    assert_eq!(text(&f.groups()[0], "name"), "G2");
+
+    // A malformed label is refused without a revision.
+    let bad = f_args_edit(GROUP, &["--name", ""], &[]);
+    assert_eq!(f.rejected(&bad), "INVALID_ARGUMENT");
 }
 
 /// An `update-bolt-group` line for `id` with the given values.
@@ -710,7 +768,7 @@ fn none_writes_no_part_and_a_member_part_refuses_generate() {
     let forced = f.ok(&strs("create-bolt-group", &args));
     assert_eq!(
         strings(&forced, "changed_layers"),
-        ["authored.usda", "derived.usda"]
+        Fixture::mesh_changed(&parts, false, true)
     );
     let holes = holes_of(&f, &plate);
     assert_eq!(holes.len(), 2);
@@ -855,11 +913,130 @@ fn holes_are_removed_with_the_group_and_refuse_separate_edits() {
     // The delete writes the group's removal and both parts' hole records and meshes.
     assert_eq!(
         strings(&deleted, "changed_layers"),
-        ["authored.usda", "derived.usda"]
+        Fixture::mesh_changed(&parts, false, false)
     );
     let holes = holes_of(&f, &plate);
     assert_eq!(holes.len(), 1, "only the manual hole stays");
     for hole in &holes {
         assert!(matches!(hole.get("generated_by"), Ok(Json::Null)));
     }
+}
+
+/// The knee brace of #505: a beam whose placement turns it 40 degrees off the vertical and a
+/// gusset plate whose placement stands it up out of its local XY plane take a bolt group with
+/// `hole_mode = none`. The group commits and lists back with exit 0 and no
+/// `UNSUPPORTED_GEOMETRY`: a rotated part is bounded by its placement, never refused.
+#[test]
+fn a_knee_brace_group_attaches_to_rotated_parts() {
+    let f = Fixture::new();
+    let profile = text(
+        f.ok(&owned(
+            "define-profile",
+            &["--width", "60", "--height", "60"],
+        ))
+        .get("definition")
+        .unwrap(),
+        "digest",
+    );
+    // The brace's local axis runs along +Z; the placement turns it 40 degrees about +Y and
+    // stands it at (100, 0, 1100), so its world axis runs from (100, 0, 1100) to about
+    // (614, 0, 1713) and ends near the gusset.
+    let brace = text(
+        at(
+            &f.ok(&owned(
+                "create-member",
+                &[
+                    "--kind",
+                    "beam",
+                    "--name",
+                    "B1",
+                    "--new-id",
+                    BRACE,
+                    "--start",
+                    "0,0,0",
+                    "--end",
+                    "0,0,800",
+                    "--orientation-xyzw",
+                    "0,0.3420201433256687,0,0.9396926207859084",
+                    "--translation",
+                    "100,0,1100",
+                    "--profile-digest",
+                    &profile,
+                ],
+            )),
+            &["member"],
+        ),
+        "element_id",
+    );
+    // The plate is authored in its local XY; the 90-degree placement about +X stands it up in
+    // the world XZ plane with its 12 mm thickness running toward -Y, so the plate occupies
+    // x in [450, 850], y in [-12, 0], z in [1400, 1800].
+    let gusset = text(
+        at(
+            &f.ok(&owned(
+                "create-plate",
+                &[
+                    "--name",
+                    "PL1",
+                    "--new-id",
+                    GUSSET,
+                    "--width",
+                    "400",
+                    "--length",
+                    "400",
+                    "--thickness",
+                    "12",
+                    "--orientation-xyzw",
+                    "0.7071067811865476,0,0,0.7071067811865476",
+                    "--translation",
+                    "450,0,1400",
+                ],
+            )),
+            &["plate"],
+        ),
+        "element_id",
+    );
+
+    // A row of two fasteners along +X at y = -6 (inside the gusset's thickness), crossing
+    // both rotated parts.
+    let created = f.ok(&owned(
+        "create-bolt-group",
+        &[
+            "--name",
+            "BG1",
+            "--new-id",
+            GROUP3,
+            "--parts",
+            &format!("{brace},{gusset}"),
+            "--fastener-library",
+            SYNTHETIC,
+            "--designation",
+            WASHERED,
+            "--point1",
+            "500,-6,1600",
+            "--point2",
+            "650,-6,1600",
+            "--plane-normal",
+            "0,1,0",
+            "--offset-start",
+            "25",
+            "--pitch",
+            "100",
+            "--count",
+            "2",
+            "--hole-mode",
+            "none",
+        ],
+    ));
+    assert_eq!(text(&created, "outcome"), "bolt_group_committed");
+    assert_eq!(text(&created, "element_id"), GROUP3);
+
+    // The same head reads back through the listing: exit 0, the group with its parts.
+    let listed = f.groups();
+    let group = listed
+        .iter()
+        .find(|g| text(g, "id") == GROUP3)
+        .expect("the created group lists back");
+    assert_eq!(strings(group, "parts"), [brace.clone(), gusset.clone()]);
+    assert_eq!(text(group, "hole_mode"), "none");
 }
