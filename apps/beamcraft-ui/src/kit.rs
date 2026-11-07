@@ -282,6 +282,18 @@ pub fn search_field(ui: &mut Ui, text: &mut String, hint: &str, reserve: f32) ->
     edit
 }
 
+/// Marks the next table row as changed from its saved value: the row shows a dot in its label
+/// cell until Apply or Reset. The mark is consumed by that row.
+pub fn mark_next_changed(ui: &Ui, changed: bool) {
+    if changed {
+        ui.data_mut(|d| d.insert_temp(changed_id(), true));
+    }
+}
+
+fn changed_id() -> egui::Id {
+    egui::Id::unique("kit-next-row-changed")
+}
+
 /// One row of a properties table, as Revit's properties palette lays them out: the label
 /// cell on the left, a rule between the cells and the value cell on the right, a rule under
 /// the row. The value's widgets are flat until they are hovered or edited, so the table reads
@@ -293,7 +305,17 @@ pub fn prop_row<R>(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui) -> R) -> 
         ui.set_min_height(ROW_HEIGHT);
         ui.spacing_mut().item_spacing.x = 0.0;
         let (label_rect, _) = ui.allocate_exact_size(vec2(LABEL_WIDTH, ROW_HEIGHT), Sense::hover());
+        let changed = ui
+            .data_mut(|d| d.remove_temp::<bool>(changed_id()))
+            .unwrap_or(false);
         let painter = ui.painter();
+        if changed {
+            painter.circle_filled(
+                pos2(label_rect.left() + 3.0, label_rect.center().y),
+                2.5,
+                palette.link,
+            );
+        }
         let galley = painter.layout(
             label.to_owned(),
             FontId::proportional(12.0),
@@ -363,6 +385,117 @@ pub fn prop_button(ui: &mut Ui, label: &str, text: &str) -> bool {
         )
         .clicked()
     })
+}
+
+/// A text property in a table row: the field fills the value cell.
+pub fn prop_text(ui: &mut Ui, label: &str, text: &mut String) -> Response {
+    prop_row(ui, label, |ui| {
+        ui.add(
+            egui::TextEdit::singleline(text)
+                .desired_width((ui.available_width() - SPACE_XS).max(30.0))
+                .char_limit(4096),
+        )
+    })
+}
+
+/// A yes/no property in a table row.
+pub fn prop_check(ui: &mut Ui, label: &str, value: &mut bool) -> Response {
+    prop_row(ui, label, |ui| ui.checkbox(value, ""))
+}
+
+/// A property chosen from a short fixed list, in a table row.
+pub fn prop_choice<T: PartialEq + Copy>(
+    ui: &mut Ui,
+    id: &str,
+    label: &str,
+    value: &mut T,
+    choices: &[(T, &str)],
+) {
+    prop_row(ui, label, |ui| {
+        let shown = choices
+            .iter()
+            .find(|(c, _)| c == value)
+            .map_or("", |(_, name)| name);
+        egui::ComboBox::from_id_salt(id)
+            .width((ui.available_width() - SPACE_XS).max(30.0))
+            .selected_text(shown)
+            .truncate()
+            .show_ui(ui, |ui| {
+                for (choice, name) in choices {
+                    ui.selectable_value(value, *choice, *name);
+                }
+            });
+    });
+}
+
+/// A picked value shown read-only in a table row, or `missing` muted while nothing is picked.
+pub fn prop_info(ui: &mut Ui, label: &str, value: Option<&str>, missing: &str) {
+    prop_row(ui, label, |ui| {
+        let palette = Palette::current(ui);
+        match value {
+            Some(text) => ui.add(egui::Label::new(egui::RichText::new(text).size(12.0)).truncate()),
+            None => ui.label(egui::RichText::new(missing).size(12.0).color(palette.muted)),
+        }
+    });
+}
+
+/// What the action bar of an editor was asked to do this frame.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Actions {
+    /// The main action (Apply, Create, Update) was pressed.
+    pub primary: bool,
+    /// Cancel or Close was pressed.
+    pub cancel: bool,
+}
+
+/// The action bar every editor of the properties panel ends with: the main action filled, then
+/// Cancel, at the full width of the panel and the same height everywhere; a spinner while a
+/// command runs.
+pub fn actions(
+    ui: &mut Ui,
+    primary: &str,
+    primary_enabled: bool,
+    cancel: &str,
+    busy: bool,
+) -> Actions {
+    let mut out = Actions::default();
+    ui.add_space(SPACE_S);
+    ui.separator();
+    ui.add_space(SPACE_XS);
+    ui.columns(2, |columns| {
+        if let [left, right] = columns {
+            out.primary = left
+                .with_layout(
+                    egui::Layout::top_down_justified(egui::Align::Center),
+                    |ui| {
+                        crate::theme::button(
+                            ui,
+                            crate::theme::Kind::Primary,
+                            primary,
+                            primary_enabled && !busy,
+                        )
+                        .clicked()
+                    },
+                )
+                .inner;
+            out.cancel = right
+                .with_layout(
+                    egui::Layout::top_down_justified(egui::Align::Center),
+                    |ui| {
+                        crate::theme::button(ui, crate::theme::Kind::Secondary, cancel, !busy)
+                            .clicked()
+                    },
+                )
+                .inner;
+        }
+    });
+    if busy {
+        ui.horizontal(|ui| {
+            ui.spinner();
+            ui.label(egui::RichText::new("Running…").size(11.0));
+        });
+    }
+    out
 }
 
 /// A read-only property row: the value right-aligned in the value column, with its unit muted
@@ -446,6 +579,25 @@ mod tests {
             frame(&ctx, Vec::new(), body);
         }
         assert!(shown.get(), "the click opened it");
+    }
+
+    #[test]
+    fn a_changed_mark_dots_only_the_next_row() {
+        let ctx = egui::Context::default();
+        let output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            mark_next_changed(ui, true);
+            prop_row(ui, "Changed", |ui| ui.label("a"));
+            prop_row(ui, "Same", |ui| ui.label("b"));
+            mark_next_changed(ui, false);
+            prop_row(ui, "Also same", |ui| ui.label("c"));
+        });
+        let dots = output
+            .shapes
+            .iter()
+            .filter(|s| matches!(&s.shape, egui::Shape::Circle(_)))
+            .count();
+        output.drop_without_applying_deltas();
+        assert_eq!(dots, 1);
     }
 
     #[test]

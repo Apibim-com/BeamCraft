@@ -5,7 +5,7 @@
 
 use super::{App, workbench::Bench};
 use crate::grid::{FamilyForm, GridScene};
-use crate::theme::{self, Kind, Palette};
+use crate::theme::{self, Palette};
 use crate::tools::ToolError;
 use egui::Ui;
 use std::sync::Arc;
@@ -19,14 +19,16 @@ pub(super) struct GridEdit {
     source: Option<beamcraft_model::grid::Grid>,
 }
 
+/// One text property of the grid form as a table row, with a muted hint while it is empty.
 fn field(ui: &mut Ui, label: &str, value: &mut String, hint: &str) {
-    ui.label(theme::bold(label, 12.0));
-    ui.add(
-        egui::TextEdit::singleline(value)
-            .hint_text(hint)
-            .desired_width(ui.available_width())
-            .char_limit(4096),
-    );
+    crate::kit::prop_row(ui, label, |ui| {
+        ui.add(
+            egui::TextEdit::singleline(value)
+                .hint_text(hint)
+                .desired_width((ui.available_width() - crate::kit::SPACE_XS).max(30.0))
+                .char_limit(4096),
+        );
+    });
 }
 
 fn family(ui: &mut Ui, title: &str, form: &mut FamilyForm, hint: &str) {
@@ -53,14 +55,8 @@ fn family(ui: &mut Ui, title: &str, form: &mut FamilyForm, hint: &str) {
             );
         crate::kit::fold(ui, title, "Line limits", false, |ui| {
             let [start, end] = &mut form.span;
-            ui.columns(2, |columns| {
-                for (column, (label, value)) in columns
-                    .iter_mut()
-                    .zip([("Line start (mm)", start), ("Line end (mm)", end)])
-                {
-                    field(column, label, value, "Automatic");
-                }
-            });
+            field(ui, "Line start (mm)", start, "Automatic");
+            field(ui, "Line end (mm)", end, "Automatic");
         });
     });
 }
@@ -335,7 +331,11 @@ impl App {
             .is_none_or(|edit| edit.original != self.grid_form);
         let drawn = self.grid_drawn;
         let line_editable = self.grid_edit.as_ref().is_none_or(|e| !e.stale);
-        ui.label("Horizontal project axes. Levels are managed separately.");
+        crate::kit::type_box(
+            ui,
+            theme::Icon::Grid,
+            if editing { "Grid" } else { "New grid" },
+        );
         if self.grid_edit.as_ref().is_some_and(|edit| edit.stale) {
             ui.colored_label(Palette::current(ui).error, "This grid changed while you were editing. Select it again before applying changes.");
         }
@@ -379,42 +379,30 @@ impl App {
                     }
                 });
             });
-        ui.add_space(8.0);
-        ui.horizontal(|ui| {
-            if theme::button(
-                ui,
-                Kind::Primary,
-                if editing {
-                    "Apply changes"
-                } else {
-                    "Create grid"
-                },
-                !busy
-                    && if drawn {
-                        line_editable
-                    } else {
-                        editable && changed
-                    },
-            )
-            .clicked()
-            {
-                self.start_grid();
-            }
-            if theme::button(ui, Kind::Secondary, "Cancel", !busy).clicked() {
-                self.grid_edit = None;
-                self.grid_line = crate::grid::DrawLineForm::default();
-                self.grid_form = crate::grid::GridForm::default();
-                self.grid_note = None;
-                self.set_bench(Bench::Select);
-            }
-        });
-        if self.grid_job.is_some() {
-            ui.spinner();
-            ui.label(if editing {
-                "Updating grid…"
+        let done = crate::kit::actions(
+            ui,
+            if editing {
+                "Apply changes"
             } else {
-                "Creating grid…"
-            });
+                "Create grid"
+            },
+            if drawn {
+                line_editable
+            } else {
+                editable && changed
+            },
+            "Cancel",
+            busy || self.grid_job.is_some(),
+        );
+        if done.primary {
+            self.start_grid();
+        }
+        if done.cancel {
+            self.grid_edit = None;
+            self.grid_line = crate::grid::DrawLineForm::default();
+            self.grid_form = crate::grid::GridForm::default();
+            self.grid_note = None;
+            self.set_bench(Bench::Select);
         }
         if let Some(note) = &self.grid_note {
             match note {

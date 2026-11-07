@@ -559,6 +559,11 @@ impl Properties {
         self.read.as_ref()
     }
 
+    /// The form as the element was loaded, before any edit.
+    pub fn baseline(&self) -> &Form {
+        &self.baseline
+    }
+
     /// Takes the outcome of a details lookup for `id`: the form is reset to what the engine
     /// reported, a staged edit is dropped, and a failed lookup leaves the properties unknown.
     pub fn load(&mut self, id: &str, result: Result<Details, ToolError>) {

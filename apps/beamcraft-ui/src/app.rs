@@ -1815,8 +1815,13 @@ impl App {
             // every frame the window draws.
             let materials = &self.tools.definitions.materials;
             ui.add_enabled_ui(editable && !busy, |ui| {
+                let base = self.props.baseline().clone();
+                let mark =
+                    |ui: &egui::Ui, changed: bool| crate::kit::mark_next_changed(ui, changed);
                 crate::kit::section(ui, "part", "Identity", true, |ui| {
+                    mark(ui, self.props.form.name != base.name);
                     field(ui, "Name", &mut self.props.form.name, 170.0);
+                    mark(ui, self.props.form.class != base.class);
                     field(ui, "Class", &mut self.props.form.class, 80.0);
                 });
                 crate::kit::section(ui, "part", "Section and material", true, |ui| {
@@ -1824,6 +1829,7 @@ impl App {
                         // A member's profile is chosen from the model's and the project
                         // environment's profiles; the engine rebuilds the body and the mass
                         // (`update-element`).
+                        mark(ui, self.props.form.profile != base.profile);
                         choice_combo(
                             ui,
                             "props-profile",
@@ -1833,6 +1839,7 @@ impl App {
                             false,
                         );
                     }
+                    mark(ui, self.props.form.material != base.material);
                     choice_combo(
                         ui,
                         "props-material",
@@ -1842,6 +1849,7 @@ impl App {
                         false,
                     );
                     if details.is_plate() {
+                        mark(ui, self.props.form.thickness != base.thickness);
                         field(ui, "Thickness, mm", &mut self.props.form.thickness, 80.0);
                     }
                 });
@@ -1850,6 +1858,7 @@ impl App {
                         || "Not assigned".into(),
                         |id| level_choice_label(id, &details.levels),
                     );
+                    mark(ui, self.props.form.level != base.level);
                     crate::kit::prop_row(ui, "Level", |ui| {
                         egui::ComboBox::from_id_salt("props-level")
                             .width((ui.available_width() - crate::kit::FIT).max(80.0))
@@ -1870,10 +1879,12 @@ impl App {
                                 }
                             });
                     });
-                    for (axis, value) in ["X, mm", "Y, mm", "Z, mm"]
+                    for ((axis, value), was) in ["X, mm", "Y, mm", "Z, mm"]
                         .into_iter()
                         .zip(&mut self.props.form.translation)
+                        .zip(&base.translation)
                     {
+                        mark(ui, value != was);
                         field(ui, axis, value, 170.0);
                     }
                 });
@@ -6602,7 +6613,8 @@ pub(crate) mod tests {
         assert_eq!(app.grid_form.name, "External change");
         // Delete edits text while a field has focus, and deletes the grid otherwise.
         let current = draw(&mut app, Vec::new());
-        let name_input = position(&current, "Name") + egui::vec2(0.0, 25.0);
+        // The field sits in the value cell, right of its label.
+        let name_input = position(&current, "Name") + egui::vec2(crate::kit::LABEL_WIDTH, 0.0);
         draw(&mut app, click(name_input));
         let key = |pressed| egui::Event::Key {
             key: egui::Key::Delete,

@@ -2463,6 +2463,13 @@ impl App {
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 ui.add_enabled_ui(!busy, |ui| {
+                    // The saved view the form edits: a row whose value differs from it is marked.
+                    let saved = self
+                        .views
+                        .form
+                        .id
+                        .and_then(|id| self.views.book.get(&id))
+                        .map(crate::views::Form::from_view);
                     let form = &mut self.views.form;
                     // The type box at the top, as Revit's properties palette shows the kind of
                     // what is selected: the view's kind and its name.
@@ -2632,10 +2639,22 @@ impl App {
                             (0, 0) => "Edit…".to_owned(),
                             (f, h) => format!("Edit… ({f} filters, {h} hidden)"),
                         };
+                        crate::kit::mark_next_changed(
+                            ui,
+                            saved.as_ref().is_some_and(|o| {
+                                o.hidden != form.hidden || o.overrides != form.overrides
+                            }),
+                        );
                         if crate::kit::prop_button(ui, "Visibility/Graphics", &vg) {
                             vg_open = !vg_open;
                         }
                         let display = format!("{} · Edit…", mode_name(form.mode));
+                        crate::kit::mark_next_changed(
+                            ui,
+                            saved
+                                .as_ref()
+                                .is_some_and(|o| o.mode != form.mode || o.grids != form.grids),
+                        );
                         if crate::kit::prop_button(ui, "Graphic Display", &display) {
                             display_open = !display_open;
                         }
@@ -2644,11 +2663,25 @@ impl App {
                         } else {
                             "By model · Edit…".to_owned()
                         };
+                        crate::kit::mark_next_changed(
+                            ui,
+                            saved.as_ref().is_some_and(|o| {
+                                o.color_on != form.color_on
+                                    || o.color != form.color
+                                    || o.opacity != form.opacity
+                            }),
+                        );
                         if crate::kit::prop_button(ui, "Color Scheme", &scheme) {
                             scheme_open = !scheme_open;
                         }
                     });
                     section(ui, "Camera", true, |ui| {
+                        crate::kit::mark_next_changed(
+                            ui,
+                            saved
+                                .as_ref()
+                                .is_some_and(|o| o.projection != form.projection),
+                        );
                         row(ui, "Projection", |ui| {
                             egui::ComboBox::from_id_salt("view-projection")
                                 .selected_text(match form.projection {
@@ -2669,7 +2702,15 @@ impl App {
                                     );
                                 });
                         });
+                        crate::kit::mark_next_changed(
+                            ui,
+                            saved.as_ref().is_some_and(|o| o.span != form.span),
+                        );
                         text(ui, "Height, mm", &mut form.span);
+                        crate::kit::mark_next_changed(
+                            ui,
+                            saved.as_ref().is_some_and(|o| o.rotation != form.rotation),
+                        );
                         row(ui, "Rotation, °", |ui| {
                             let [z, x] = &mut form.rotation;
                             let half = ((ui.available_width() - 8.0 - FIT) / 2.0).max(30.0);
@@ -2686,6 +2727,12 @@ impl App {
                         });
                     });
                     section(ui, "Extents", true, |ui| {
+                        crate::kit::mark_next_changed(
+                            ui,
+                            saved.as_ref().is_some_and(|o| {
+                                o.depth_on != form.depth_on || o.depth != form.depth
+                            }),
+                        );
                         row(ui, "Depth", |ui| {
                             let label = if form.depth_on {
                                 "Limited"
@@ -2705,6 +2752,10 @@ impl App {
                             text(ui, "Towards, mm", above);
                             text(ui, "Behind, mm", below);
                         }
+                        crate::kit::mark_next_changed(
+                            ui,
+                            saved.as_ref().is_some_and(|o| o.area != form.area),
+                        );
                         row(ui, "Work area", |ui| {
                             let label = if form.area.is_some() {
                                 "Box"
@@ -2751,6 +2802,10 @@ impl App {
                         });
                     });
                     section(ui, "Identity Data", true, |ui| {
+                        crate::kit::mark_next_changed(
+                            ui,
+                            saved.as_ref().is_some_and(|o| o.name != form.name),
+                        );
                         row(ui, "View name", |ui| {
                             ui.add(
                                 egui::TextEdit::singleline(&mut form.name)
@@ -2760,6 +2815,10 @@ impl App {
                             )
                             .on_hover_text("A view without a name is temporary: it is not saved");
                         });
+                        crate::kit::mark_next_changed(
+                            ui,
+                            saved.as_ref().is_some_and(|o| o.folder != form.folder),
+                        );
                         row(ui, "Folder", |ui| {
                             let shown = if form.folder.is_empty() {
                                 "(top level)".to_owned()
@@ -2827,10 +2886,18 @@ impl App {
                                 }
                             });
                         }
+                        crate::kit::mark_next_changed(
+                            ui,
+                            saved.as_ref().is_some_and(|o| o.favorite != form.favorite),
+                        );
                         row(ui, "Favourite", |ui| {
                             ui.checkbox(&mut form.favorite, "")
                                 .on_hover_text("Listed in quick access");
                         });
+                        crate::kit::mark_next_changed(
+                            ui,
+                            saved.as_ref().is_some_and(|o| o.default != form.default),
+                        );
                         row(ui, "Default view", |ui| {
                             ui.add_enabled(
                                 !default_locked,

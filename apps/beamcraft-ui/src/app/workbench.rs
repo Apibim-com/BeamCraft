@@ -927,6 +927,22 @@ impl App {
                     self.view_panel(ui);
                     return;
                 }
+                // The tools' action bars stay pinned under their forms, like the properties'.
+                if matches!(self.bench, Bench::Bolt | Bench::Weld) {
+                    egui::Panel::bottom("tool-actions")
+                        .frame(
+                            egui::Frame::new()
+                                .fill(palette.surface)
+                                .inner_margin(egui::Margin::symmetric(0, 4)),
+                        )
+                        .show(ui, |ui| {
+                            if self.bench == Bench::Bolt {
+                                self.bolt_actions(ui);
+                            } else {
+                                self.weld_actions(ui);
+                            }
+                        });
+                }
                 if self.bench == Bench::Select && self.props.selected().is_some() {
                     egui::Panel::bottom("property-actions")
                         .exact_size(54.0)

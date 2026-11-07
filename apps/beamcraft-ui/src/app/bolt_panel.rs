@@ -8,12 +8,11 @@
 //! `list-library`; the groups are listed read-only with `bolts`. The reply is the CLI's; a
 //! refusal publishes nothing and is shown next to the form.
 
-use super::{App, PointText, field};
+use super::{App, PointText};
 use crate::command;
 use crate::edit::{Ray, pick_in};
 use crate::tools::{MAX_TEXT, ToolError, decode, rejection, text};
 use beamcraft_json::Json;
-use egui::RichText;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
@@ -969,255 +968,216 @@ impl App {
     }
 
     /// The inspector panel of the Bolt bench.
+    /// The bolt editor's action bar, pinned under the form by the inspector.
+    pub(crate) fn bolt_actions(&mut self, ui: &mut egui::Ui) {
+        let busy = self.bolt.busy() || self.other_command_running();
+        let editing = self.bolt.edit_target.is_some();
+        let done = crate::kit::actions(
+            ui,
+            if editing {
+                "Update group"
+            } else {
+                "Create bolts"
+            },
+            true,
+            "Cancel",
+            busy,
+        );
+        if done.primary {
+            self.start_bolt_commit();
+        }
+        if done.cancel {
+            self.bolt.clear_placement();
+            self.bolt.note = None;
+            self.set_bench(super::workbench::Bench::Select);
+        }
+    }
+
     pub(crate) fn bolt_panel(&mut self, ui: &mut egui::Ui) {
+        use crate::kit;
         let palette = crate::theme::Palette::current(ui);
-        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
         ui.set_max_width(ui.available_width());
         let busy = self.bolt.busy() || self.other_command_running();
         let editing = self.bolt.edit_target.is_some();
-        ui.label(crate::theme::bold(
+        kit::type_box(
+            ui,
+            crate::theme::Icon::Bolt,
             if editing {
-                "Edit bolt group"
+                "Bolt group"
             } else {
-                "Bolt properties"
+                "New bolt group"
             },
-            16.0,
-        ));
+        );
         // The listing is shown from a local copy: picking a row mutates the panel mid-loop.
         let listed_groups = self.bolt.groups.clone();
         let loaded_id = self.bolt.edit_target.clone();
-        ui.horizontal(|ui| {
-            ui.add_sized(
-                egui::vec2(70.0, 28.0),
-                egui::Label::new(egui::RichText::new("Groups").size(11.0)),
-            );
-            let loaded = listed_groups
-                .iter()
-                .find(|listed| Some(listed.id.as_str()) == loaded_id.as_deref());
-            // In edit mode the row also holds the New-group button: a fixed combo width keeps
-            // both on one line.
-            let combo_width = if editing {
-                110.0
-            } else {
-                ui.available_width().max(80.0)
-            };
-            egui::ComboBox::from_id_salt("bolt-groups")
-                .width(combo_width)
-                .selected_text(match loaded {
-                    Some(listed) => listed.name.as_str(),
-                    None if listed_groups.is_empty() => "— none in the model yet",
-                    None => "— pick a group to edit",
-                })
-                .show_ui(ui, |ui| {
-                    for listed in &listed_groups {
-                        let label = format!("{} · {}", listed.name, listed.spacings.len() + 1);
-                        if ui
-                            .selectable_label(loaded.is_some_and(|l| l.id == listed.id), label)
-                            .clicked()
-                        {
-                            let loaded = listed.clone();
-                            self.bolt.load_group(&loaded);
+        kit::section(ui, "bolt", "Group", true, |ui| {
+            kit::prop_row(ui, "Groups", |ui| {
+                let loaded = listed_groups
+                    .iter()
+                    .find(|listed| Some(listed.id.as_str()) == loaded_id.as_deref());
+                egui::ComboBox::from_id_salt("bolt-groups")
+                    .width((ui.available_width() - kit::SPACE_XS).max(60.0))
+                    .truncate()
+                    .selected_text(match loaded {
+                        Some(listed) => listed.name.as_str(),
+                        None if listed_groups.is_empty() => "None in the model yet",
+                        None => "Pick a group to edit",
+                    })
+                    .show_ui(ui, |ui| {
+                        for listed in &listed_groups {
+                            let label = format!("{} · {}", listed.name, listed.spacings.len() + 1);
+                            if ui
+                                .selectable_label(loaded.is_some_and(|l| l.id == listed.id), label)
+                                .clicked()
+                            {
+                                let loaded = listed.clone();
+                                self.bolt.load_group(&loaded);
+                            }
                         }
-                    }
-                });
-            if editing && ui.button("New group").clicked() {
-                self.bolt.exit_edit();
-            }
-        });
-        let picked = |ui: &mut egui::Ui, label: &str, value: Option<&String>| {
-            ui.horizontal(|ui| {
-                ui.label(RichText::new(label).size(11.0));
-                match value {
-                    Some(id) => ui.label(RichText::new(id.as_str()).size(11.0)),
-                    None => ui.label(
-                        RichText::new("— click a part")
-                            .size(11.0)
-                            .color(palette.muted),
-                    ),
-                };
+                    });
             });
-        };
-        let point = |ui: &mut egui::Ui, label: &str, value: Option<[f64; 3]>| {
-            ui.horizontal(|ui| {
-                ui.label(RichText::new(label).size(11.0));
-                match value {
-                    Some(p) => ui.label(RichText::new(PointText(p).to_string()).size(11.0)),
-                    None => ui.label(
-                        RichText::new("— click a point")
-                            .size(11.0)
-                            .color(palette.muted),
-                    ),
-                };
-            });
-        };
-        for (index, part) in self.bolt.parts.iter().enumerate() {
-            picked(ui, &format!("Part {}", index + 1), Some(part));
-        }
-        if self.bolt.parts.len() < 2 {
-            picked(ui, &format!("Part {}", self.bolt.parts.len() + 1), None);
-        }
-        point(ui, "Point 1", self.bolt.point1);
-        point(ui, "Point 2", self.bolt.point2);
-        ui.horizontal(|ui| {
-            ui.label(
-                match (
-                    self.bolt.parts.len(),
-                    self.bolt.point1.is_some(),
-                    self.bolt.point2.is_some(),
-                ) {
-                    (0..=0, _, _) => "Click the main part in the model view.",
-                    (1, _, _) => "Click the secondary part in the model view.",
-                    (_, false, _) => "Click the first point on the work plane.",
-                    (_, true, false) => {
-                        "Click the second point: the row runs from point 1 towards it."
-                    }
-                    _ => "Parts and points are picked; fill the form.",
-                },
-            );
-            if ui
-                .add_enabled(
-                    !self.bolt.parts.is_empty()
-                        || self.bolt.point1.is_some()
-                        || self.bolt.point2.is_some(),
-                    egui::Button::new("Clear picks"),
-                )
-                .clicked()
-            {
-                self.bolt.clear_placement();
-            }
-        });
-        field(ui, "Name", &mut self.bolt.name, 160.0);
-        field(ui, "Fastener library (path)", &mut self.bolt.library, 240.0);
-        ui.horizontal(|ui| {
-            if ui
-                .add_enabled(!busy, egui::Button::new("Load entries"))
-                .clicked()
-            {
-                self.start_entries_load();
-            }
             if editing {
-                ui.checkbox(&mut self.bolt.repin, "Follow library (--repin)");
+                kit::prop_row(ui, "", |ui| {
+                    if ui.button("New group").clicked() {
+                        self.bolt.exit_edit();
+                    }
+                });
             }
-            egui::ComboBox::from_id_salt("bolt-designation")
-                .width(ui.available_width().max(80.0))
-                .selected_text(if self.bolt.designation.is_empty() {
-                    "— load a library first"
-                } else {
-                    self.bolt.designation.as_str()
-                })
-                .show_ui(ui, |ui| {
-                    for listed in &self.bolt.entries {
-                        if ui
-                            .selectable_label(self.bolt.designation == *listed, listed.as_str())
-                            .clicked()
-                        {
-                            self.bolt.designation = listed.clone();
-                        }
-                    }
-                });
+            kit::prop_text(ui, "Name", &mut self.bolt.name);
         });
-        let small_label = |ui: &mut egui::Ui, width: f32, label: &str| {
-            ui.add_sized(
-                egui::vec2(width, 28.0),
-                egui::Label::new(egui::RichText::new(label).size(11.0)),
+        kit::section(ui, "bolt", "Parts and points", true, |ui| {
+            let parts = self.bolt.parts.clone();
+            for (index, part) in parts.iter().enumerate() {
+                kit::prop_info(ui, &format!("Part {}", index + 1), Some(part), "");
+            }
+            if parts.len() < 2 {
+                kit::prop_info(
+                    ui,
+                    &format!("Part {}", parts.len() + 1),
+                    None,
+                    "Click a part",
+                );
+            }
+            let point1 = self.bolt.point1.map(|p| PointText(p).to_string());
+            let point2 = self.bolt.point2.map(|p| PointText(p).to_string());
+            kit::prop_info(ui, "Point 1", point1.as_deref(), "Click a point");
+            kit::prop_info(ui, "Point 2", point2.as_deref(), "Click a point");
+            kit::prop_row(ui, "", |ui| {
+                ui.label(
+                    egui::RichText::new(
+                        match (
+                            self.bolt.parts.len(),
+                            self.bolt.point1.is_some(),
+                            self.bolt.point2.is_some(),
+                        ) {
+                            (0..=0, _, _) => "Click the main part in the model view.",
+                            (1, _, _) => "Click the secondary part in the model view.",
+                            (_, false, _) => "Click the first point on the work plane.",
+                            (_, true, false) => "Click the second point: the row runs towards it.",
+                            _ => "Parts and points are picked.",
+                        },
+                    )
+                    .size(11.0)
+                    .color(palette.muted),
+                );
+            });
+            kit::prop_row(ui, "", |ui| {
+                if ui
+                    .add_enabled(
+                        !self.bolt.parts.is_empty()
+                            || self.bolt.point1.is_some()
+                            || self.bolt.point2.is_some(),
+                        egui::Button::new("Clear picks"),
+                    )
+                    .clicked()
+                {
+                    self.bolt.clear_placement();
+                }
+            });
+        });
+        kit::section(ui, "bolt", "Fastener", true, |ui| {
+            kit::prop_text(ui, "Library (path)", &mut self.bolt.library);
+            kit::prop_row(ui, "", |ui| {
+                if ui
+                    .add_enabled(!busy, egui::Button::new("Load entries"))
+                    .clicked()
+                {
+                    self.start_entries_load();
+                }
+            });
+            kit::prop_row(ui, "Designation", |ui| {
+                egui::ComboBox::from_id_salt("bolt-designation")
+                    .width((ui.available_width() - kit::SPACE_XS).max(60.0))
+                    .truncate()
+                    .selected_text(if self.bolt.designation.is_empty() {
+                        "Load a library first"
+                    } else {
+                        self.bolt.designation.as_str()
+                    })
+                    .show_ui(ui, |ui| {
+                        for listed in &self.bolt.entries {
+                            if ui
+                                .selectable_label(self.bolt.designation == *listed, listed.as_str())
+                                .clicked()
+                            {
+                                self.bolt.designation = listed.clone();
+                            }
+                        }
+                    });
+            });
+            if editing {
+                kit::prop_check(ui, "Follow library", &mut self.bolt.repin);
+            }
+        });
+        kit::section(ui, "bolt", "Holes and washers", true, |ui| {
+            kit::prop_choice(
+                ui,
+                "bolt-holes",
+                "Holes",
+                &mut self.bolt.holes,
+                &[
+                    (Holes::Generate, Holes::Generate.label()),
+                    (Holes::Quiet, Holes::Quiet.label()),
+                ],
             );
-        };
-        let small_field = |ui: &mut egui::Ui, width: f32, text: &mut String| {
-            ui.add(
-                egui::TextEdit::singleline(text)
-                    .desired_width(width.min(ui.available_width()))
-                    .char_limit(MAX_TEXT),
+            kit::prop_text(ui, "Clearance, mm", &mut self.bolt.clearance);
+            kit::prop_check(ui, "Washer under head", &mut self.bolt.washer_head);
+            kit::prop_check(ui, "Washer under nut", &mut self.bolt.washer_nut);
+        });
+        kit::section(ui, "bolt", "Position", true, |ui| {
+            kit::prop_text(ui, "On plane, mm", &mut self.bolt.on_plane);
+            kit::prop_text(ui, "Rotation, °", &mut self.bolt.rotation);
+            kit::prop_text(ui, "Depth, mm", &mut self.bolt.depth);
+            kit::prop_text(ui, "Offset start, mm", &mut self.bolt.offset_start);
+        });
+        kit::section(ui, "bolt", "Spacing", true, |ui| {
+            kit::prop_choice(
+                ui,
+                "bolt-spacing",
+                "Spacing",
+                &mut self.bolt.spacing,
+                &[
+                    (Spacing::List, Spacing::List.label()),
+                    (Spacing::Pitch, Spacing::Pitch.label()),
+                    (Spacing::OffsetEnd, Spacing::OffsetEnd.label()),
+                ],
             );
-        };
-        ui.horizontal(|ui| {
-            small_label(ui, 44.0, "Holes");
-            egui::ComboBox::from_id_salt("bolt-holes")
-                .width(120.0)
-                .selected_text(self.bolt.holes.label())
-                .show_ui(ui, |ui| {
-                    for choice in [Holes::Generate, Holes::Quiet] {
-                        if ui
-                            .selectable_label(self.bolt.holes == choice, choice.label())
-                            .clicked()
-                        {
-                            self.bolt.holes = choice;
-                        }
-                    }
-                });
-            small_label(ui, 70.0, "Clearance (mm)");
-            small_field(ui, 50.0, &mut self.bolt.clearance);
-        });
-        ui.horizontal(|ui| {
-            ui.checkbox(&mut self.bolt.washer_head, "Washer under head");
-            ui.checkbox(&mut self.bolt.washer_nut, "under nut");
-        });
-        ui.horizontal(|ui| {
-            small_label(ui, 70.0, "On plane (mm)");
-            small_field(ui, 50.0, &mut self.bolt.on_plane);
-            small_label(ui, 56.0, "Rot (deg)");
-            small_field(ui, 44.0, &mut self.bolt.rotation);
-            small_label(ui, 44.0, "Depth (mm)");
-            small_field(ui, 50.0, &mut self.bolt.depth);
-        });
-        ui.horizontal(|ui| {
-            small_label(ui, 70.0, "Offset start (mm)");
-            small_field(ui, 50.0, &mut self.bolt.offset_start);
-            small_label(ui, 56.0, "Spacing");
-            egui::ComboBox::from_id_salt("bolt-spacing")
-                .width(ui.available_width().max(70.0))
-                .selected_text(self.bolt.spacing.label())
-                .show_ui(ui, |ui| {
-                    for choice in [Spacing::List, Spacing::Pitch, Spacing::OffsetEnd] {
-                        if ui
-                            .selectable_label(self.bolt.spacing == choice, choice.label())
-                            .clicked()
-                        {
-                            self.bolt.spacing = choice;
-                        }
-                    }
-                });
-        });
-        ui.horizontal(|ui| {
             match self.bolt.spacing {
                 Spacing::List => {
-                    small_label(ui, 70.0, "Spacings (mm)");
-                    small_field(ui, 120.0, &mut self.bolt.spacings);
+                    kit::prop_text(ui, "Spacings, mm", &mut self.bolt.spacings);
                 }
                 Spacing::Pitch => {
-                    small_label(ui, 70.0, "Pitch (mm)");
-                    small_field(ui, 50.0, &mut self.bolt.pitch);
+                    kit::prop_text(ui, "Pitch, mm", &mut self.bolt.pitch);
                 }
                 Spacing::OffsetEnd => {
-                    small_label(ui, 70.0, "Offset end (mm)");
-                    small_field(ui, 50.0, &mut self.bolt.offset_end);
+                    kit::prop_text(ui, "Offset end, mm", &mut self.bolt.offset_end);
                 }
-            };
+            }
             if self.bolt.spacing != Spacing::List {
-                small_label(ui, 44.0, "Count");
-                small_field(ui, 44.0, &mut self.bolt.count);
+                kit::prop_text(ui, "Count", &mut self.bolt.count);
             }
         });
-        ui.add_enabled_ui(!busy, |ui| {
-            ui.horizontal(|ui| {
-                let label = if editing {
-                    "Update group"
-                } else {
-                    "Create bolts"
-                };
-                if ui.button(label).clicked() {
-                    self.start_bolt_commit();
-                }
-                if ui.button("Cancel").clicked() {
-                    self.bolt.clear_placement();
-                    self.bolt.note = None;
-                    self.set_bench(super::workbench::Bench::Select);
-                }
-            });
-        });
-        if busy {
-            ui.spinner();
-            ui.label("Saving bolt group…");
-        }
         match &self.bolt.note {
             Some(Ok(message)) => {
                 ui.label(message);
