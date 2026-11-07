@@ -504,15 +504,11 @@ fn choice_combo(
             )
         })
         .unwrap_or_else(|| if required { "choose…" } else { "none" }.to_owned());
-    // The label sits left of the list (as with the text fields): drawn below it, it read as
-    // the label of the next drop-down.
-    ui.horizontal(|ui| {
-        ui.add_sized(
-            egui::vec2(70.0, 28.0),
-            egui::Label::new(egui::RichText::new(label).size(11.0)),
-        );
+    // The label sits in the properties grid's label column, as with the text fields.
+    crate::kit::prop_row(ui, label, |ui| {
         egui::ComboBox::from_id_salt(id)
-            .width(ui.available_width().max(80.0))
+            .width((ui.available_width() - crate::kit::FIT).max(80.0))
+            .truncate()
             .selected_text(selected)
             .show_ui(ui, |ui| {
                 if !required {
@@ -575,15 +571,17 @@ fn viewport_sense() -> egui::Sense {
     egui::Sense::CLICK | egui::Sense::DRAG
 }
 
+/// One text property: the label in the properties grid's label column, the field filling the
+/// value column (`width` is the most it takes, so a short number stays short).
 fn field(ui: &mut egui::Ui, label: &str, text: &mut String, width: f32) {
-    ui.horizontal(|ui| {
-        ui.add_sized(
-            egui::vec2(70.0, 28.0),
-            egui::Label::new(egui::RichText::new(label).size(11.0)),
-        );
+    crate::kit::prop_row(ui, label, |ui| {
         ui.add(
             egui::TextEdit::singleline(text)
-                .desired_width(width.min(ui.available_width()))
+                .desired_width(
+                    width
+                        .max(160.0)
+                        .min((ui.available_width() - crate::kit::FIT).max(40.0)),
+                )
                 .char_limit(MAX_TEXT),
         );
     });
@@ -1765,10 +1763,18 @@ impl App {
 
     fn props_panel(&mut self, ui: &mut egui::Ui) {
         let Some(_id) = self.props.selected().map(str::to_owned) else {
-            ui.label("Select a part or grid to see its properties.");
+            let palette = crate::theme::Palette::current(ui);
+            ui.add_space(crate::kit::SPACE_S);
+            ui.label(
+                egui::RichText::new(
+                    "Click an element to see its properties, or a view in the browser or empty \
+                     space in the model to see the view's.",
+                )
+                .size(12.0)
+                .color(palette.muted),
+            );
             return;
         };
-        let palette = crate::theme::Palette::current(ui);
         let state = self.props.state();
         match &state {
             Some(State::Current) if self.props.head_known() => {}
@@ -1794,13 +1800,16 @@ impl App {
             if let Some((_, count)) = &details.shared_definition {
                 ui.label(format!("Shape and material edits affect all {count} shared parts. Name, position and level affect this part."));
             }
-            ui.add_space(8.0);
-            ui.label(
-                egui::RichText::new(details.kind.to_uppercase())
-                    .size(10.0)
-                    .color(palette.muted),
-            );
-            ui.label(crate::theme::bold(&details.name, 18.0));
+            let icon = match details.kind.as_str() {
+                "beam" => crate::theme::Icon::Beam,
+                "column" => crate::theme::Icon::Column,
+                "plate" => crate::theme::Icon::Plate,
+                _ => crate::theme::Icon::Block,
+            };
+            let mut kind = details.kind.clone();
+            if let Some(first) = kind.get_mut(0..1) {
+                first.make_ascii_uppercase();
+            }
             let subtitle = [
                 details.profile_name.as_deref(),
                 details.material_name.as_deref(),
@@ -1809,72 +1818,73 @@ impl App {
             .flatten()
             .collect::<Vec<_>>()
             .join(" · ");
-            if !subtitle.is_empty() {
-                ui.label(
-                    egui::RichText::new(subtitle)
-                        .size(11.0)
-                        .color(palette.muted),
-                );
-            }
-            ui.add_space(12.0);
-            ui.separator();
-            ui.add_space(12.0);
+            crate::kit::type_box(ui, icon, &kind, &details.name, &subtitle);
             // Borrowed beside the form (disjoint fields), never copied: the panel is laid out in
             // every frame the window draws.
             let materials = &self.tools.definitions.materials;
             ui.add_enabled_ui(editable && !busy, |ui| {
-                ui.label(egui::RichText::new("General").size(12.0));
-                field(ui, "Name", &mut self.props.form.name, 170.0);
-                field(ui, "Class", &mut self.props.form.class, 80.0);
-                if !details.is_plate() {
-                    // A member's profile is chosen from the model's and the project environment's
-                    // profiles; the engine rebuilds the body and the mass (`update-element`).
+                crate::kit::section(ui, "part", "Identity", true, |ui| {
+                    field(ui, "Name", &mut self.props.form.name, 170.0);
+                    field(ui, "Class", &mut self.props.form.class, 80.0);
+                });
+                crate::kit::section(ui, "part", "Section and material", true, |ui| {
+                    if !details.is_plate() {
+                        // A member's profile is chosen from the model's and the project
+                        // environment's profiles; the engine rebuilds the body and the mass
+                        // (`update-element`).
+                        choice_combo(
+                            ui,
+                            "props-profile",
+                            "Profile",
+                            &mut self.props.form.profile,
+                            &self.tools.definitions.profiles,
+                            false,
+                        );
+                    }
                     choice_combo(
                         ui,
-                        "props-profile",
-                        "Profile",
-                        &mut self.props.form.profile,
-                        &self.tools.definitions.profiles,
+                        "props-material",
+                        "Material",
+                        &mut self.props.form.material,
+                        materials,
                         false,
                     );
-                }
-                choice_combo(
-                    ui,
-                    "props-material",
-                    "Material",
-                    &mut self.props.form.material,
-                    materials,
-                    false,
-                );
-                if details.is_plate() {
-                    field(ui, "Thickness", &mut self.props.form.thickness, 80.0);
-                }
-                let level_label = self.props.form.level.as_ref().map_or_else(
-                    || "Not assigned".into(),
-                    |id| level_choice_label(id, &details.levels),
-                );
-                ui.label("Level");
-                egui::ComboBox::from_id_salt("props-level")
-                    .selected_text(level_label)
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut self.props.form.level, None, "Not assigned");
-                        for (id, _, _) in &details.levels {
-                            ui.selectable_value(
-                                &mut self.props.form.level,
-                                Some(id.clone()),
-                                level_choice_label(id, &details.levels),
-                            );
-                        }
+                    if details.is_plate() {
+                        field(ui, "Thickness, mm", &mut self.props.form.thickness, 80.0);
+                    }
+                });
+                crate::kit::section(ui, "part", "Placement", true, |ui| {
+                    let level_label = self.props.form.level.as_ref().map_or_else(
+                        || "Not assigned".into(),
+                        |id| level_choice_label(id, &details.levels),
+                    );
+                    crate::kit::prop_row(ui, "Level", |ui| {
+                        egui::ComboBox::from_id_salt("props-level")
+                            .width((ui.available_width() - crate::kit::FIT).max(80.0))
+                            .truncate()
+                            .selected_text(level_label)
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(
+                                    &mut self.props.form.level,
+                                    None,
+                                    "Not assigned",
+                                );
+                                for (id, _, _) in &details.levels {
+                                    ui.selectable_value(
+                                        &mut self.props.form.level,
+                                        Some(id.clone()),
+                                        level_choice_label(id, &details.levels),
+                                    );
+                                }
+                            });
                     });
-                ui.add_space(18.0);
-                ui.label(egui::RichText::new("Position / mm").size(12.0));
-                ui.add_space(8.0);
-                for (axis, value) in ["X", "Y", "Z"]
-                    .into_iter()
-                    .zip(&mut self.props.form.translation)
-                {
-                    field(ui, axis, value, 170.0);
-                }
+                    for (axis, value) in ["X, mm", "Y, mm", "Z, mm"]
+                        .into_iter()
+                        .zip(&mut self.props.form.translation)
+                    {
+                        field(ui, axis, value, 170.0);
+                    }
+                });
             });
             crate::kit::section(ui, "part", "Quantities", true, |ui| {
                 let quantities = &details.quantities;
@@ -1961,50 +1971,6 @@ impl App {
             let id = details.id.clone();
             self.props.load(&id, Ok(details));
             self.props_note = None;
-        }
-    }
-
-    fn publish_panel(&mut self, ui: &mut egui::Ui) {
-        match self.publisher.target() {
-            Err(why) => {
-                ui.label(why);
-            }
-            Ok(_) => {
-                if let Some(status) = &self.publisher.status {
-                    ui.label(if status.unsent_revisions == 0 {
-                        "All changes are published."
-                    } else {
-                        "This workspace has unpublished changes."
-                    });
-                    if !status.base_is_current {
-                        ui.colored_label(
-                            RED,
-                            "The shared model changed. Review it before publishing.",
-                        );
-                    }
-                }
-                let enabled =
-                    self.publisher.phase() == Phase::Idle && !self.other_command_running();
-                if ui
-                    .add_enabled(enabled, egui::Button::new("Publish…"))
-                    .clicked()
-                    && let Err(why) = self.publisher.request()
-                {
-                    self.publisher.note = Some(Err(why.into()));
-                }
-                if self.publisher.phase() == Phase::Running {
-                    ui.label("Publishing…");
-                }
-            }
-        }
-        match &self.publisher.note {
-            Some(Ok(message)) => {
-                ui.label(message);
-            }
-            Some(Err(message)) => {
-                ui.colored_label(RED, message);
-            }
-            None => {}
         }
     }
 

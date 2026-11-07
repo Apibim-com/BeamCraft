@@ -3190,29 +3190,7 @@ fn kind_name(kind: crate::views::ViewKind) -> &'static str {
 /// The type box: a framed icon with the view's kind and name beside it, as the top of Revit's
 /// properties palette shows the type of what is selected.
 fn type_box(ui: &mut egui::Ui, header: &TypeBox) {
-    let palette = theme::Palette::current(ui);
-    egui::Frame::new()
-        .stroke(egui::Stroke::new(1.0, palette.rule))
-        .fill(palette.surface)
-        .inner_margin(egui::Margin::same(6))
-        .corner_radius(3)
-        .show(ui, |ui| {
-            ui.set_width((ui.available_width() - FIT).max(40.0));
-            ui.horizontal(|ui| {
-                theme::icon(ui, header.icon, 28.0, palette.text);
-                ui.vertical(|ui| {
-                    ui.label(egui::RichText::new(&header.kind).strong().size(13.0));
-                    ui.add(
-                        egui::Label::new(
-                            egui::RichText::new(&header.name)
-                                .size(11.0)
-                                .color(palette.muted),
-                        )
-                        .truncate(),
-                    );
-                });
-            });
-        });
+    crate::kit::type_box(ui, header.icon, &header.kind, &header.name, "");
 }
 
 /// What the filters table knows of the evaluation of the shown view's filters.

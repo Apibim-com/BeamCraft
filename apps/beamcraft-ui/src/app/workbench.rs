@@ -823,6 +823,14 @@ impl App {
                                 pick = Some(Bench::Annotations);
                             }
                         });
+                        group(ui, "Drawings", &mut |ui| {
+                            if tool_button(ui, Icon::Sheet, "Sheet editor", self.sheet_editor.open, true).clicked() {
+                                self.sheet_editor.open = true;
+                            }
+                            if tool_button(ui, Icon::Table, "Drawing document", self.drawing_manager.open, true).clicked() {
+                                self.drawing_manager.open = true;
+                            }
+                        });
                         ui.vertical(|ui| {
                             ui.label(theme::bold("Workspace", 13.0));
                             ui.label("Publish from the header; inspect revision and navigation in Details.");
@@ -856,7 +864,7 @@ impl App {
             });
     }
 
-    /// The inspector: what the chosen tool needs, then the publishing state.
+    /// The inspector: the properties of what is selected, or what the chosen tool needs.
     pub(crate) fn inspector(&mut self, ui: &mut Ui) {
         let palette = Palette::current(ui);
         egui::Panel::right("model-inspector")
@@ -947,25 +955,6 @@ impl App {
                             Bench::Annotations => self.annotation_panel(ui),
                             Bench::View => self.view_panel(ui),
                         }
-                        ui.add_space(12.0);
-                        crate::kit::section(ui, "inspector", "Publishing", false, |ui| {
-                            self.publish_panel(ui)
-                        });
-                        crate::kit::section(ui, "inspector", "Sheet editor", false, |ui| {
-                            ui.label("Move the placed views of a drawing document on its sheet.");
-                            if ui.button("Open sheet editor").clicked() {
-                                self.sheet_editor.open = true;
-                            }
-                        });
-                        crate::kit::section(ui, "inspector", "Drawing document", false, |ui| {
-                            ui.label(
-                                "Publish a drawing document version and export one, bound \
-                                     to its archived model source.",
-                            );
-                            if ui.button("Open drawing document").clicked() {
-                                self.drawing_manager.open = true;
-                            }
-                        });
                     });
             });
     }

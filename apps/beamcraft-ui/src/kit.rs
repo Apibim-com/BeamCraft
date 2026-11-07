@@ -216,6 +216,41 @@ pub fn toggle_node(ui: &Ui, id: egui::Id, default_open: bool) {
     state.store(ui.ctx());
 }
 
+/// The type box at the top of a properties panel, as Revit's properties palette shows the type
+/// of what is selected: a framed icon with the kind in bold and the name, and an optional
+/// muted detail line (profile and material, a view's plane).
+pub fn type_box(ui: &mut Ui, icon: crate::theme::Icon, kind: &str, name: &str, detail: &str) {
+    let palette = Palette::current(ui);
+    egui::Frame::new()
+        .stroke(Stroke::new(1.0, palette.rule))
+        .fill(palette.surface)
+        .inner_margin(egui::Margin::same(8))
+        .corner_radius(4)
+        .show(ui, |ui| {
+            ui.set_width((ui.available_width() - FIT).max(40.0));
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = SPACE_S;
+                crate::theme::icon(ui, icon, 28.0, palette.text);
+                ui.vertical(|ui| {
+                    ui.spacing_mut().item_spacing.y = 1.0;
+                    ui.add(
+                        egui::Label::new(egui::RichText::new(name).strong().size(13.0)).truncate(),
+                    );
+                    ui.label(egui::RichText::new(kind).size(11.0).color(palette.muted));
+                    if !detail.is_empty() {
+                        ui.add(
+                            egui::Label::new(
+                                egui::RichText::new(detail).size(11.0).color(palette.muted),
+                            )
+                            .truncate(),
+                        );
+                    }
+                });
+            });
+        });
+    ui.add_space(SPACE_S);
+}
+
 /// A search field with its magnifier inside the frame, filling the row up to `reserve`
 /// points kept free at its end. Returns the text edit's response.
 pub fn search_field(ui: &mut Ui, text: &mut String, hint: &str, reserve: f32) -> Response {
