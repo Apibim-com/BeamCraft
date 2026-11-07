@@ -874,12 +874,8 @@ impl App {
                         } else {
                             form.name.trim().to_owned()
                         };
-                        let projection = if side == PartSide::Spatial {
-                            Projection::Perspective
-                        } else {
-                            Projection::Orthographic
-                        };
-                        Ok((name, plane, Some(span), Some(projection)))
+                        // Every side, the 3D one too, starts orthographic.
+                        Ok((name, plane, Some(span), Some(Projection::Orthographic)))
                     })
                     .collect::<Result<Vec<_>, String>>()?
             }
