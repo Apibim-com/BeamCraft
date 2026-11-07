@@ -1810,15 +1810,7 @@ impl App {
             if let Some(first) = kind.get_mut(0..1) {
                 first.make_ascii_uppercase();
             }
-            let subtitle = [
-                details.profile_name.as_deref(),
-                details.material_name.as_deref(),
-            ]
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>()
-            .join(" · ");
-            crate::kit::type_box(ui, icon, &kind, &details.name, &subtitle);
+            crate::kit::type_box(ui, icon, &kind);
             // Borrowed beside the form (disjoint fields), never copied: the panel is laid out in
             // every frame the window draws.
             let materials = &self.tools.definitions.materials;
@@ -7267,9 +7259,9 @@ pub(crate) mod tests {
         let at = |labels: &[(String, egui::Pos2)]| {
             labels
                 .iter()
-                .find(|(t, _)| t == "Folder")
+                .find(|(t, _)| t == "Visual style")
                 .map(|(_, p)| *p)
-                .unwrap_or_else(|| panic!("no Folder row: {labels:?}"))
+                .unwrap_or_else(|| panic!("no Visual style row: {labels:?}"))
         };
         let first = at(&app_frame(&mut app, &ctx, vec![]));
         let mut last = first;

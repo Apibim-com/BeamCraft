@@ -452,7 +452,7 @@ impl Form {
     /// Takes the display properties of `view`, nothing else.
     pub fn copy_display(&mut self, view: &ModelView) {
         self.projection = view.projection;
-        self.span = format!("{}", view.span_mm);
+        self.span = format!("{}", view.span_mm.round().max(1.0));
         self.depth_on = view.depth.is_some();
         if let Some([above, below]) = view.depth {
             self.depth = [format!("{above}"), format!("{below}")];

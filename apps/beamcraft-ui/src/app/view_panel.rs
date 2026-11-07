@@ -1905,11 +1905,10 @@ impl App {
                     ui,
                     &TypeBox {
                         icon: theme::Icon::Select,
-                        kind: "Filter".into(),
-                        name: if previous.is_some() {
-                            "Saved in the model's views".into()
+                        kind: if previous.is_some() {
+                            "Filter".into()
                         } else {
-                            "Not saved yet".into()
+                            "New filter".into()
                         },
                     },
                 );
@@ -2379,7 +2378,6 @@ impl App {
         let free = matches!(self.views.subject, Subject::FreeView(_));
         let mut submit = false;
         let mut reset = false;
-        let mut save_camera = false;
         let mut all_appearance = false;
         let mut restart_pick = false;
         let mut copy_from: Option<Uuid7> = None;
@@ -2437,10 +2435,6 @@ impl App {
                     (None, Subject::NewView) => "New view".to_owned(),
                     (None, _) => "3D view".to_owned(),
                 },
-                name: shown.map_or_else(
-                    || self.views.form.construction.label().to_owned(),
-                    |v| v.name.clone(),
-                ),
             }
         };
         let folders: Vec<String> = self.views.book.folders().map(str::to_owned).collect();
@@ -2461,6 +2455,8 @@ impl App {
         let mut preset_name = self.views.preset_name.clone();
         let preset_field = preset_name.is_some();
         let mut toggle_preset_field = false;
+        let vg_id = egui::Id::unique("view-vg-open");
+        let mut vg_open = ui.data(|d| d.get_temp::<bool>(vg_id).unwrap_or(false));
         egui::ScrollArea::vertical()
             .id_salt("view-form")
             .max_height((ui.available_height() - footer).max(0.0))
@@ -2471,104 +2467,6 @@ impl App {
                     // The type box at the top, as Revit's properties palette shows the kind of
                     // what is selected: the view's kind and its name.
                     type_box(ui, &header);
-                    ui.add_space(4.0);
-                    ui.horizontal(|ui| {
-                        ui.add_sized([crate::kit::LABEL_WIDTH, 20.0], egui::Label::new("Name"));
-                        let toggles = 2.0 * 26.0 + 3.0 * 8.0;
-                        ui.add(
-                            egui::TextEdit::singleline(&mut form.name)
-                                .hint_text("Unnamed: temporary")
-                                .desired_width((ui.available_width() - toggles - FIT).max(60.0))
-                                .char_limit(crate::views::FIELD),
-                        )
-                        .on_hover_text("A view without a name is temporary: it is not saved");
-                        if theme::icon_toggle_filled(
-                            ui,
-                            theme::Icon::Star,
-                            "Favourite: listed in quick access",
-                            form.favorite,
-                        )
-                        .clicked()
-                        {
-                            form.favorite = !form.favorite;
-                        }
-                        let home = ui.add_enabled_ui(!default_locked, |ui| {
-                            theme::icon_toggle(
-                                ui,
-                                theme::Icon::Home,
-                                if default_locked {
-                                    "The default view: mark another view to move it"
-                                } else {
-                                    "Make this the default view the model opens on"
-                                },
-                                form.default,
-                            )
-                        });
-                        if home.inner.clicked() && !default_locked {
-                            form.default = !form.default;
-                        }
-                    });
-                    row(ui, "Folder", |ui| {
-                        let shown = if form.folder.is_empty() {
-                            "(top level)".to_owned()
-                        } else {
-                            form.folder.clone()
-                        };
-                        egui::ComboBox::from_id_salt("view-folder")
-                            .selected_text(shown)
-                            .width((ui.available_width() - FIT).max(40.0))
-                            .show_ui(ui, |ui| {
-                                ui.selectable_value(&mut form.folder, String::new(), "(top level)");
-                                for folder in &folders {
-                                    ui.selectable_value(
-                                        &mut form.folder,
-                                        folder.clone(),
-                                        folder.as_str(),
-                                    );
-                                }
-                            });
-                    });
-                    // Like the part presets of a beam or a column: picking one fills the form,
-                    // every field stays editable, and Apply keeps it.
-                    row(ui, "View preset", |ui| {
-                        let width = (ui.available_width() - 30.0 - FIT).max(40.0);
-                        egui::ComboBox::from_id_salt("view-preset")
-                            .selected_text("Fill from…")
-                            .width(width)
-                            .show_ui(ui, |ui| {
-                                if presets.is_empty() {
-                                    ui.label("No view presets yet.");
-                                }
-                                for preset in &presets {
-                                    if ui.button(&preset.name).clicked() {
-                                        chosen_preset = Some(preset.clone());
-                                    }
-                                }
-                            });
-                        if theme::icon_toggle(
-                            ui,
-                            theme::Icon::Plus,
-                            "Save this view's display as a view preset",
-                            preset_field,
-                        )
-                        .clicked()
-                        {
-                            toggle_preset_field = true;
-                        }
-                    });
-                    if let Some(name) = preset_name.as_mut() {
-                        row(ui, "Preset name", |ui| {
-                            ui.add(
-                                egui::TextEdit::singleline(name)
-                                    .hint_text("Name of the preset")
-                                    .desired_width((ui.available_width() - 60.0 - FIT).max(40.0))
-                                    .char_limit(64),
-                            );
-                            if ui.small_button("Save").clicked() {
-                                save_preset = Some(name.clone());
-                            }
-                        });
-                    }
                     if form.id.is_none() {
                         ui.separator();
                         ui.label(egui::RichText::new(form.construction.label()).strong());
@@ -2722,23 +2620,34 @@ impl App {
                                     }
                                 }
                             });
-                    } else {
-                        save_camera = ui
-                            .button("Take the current camera")
-                            .on_hover_text("The view plane and height become the camera's")
-                            .clicked();
                     }
                     ui.add_space(4.0);
-                    section(ui, "Filters", true, |ui| {
-                        filters_table(
-                            ui,
-                            &mut form.overrides,
-                            &filters,
-                            &overlay_state,
-                            &mut edit_filter,
-                        );
-                    });
                     section(ui, "Graphics", true, |ui| {
+                        row(ui, "Visual style", |ui| {
+                            egui::ComboBox::from_id_salt("view-mode")
+                                .selected_text(mode_name(form.mode))
+                                .width((ui.available_width() - FIT).max(40.0))
+                                .show_ui(ui, |ui| {
+                                    for mode in RenderMode::ALL {
+                                        ui.selectable_value(&mut form.mode, mode, mode_name(mode));
+                                    }
+                                });
+                        });
+                        row(ui, "Grids", |ui| {
+                            ui.checkbox(&mut form.grids, "Shown");
+                        });
+                        row(ui, "V/G overrides", |ui| {
+                            let hidden = crate::views::listed_kinds()
+                                .filter(|k| !form.hidden.is_visible(*k))
+                                .count();
+                            let summary = match (form.overrides.len(), hidden) {
+                                (0, 0) => "Edit…".to_owned(),
+                                (f, h) => format!("Edit… ({f} filters, {h} hidden)"),
+                            };
+                            if ui.button(summary).clicked() {
+                                vg_open = !vg_open;
+                            }
+                        });
                         row(ui, "Colour", |ui| {
                             ui.checkbox(&mut form.color_on, "Override");
                             if form.color_on {
@@ -2750,24 +2659,19 @@ impl App {
                                 egui::Slider::new(&mut form.opacity, 0.0..=1.0).fixed_decimals(2),
                             );
                         });
-                        if form.id.is_some()
-                            && ui
-                                .small_button("Use this colour and opacity in every view")
-                                .clicked()
-                        {
-                            all_appearance = true;
-                        }
-                    });
-                    section(ui, "Object visibility", false, |ui| {
-                        for kind in crate::views::listed_kinds() {
-                            let mut visible = form.hidden.is_visible(kind);
-                            if ui.checkbox(&mut visible, kind.as_token()).changed() {
-                                form.hidden = if visible {
-                                    form.hidden.showing(kind)
-                                } else {
-                                    form.hidden.hiding(kind)
-                                };
-                            }
+                        if form.id.is_some() {
+                            row(ui, "", |ui| {
+                                let link = egui::RichText::new("Use in every view")
+                                    .size(11.0)
+                                    .color(theme::Palette::current(ui).link);
+                                if ui
+                                    .add(egui::Button::new(link).frame(false))
+                                    .on_hover_text("Give every view this colour and opacity")
+                                    .clicked()
+                                {
+                                    all_appearance = true;
+                                }
+                            });
                         }
                     });
                     section(ui, "Camera", true, |ui| {
@@ -2872,8 +2776,141 @@ impl App {
                             }
                         });
                     });
+                    section(ui, "Identity Data", true, |ui| {
+                        row(ui, "View name", |ui| {
+                            ui.add(
+                                egui::TextEdit::singleline(&mut form.name)
+                                    .hint_text("Unnamed: temporary")
+                                    .desired_width((ui.available_width() - FIT).max(60.0))
+                                    .char_limit(crate::views::FIELD),
+                            )
+                            .on_hover_text("A view without a name is temporary: it is not saved");
+                        });
+                        row(ui, "Folder", |ui| {
+                            let shown = if form.folder.is_empty() {
+                                "(top level)".to_owned()
+                            } else {
+                                form.folder.clone()
+                            };
+                            egui::ComboBox::from_id_salt("view-folder")
+                                .selected_text(shown)
+                                .width((ui.available_width() - FIT).max(40.0))
+                                .show_ui(ui, |ui| {
+                                    ui.selectable_value(
+                                        &mut form.folder,
+                                        String::new(),
+                                        "(top level)",
+                                    );
+                                    for folder in &folders {
+                                        ui.selectable_value(
+                                            &mut form.folder,
+                                            folder.clone(),
+                                            folder.as_str(),
+                                        );
+                                    }
+                                });
+                        });
+                        // Like the part presets of a beam or a column: picking one fills the form,
+                        // every field stays editable, and Apply keeps it.
+                        row(ui, "View preset", |ui| {
+                            let width = (ui.available_width() - 30.0 - FIT).max(40.0);
+                            egui::ComboBox::from_id_salt("view-preset")
+                                .selected_text("Fill from…")
+                                .width(width)
+                                .show_ui(ui, |ui| {
+                                    if presets.is_empty() {
+                                        ui.label("No view presets yet.");
+                                    }
+                                    for preset in &presets {
+                                        if ui.button(&preset.name).clicked() {
+                                            chosen_preset = Some(preset.clone());
+                                        }
+                                    }
+                                });
+                            if theme::icon_toggle(
+                                ui,
+                                theme::Icon::Plus,
+                                "Save this view's display as a view preset",
+                                preset_field,
+                            )
+                            .clicked()
+                            {
+                                toggle_preset_field = true;
+                            }
+                        });
+                        if let Some(name) = preset_name.as_mut() {
+                            row(ui, "Preset name", |ui| {
+                                ui.add(
+                                    egui::TextEdit::singleline(name)
+                                        .hint_text("Name of the preset")
+                                        .desired_width(
+                                            (ui.available_width() - 60.0 - FIT).max(40.0),
+                                        )
+                                        .char_limit(64),
+                                );
+                                if ui.small_button("Save").clicked() {
+                                    save_preset = Some(name.clone());
+                                }
+                            });
+                        }
+                        row(ui, "Favourite", |ui| {
+                            ui.checkbox(&mut form.favorite, "")
+                                .on_hover_text("Listed in quick access");
+                        });
+                        row(ui, "Default view", |ui| {
+                            ui.add_enabled(
+                                !default_locked,
+                                egui::Checkbox::new(&mut form.default, ""),
+                            )
+                            .on_hover_text(if default_locked {
+                                "The default view: mark another view to move it"
+                            } else {
+                                "The view the model opens on"
+                            });
+                        });
+                    });
+                    // Visibility/Graphics overrides, as Revit edits them in their own dialog:
+                    // the element kinds the view shows and its filters.
+                    let mut open = vg_open;
+                    egui::Window::new("Visibility / Graphics")
+                        .id(egui::Id::unique("view-vg-window"))
+                        .open(&mut open)
+                        .collapsible(false)
+                        .resizable(true)
+                        .default_width(420.0)
+                        .show(ui.ctx(), |ui| {
+                            crate::kit::section(ui, "vg", "Model categories", true, |ui| {
+                                for kind in crate::views::listed_kinds() {
+                                    let mut visible = form.hidden.is_visible(kind);
+                                    if ui.checkbox(&mut visible, kind.as_token()).changed() {
+                                        form.hidden = if visible {
+                                            form.hidden.showing(kind)
+                                        } else {
+                                            form.hidden.hiding(kind)
+                                        };
+                                    }
+                                }
+                            });
+                            crate::kit::section(ui, "vg", "Filters", true, |ui| {
+                                filters_table(
+                                    ui,
+                                    &mut form.overrides,
+                                    &filters,
+                                    &overlay_state,
+                                    &mut edit_filter,
+                                );
+                            });
+                            ui.add_space(crate::kit::SPACE_S);
+                            ui.label(
+                                egui::RichText::new("Changes apply to the view with Apply.")
+                                    .size(11.0)
+                                    .color(theme::Palette::current(ui).muted),
+                            );
+                        });
+                    vg_open = open;
                 });
             });
+        ui.data_mut(|d| d.insert_temp(vg_id, vg_open));
         ui.add_space(8.0);
         let mut cancel = false;
         // A saved view changes only on Apply; the buttons wake up with the first edit.
@@ -2949,17 +2986,6 @@ impl App {
         }
         if reset && let Some(id) = self.views.form.id {
             self.edit_view(id);
-        }
-        if save_camera && let Some(camera) = self.views.active_pane().map(|p| p.camera) {
-            match camera.frame(self.view_origin()) {
-                Ok((plane, span)) => {
-                    self.views.form.plane = plane;
-                    self.views.form.span = format!("{}", span.round().max(1.0));
-                    self.views.form.rotation = ["0".into(), "0".into()];
-                    submit = true;
-                }
-                Err(e) => self.view_note(Err(e.to_string())),
-            }
         }
         if all_appearance {
             let color = self
@@ -3175,7 +3201,18 @@ impl App {
 struct TypeBox {
     icon: theme::Icon,
     kind: String,
-    name: String,
+}
+
+/// The name of a display mode, as the visual style of a view.
+fn mode_name(mode: RenderMode) -> &'static str {
+    match mode {
+        RenderMode::Wireframe => "Wireframe",
+        RenderMode::Transparent => "Transparent",
+        RenderMode::Grey => "Grey shaded",
+        RenderMode::Shaded => "Shaded",
+        RenderMode::SelectedOnly => "Selected only",
+        _ => "Other",
+    }
 }
 
 /// The kind of a view in a few words, for the type box.
@@ -3190,7 +3227,7 @@ fn kind_name(kind: crate::views::ViewKind) -> &'static str {
 /// The type box: a framed icon with the view's kind and name beside it, as the top of Revit's
 /// properties palette shows the type of what is selected.
 fn type_box(ui: &mut egui::Ui, header: &TypeBox) {
-    crate::kit::type_box(ui, header.icon, &header.kind, &header.name, "");
+    crate::kit::type_box(ui, header.icon, &header.kind);
 }
 
 /// What the filters table knows of the evaluation of the shown view's filters.
