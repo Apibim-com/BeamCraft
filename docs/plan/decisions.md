@@ -4,6 +4,22 @@ Decisions that shape the plan, newest first. Each names its date and, where one 
 document that records it in detail. A later decision overrides an earlier one where they differ.
 Open questions are at the end.
 
+## 2026-11-08
+
+- **O-G5, the magnetic grid mode (T01.8), is answered.** The owner delegated the resolution
+  ("делай O-G5", 2026-11-08); the answers below go with the T01.8 delivery. The magnetic switch
+  is the element's own explicit grid binding, not a session flag: `bind-grid` binds a placed
+  member (plates follow in a later slice) to a local grid, `unbind-grid` releases it, and
+  "magnetic on" means bound. A bound element stores its geometry in the grid's local frame and
+  its world geometry is derived at read time, so a shared-grid edit writes only the grid and
+  never rewrites a section element outside its scope. Deleting a grid with followers refuses
+  with `GRID_IN_USE`; editing a bound element's geometry by hand detaches the binding in the
+  same atomic change and materializes the current world geometry; a pinned foreign grid is
+  never followed (`FOREIGN_READ_ONLY`). Following is on the grid frame — origin and rotation —
+  not on individual lines; line-level following and automatic session-wide modes stay post-MVP.
+  The T01 contract section 7.5 and the acceptance cases GR-P17 and GR-N20 to GR-N23 carry the
+  delivered semantics.
+
 ## 2026-11-07
 
 - **Every delivered issue closes through a closing reference.** Owner decision: an issue is
@@ -558,7 +574,7 @@ See [M5 CLI delivery](m5-cli-delivery.md) for dependencies and acceptance.
 | 2 | macOS runtime verification without project hardware; Developer ID signing/notarization is deferred after the MVP by the 2026-10-27 decision | Q02 runtime acceptance |
 | 3 | IFC reference conversion and editable steel import: supported subsets, mapping, kernel admission, budgets and provenance (both input workflows in the MVP from 2026-10-27) | E04 reference-loading slice and native steel IFC import |
 | 4 | Live channel and permission model (C07, C08) | C07, C08 |
-| 5 | Grid contract draft: owner answers to O-G5, O-G7 and O-G11 to O-G16 ([contract](../contracts/t01-project-grids-draft-v0.1.md) section 12) | T01.3, T01.4, T01.7, T01.8 |
+| 5 | ~~Grid contract draft: owner answers to O-G5, O-G7 and O-G11 to O-G16~~ Answered: O-G7 and O-G11 to O-G16 by the 2026-10-26 defaults, O-G5 (magnetic mode) on 2026-11-08 — both recorded in the [contract](../contracts/t01-project-grids-draft-v0.1.md) sections 12 and 7.5 | — |
 | 5 | Where saved views and review notes live: workspace only or a shared review layer | W01, W02 |
 | 6 | Variant sets in our own layers (N07) | N07 |
 | 7 | Local use of the third-party USD sample under its licence | N08 |
