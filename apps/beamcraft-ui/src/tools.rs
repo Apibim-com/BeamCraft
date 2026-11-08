@@ -678,6 +678,8 @@ pub struct LevelChoice {
     pub name: String,
     /// Its elevation in millimetres.
     pub elevation_mm: f64,
+    /// How many elements are assigned to it.
+    pub elements: usize,
 }
 
 /// The tallest column the form builds from a height, in millimetres.
@@ -813,6 +815,11 @@ pub fn parse_definitions(exit_code: Option<i32>, stdout: &[u8]) -> Result<Defini
                         id: text(entry, "id")?,
                         name: text(entry, "name")?,
                         elevation_mm: dimension(entry, "elevation_mm")?.parse().ok()?,
+                        elements: entry
+                            .get("elements")
+                            .ok()
+                            .and_then(|list| list.array().ok())
+                            .map_or(0, <[Json]>::len),
                     })
                 })
                 .collect()

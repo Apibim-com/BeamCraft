@@ -850,6 +850,14 @@ impl App {
                     l.summary.origin_mm,
                     self.grid_edit.as_ref().map(|edit| edit.id.as_str()),
                 );
+                crate::levels::paint_sections(
+                    ui,
+                    response.rect,
+                    &view,
+                    l.summary.origin_mm[2],
+                    &self.tools.definitions.levels,
+                    self.level_panel.selected_id(),
+                );
             }
             if let Ok(rows) = self.annotation.rows.as_deref()
                 && !rows.is_empty()

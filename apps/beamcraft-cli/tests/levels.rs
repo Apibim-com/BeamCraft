@@ -542,6 +542,85 @@ fn level_arguments_assignments_and_identities_are_validated_with_nothing_written
 }
 
 #[test]
+fn a_level_is_renamed_and_re_elevated_without_moving_its_elements() {
+    let f = Fixture::new();
+    let plate = f.plate();
+    f.level(STOREY, "Level 1", "3000");
+    f.assign(&plate, STOREY);
+    let before = f.inspect();
+    let op = "019a7bf0-0000-7000-8000-00000000b101";
+    let args = [
+        "--id",
+        STOREY,
+        "--name",
+        "Storey 1",
+        "--elevation",
+        "3300.5",
+        "--op-id",
+        op,
+    ];
+    let updated = f.ok("update-level", &args);
+    assert_eq!(text(&updated, "outcome"), "level_updated");
+    assert_eq!(strings(&updated, "changed_layers"), ["authored.usda"]);
+    assert_eq!(
+        groups(&updated, "writes"),
+        [
+            (STOREY.to_owned(), "label".to_owned()),
+            (STOREY.to_owned(), "shape_inputs".to_owned())
+        ]
+    );
+    let listed = f.levels();
+    assert_eq!(text(level(&listed, STOREY), "name"), "Storey 1");
+    assert_eq!(
+        level(&listed, STOREY).get("elevation_mm").unwrap(),
+        &Json::number(3300.5).unwrap()
+    );
+    assert_eq!(
+        strings(level(&listed, STOREY), "elements"),
+        [plate.as_str()]
+    );
+    assert_eq!(
+        at(element(&before, "plates", &plate), &["placement"]),
+        at(element(&f.inspect(), "plates", &plate), &["placement"]),
+        "a new elevation moves no assigned element"
+    );
+
+    // The same operation replays; the id under another request is reuse.
+    let head = f.head();
+    assert_eq!(
+        text(&f.ok("update-level", &args), "outcome"),
+        "level_updated_replayed"
+    );
+    assert_eq!(f.head(), head);
+    assert_eq!(
+        f.rejected(
+            "update-level",
+            &["--id", STOREY, "--name", "X", "--op-id", op]
+        ),
+        "OP_ID_REUSE"
+    );
+
+    // Refusals write nothing.
+    for (extra, code) in [
+        (vec!["--id", STOREY], "INVALID_ARGUMENT"),
+        (
+            vec!["--id", STOREY, "--name", "Storey 1"],
+            "INVALID_ARGUMENT",
+        ),
+        (
+            vec!["--id", STOREY, "--elevation", "NaN"],
+            "NON_FINITE_NUMBER",
+        ),
+        (vec!["--id", STOREY, "--elevation", "2e9"], "LIMIT_EXCEEDED"),
+        (vec!["--id", MISSING, "--name", "X"], "NOT_FOUND"),
+        (vec!["--id", &plate, "--name", "X"], "UNSUPPORTED_PROPERTY"),
+    ] {
+        assert_eq!(f.rejected("update-level", &extra), code, "{extra:?}");
+        assert_eq!(f.head(), head, "{extra:?}");
+    }
+}
+
+#[test]
 fn replay_reuse_delete_and_copy_follow_the_level_records() {
     let f = Fixture::new();
     let plate = f.plate();

@@ -14,6 +14,7 @@ mod contour_grips;
 mod creation_panel;
 mod export_panel;
 mod grid_panel;
+mod level_panel;
 mod switches;
 mod view_panel;
 mod weld_panel;
@@ -183,6 +184,7 @@ pub struct App {
     grid_drawn: bool,
     grid_scene: crate::grid::GridScene,
     grid_job: Option<Receiver<Result<crate::grid::CreatedGrid, ToolError>>>,
+    level_panel: level_panel::LevelPanel,
     grid_note: Option<Result<String, String>>,
     grid_edit: Option<grid_panel::GridEdit>,
     grid_refresh_edit: bool,
@@ -927,6 +929,7 @@ impl App {
             grid_form: crate::grid::GridForm::default(),
             grid_scene: crate::grid::GridScene::default(),
             grid_job: None,
+            level_panel: level_panel::LevelPanel::default(),
             grid_note: None,
             annotation: annotation_panel::Panel::empty(),
             weld: weld_panel::Panel::empty(),
@@ -2282,6 +2285,7 @@ impl App {
             || self.edit_job.is_some()
             || self.job.is_some()
             || self.grid_job.is_some()
+            || self.level_panel.running()
             || self.contour.running()
     }
 
@@ -3014,6 +3018,7 @@ impl eframe::App for App {
         });
         self.poll_commit();
         self.poll_grid();
+        self.poll_levels();
         self.poll_annotations();
         self.poll_weld();
         self.poll_bolt();

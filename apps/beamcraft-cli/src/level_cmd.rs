@@ -1,20 +1,22 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! D2 headless commands: `create-level` and `levels`. They call the engine API through
+//! D2 headless commands: `create-level`, `update-level` and `levels`. They call the engine API through
 //! `beamcraft_commands::level` and print one JSON object with the same error shape and exit codes as
 //! the plate commands. Assigning an element to a level is `update-element --level`.
 
 use crate::command_context::{self, CONTEXT_OPTIONS};
 use crate::plate_cmd::{check_project_option, footprint_json, id_error, num, revision_json};
-use beamcraft_commands::level::{LevelChange, LevelContext, LevelView, create_level, levels};
+use beamcraft_commands::level::{
+    LevelChange, LevelContext, LevelView, create_level, levels, update_level,
+};
 use beamcraft_host::{
     ids::IdSource,
     revision::{NoFault, RevisionStore},
     storage::BlobStore,
 };
 use beamcraft_json::Json;
-use beamcraft_model::command::CreateLevel;
+use beamcraft_model::command::{CreateLevel, UpdateLevel};
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId};
 use session::Refusal;
@@ -50,6 +52,7 @@ fn run(args: &[OsString]) -> Run<Json> {
         .ok_or_else(|| invalid("missing command"))?;
     let own: &[&str] = match *command {
         "create-level" => &["--store", "--name", "--elevation", "--new-id"],
+        "update-level" => &["--store", "--id", "--name", "--elevation"],
         "levels" => &["--store"],
         _ => return Err(invalid("unknown command")),
     };
@@ -97,6 +100,21 @@ fn run(args: &[OsString]) -> Run<Json> {
         project: common.project,
         workspace: common.workspace,
     };
+    let elevation = |text: &str| {
+        text.parse::<f64>()
+            .map_err(|_| invalid("a number is malformed"))
+    };
+    if *command == "update-level" {
+        let target_id = ElementId::parse(given("--id").ok_or_else(|| invalid("--id is required"))?)
+            .map_err(id_error)?;
+        let update = UpdateLevel {
+            target_id,
+            name: given("--name").map(str::to_owned),
+            elevation_mm: given("--elevation").map(elevation).transpose()?,
+        };
+        let change = update_level(&store, &context, &update, &mut NoFault)?;
+        return change_json(target_id, context.op_id, &change, "level_updated");
+    }
     let new_id = match given("--new-id") {
         Some(text) => ElementId::parse(text).map_err(id_error)?,
         None => ElementId::from_uuid(fresh()?),
@@ -106,13 +124,12 @@ fn run(args: &[OsString]) -> Run<Json> {
         name: given("--name")
             .ok_or_else(|| invalid("--name is required"))?
             .to_owned(),
-        elevation_mm: given("--elevation")
-            .ok_or_else(|| invalid("--elevation is required"))?
-            .parse::<f64>()
-            .map_err(|_| invalid("a number is malformed"))?,
+        elevation_mm: elevation(
+            given("--elevation").ok_or_else(|| invalid("--elevation is required"))?,
+        )?,
     };
     let change = create_level(&store, &context, &command, &mut NoFault)?;
-    change_json(new_id, context.op_id, &change)
+    change_json(new_id, context.op_id, &change, "level_created")
 }
 
 /// The levels as JSON, in the order given (ascending identity).
@@ -140,11 +157,11 @@ pub(crate) fn views_json(views: &[LevelView]) -> Run<Json> {
     ))
 }
 
-fn change_json(subject: ElementId, op_id: OpId, change: &LevelChange) -> Run<Json> {
+fn change_json(subject: ElementId, op_id: OpId, change: &LevelChange, accepted: &str) -> Run<Json> {
     let outcome = if change.replayed {
-        "level_created_replayed"
+        format!("{accepted}_replayed")
     } else {
-        "level_created"
+        accepted.to_owned()
     };
     Ok(Json::object([
         ("outcome", Json::text(outcome)),

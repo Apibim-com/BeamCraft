@@ -47,6 +47,8 @@ pub(crate) enum Bench {
     Annotations,
     /// A view's properties, or a new view.
     View,
+    /// The project's levels: create, edit and delete.
+    Levels,
 }
 
 impl Bench {
@@ -67,6 +69,7 @@ impl Bench {
             Self::Bolt => "Bolt group",
             Self::Annotations => "Annotations",
             Self::View => "View properties",
+            Self::Levels => "Levels",
         }
     }
 
@@ -86,7 +89,8 @@ impl Bench {
             | Self::Weld
             | Self::Bolt
             | Self::Annotations
-            | Self::View => None,
+            | Self::View
+            | Self::Levels => None,
         }
     }
 }
@@ -446,7 +450,7 @@ impl App {
             Bench::Bolt => self.bolt_load(),
             Bench::Annotations => {}
             Bench::View => {}
-            Bench::Grid => {
+            Bench::Grid | Bench::Levels => {
                 self.beam_mode = false;
                 self.beam.reset();
                 self.ghost_end = None;
@@ -880,6 +884,9 @@ impl App {
                             if tool_button(ui, Icon::Grid, "Rectangular grid", bench == Bench::Grid, true).clicked() {
                                 pick = Some(Bench::Grid);
                             }
+                            if tool_button(ui, Icon::Table, "Levels", bench == Bench::Levels, true).clicked() {
+                                pick = Some(Bench::Levels);
+                            }
                             if tool_button(ui, Icon::Callout, "Annotations", bench == Bench::Annotations, true).clicked() {
                                 pick = Some(Bench::Annotations);
                             }
@@ -1025,6 +1032,7 @@ impl App {
                             Bench::Select => self.props_panel(ui),
                             Bench::Plate | Bench::Beam | Bench::Column => self.tools_panel(ui),
                             Bench::Grid => self.grid_panel(ui),
+                            Bench::Levels => self.level_panel(ui),
                             Bench::Move | Bench::Copy | Bench::Delete => self.edit_panel(ui),
                             Bench::CutPlane => self.cut_panel(ui),
                             Bench::Colour => self.colour_panel(ui),
@@ -1045,6 +1053,7 @@ impl App {
             Bench::Bolt => self.bolt.note.as_ref(),
             Bench::Weld => self.weld.note.as_ref(),
             Bench::Grid => self.grid_note.as_ref(),
+            Bench::Levels => self.level_panel.note.as_ref(),
             Bench::Plate | Bench::Beam | Bench::Column => self.tool_note.as_ref(),
             Bench::Annotations => self.annotation.note.as_ref(),
             Bench::Move | Bench::Copy | Bench::Delete => self.edit_note.as_ref(),
@@ -1166,6 +1175,7 @@ impl App {
             ("Select", Bench::Select),
             ("Column", Bench::Column),
             ("Rectangular grid", Bench::Grid),
+            ("Levels", Bench::Levels),
             ("Beam", Bench::Beam),
             ("Plate", Bench::Plate),
             ("Weld", Bench::Weld),

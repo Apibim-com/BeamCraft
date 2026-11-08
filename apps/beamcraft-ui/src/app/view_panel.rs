@@ -2673,7 +2673,28 @@ impl App {
                                 match (batch, form.levels) {
                                     (false, _) => {
                                         form.levels = None;
-                                        text(ui, "Level name", &mut form.level);
+                                        let known = &self.tools.definitions.levels;
+                                        if known.is_empty() {
+                                            ui.small(
+                                                "No levels yet. Create them under Manage > Levels.",
+                                            );
+                                        }
+                                        crate::kit::prop_row(ui, "Level", |ui| {
+                                            egui::ComboBox::from_id_salt("view-level")
+                                                .selected_text(form.level.clone())
+                                                .show_ui(ui, |ui| {
+                                                    for level in crate::levels::sorted(known) {
+                                                        ui.selectable_value(
+                                                            &mut form.level,
+                                                            level.name.clone(),
+                                                            format!(
+                                                                "{}   {:+} mm",
+                                                                level.name, level.elevation_mm
+                                                            ),
+                                                        );
+                                                    }
+                                                });
+                                        });
                                     }
                                     (true, current) => {
                                         let mut pick = current.unwrap_or(AxisPick::All);
