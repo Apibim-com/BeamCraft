@@ -76,7 +76,7 @@ beamcraft bolts --store ROOT        # A05 groups as annotations, A14.3 groups wi
   nothing until a person asks. A stored A05 group is upgraded by naming the placement inputs
   and a library entry (its `--repin`-guard does not apply: the annotation has no definition to
   protect).
-- **A group belongs to its main part (issue 544).** `update-element` that moves, rotates or
+- **A group belongs to its main part (issue axisrow/BeamCraft#544).** `update-element` that moves, rotates or
   re-orients a connected part carries the groups over it in the same transaction
   (`bolt::follow_moved_part`, called from `edit::update_element`): the moved part's world
   boxes and faces are carried by the rigid delta `new · old⁻¹`; a group whose main part

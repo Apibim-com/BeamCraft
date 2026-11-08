@@ -24,7 +24,7 @@ maps the grid's world result back through the inverse placement
 (`steel::engine::transform::placement_to_world` / `placement_to_local`), so the derived axis
 stays element-local like every stored member axis and each consumer applies the placement on
 top exactly once. A member with a placement offset therefore follows a frame move onto the
-same position as an unbound twin moved by hand (issue 549); before this, the placement was
+same position as an unbound twin moved by hand (issue axisrow/BeamCraft#549); before this, the placement was
 dropped at bind time and applied again at read time.
 
 A release (`unbind-grid`) erases the local points attr, authors the explicit empty target list
@@ -47,7 +47,7 @@ and quantities keep lagging the frame, and only a release re-materializes them.
   deferred until a real producer existed.
 - **Hand edits (GR-N22)**: any shape-input or placement rewrite of a bound element refuses
   `DEPENDENCY_CONFLICT`, `GRID_IN_USE` until the binding is released (a placement move would
-  otherwise split the placed local record from the member, issue 549; the layer validation in
+  otherwise split the placed local record from the member, issue axisrow/BeamCraft#549; the layer validation in
   `crates/layer-engine/src/authored/validate.rs`); the binding changes themselves are exempt.
   Nothing detaches implicitly, so the local record and the world snapshot can never diverge
   silently.
@@ -64,7 +64,7 @@ and unblocks the old grid's deletion; a shape rewrite of the bound member refuse
 `GRID_IN_USE` with the geometry unchanged until the release, and the same edit passes after it
 (GR-N22); a member with a placement offset follows a bind → translate → rotate chain onto the
 position of an unbound twin transformed by hand, its placement edit refuses while bound, and the
-release keeps the position (issue 549). The frame-follows commands-level regression for the blocker-kind distinction lives in
+release keeps the position (issue axisrow/BeamCraft#549). The frame-follows commands-level regression for the blocker-kind distinction lives in
 `crates/commands/src/grid.rs` (`a_frame_following_binding_never_pins_a_line`), next to the
 GR-N14 chain test.
 
