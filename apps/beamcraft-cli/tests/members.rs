@@ -399,6 +399,75 @@ fn a_column_a_roll_and_a_plate_live_in_one_revision() {
 }
 
 #[test]
+fn update_element_sets_and_clears_a_members_roll_and_section_position() {
+    let f = Fixture::new();
+    let profile = f.profile("200", "300");
+    let created = f.ok(
+        "create-member",
+        &[
+            "--start",
+            "0,0,0",
+            "--end",
+            "6000,0,0",
+            "--profile-digest",
+            &profile,
+        ],
+    );
+    let id = text(at(&created, &["member"]), "element_id");
+    let member_of = |inspected: &Json| {
+        at(inspected, &["members"])
+            .array()
+            .unwrap()
+            .iter()
+            .find(|m| text(m, "element_id") == id)
+            .unwrap()
+            .clone()
+    };
+    f.ok(
+        "update-element",
+        &[
+            "--id",
+            &id,
+            "--roll",
+            "0.5",
+            "--section-plane",
+            "left",
+            "--section-depth",
+            "front",
+            "--start-offset",
+            "20",
+            "--end-offset",
+            "-30",
+        ],
+    );
+    let moved = member_of(&f.ok("inspect-elements", &[]));
+    assert_eq!(at(&moved, &["roll_rad"]).float().unwrap(), 0.5);
+    let placement = at(&moved, &["section_placement"]);
+    assert_eq!(text(placement, "plane"), "left");
+    assert_eq!(text(placement, "depth"), "front");
+    assert_eq!(at(placement, &["start_offset_mm"]).float().unwrap(), 20.0);
+    assert_eq!(at(placement, &["end_offset_mm"]).float().unwrap(), -30.0);
+    // The centred default and a zero roll clear both opinions.
+    f.ok(
+        "update-element",
+        &["--id", &id, "--roll", "0", "--section-plane", "centre"],
+    );
+    let back = member_of(&f.ok("inspect-elements", &[]));
+    assert!(matches!(at(&back, &["roll_rad"]), Json::Null));
+    assert!(matches!(at(&back, &["section_placement"]), Json::Null));
+    // A plate has neither.
+    let plate = f.ok(
+        "create-plate",
+        &["--width", "1000", "--length", "500", "--thickness", "10"],
+    );
+    let plate_id = text(at(&plate, &["plate"]), "element_id");
+    assert_eq!(
+        f.rejected("update-element", &["--id", &plate_id, "--roll", "0.5"]),
+        "UNSUPPORTED_PROPERTY"
+    );
+}
+
+#[test]
 fn rejections_use_the_f04_codes_and_publish_nothing() {
     let f = Fixture::new();
     let profile = f.profile("200", "300");

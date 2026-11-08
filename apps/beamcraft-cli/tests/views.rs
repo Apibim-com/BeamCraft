@@ -437,6 +437,119 @@ fn save_view_names_views_by_default() {
 }
 
 #[test]
+fn a_view_folder_renames_and_removes_without_losing_a_view() {
+    let v = Views::new();
+    v.view(
+        "save-view",
+        &[
+            "--name",
+            "Plan",
+            "--parallel",
+            "xy",
+            "--folder",
+            "Plans/Level 1",
+        ],
+    );
+    let renamed = v.view(
+        "rename-view-folder",
+        &["--from", "Plans/Level 1", "--to", "Plans/Floor 1"],
+    );
+    assert_eq!(text(&renamed, "outcome"), "view_folder_renamed");
+    assert_eq!(at(&renamed, &["views_moved"]).unsigned().unwrap(), 1);
+    let listed = v.view("list-views", &[]);
+    assert_eq!(text(&list(&listed, "views")[0], "folder"), "Plans/Floor 1");
+    let removed = v.view("remove-view-folder", &["--name", "Plans/Floor 1"]);
+    assert_eq!(text(&removed, "outcome"), "view_folder_removed");
+    let listed = v.view("list-views", &[]);
+    assert_eq!(list(&listed, "views").len(), 1, "the view stays");
+    assert_eq!(text(&list(&listed, "views")[0], "folder"), "Plans");
+    v.refuse("remove-view-folder", &["--name", "Missing"]);
+}
+
+#[test]
+fn filters_and_overrides_live_in_the_view_file_and_presets_carry_overrides() {
+    let v = Views::new();
+    let saved = v.view(
+        "save-view-filter",
+        &["--name", "Beams", "--conditions", "type eq beam;class ge 2"],
+    );
+    assert_eq!(text(&saved, "outcome"), "view_filter_saved");
+    let filter = &list(&saved, "filters")[0];
+    assert_eq!(list(filter, "conditions").len(), 2);
+    v.view(
+        "save-view",
+        &[
+            "--name",
+            "Plan",
+            "--parallel",
+            "xy",
+            "--overrides",
+            "Beams|hide|-|0",
+        ],
+    );
+    v.refuse(
+        "save-view",
+        &[
+            "--name",
+            "Other",
+            "--parallel",
+            "xy",
+            "--overrides",
+            "Plates",
+        ],
+    );
+    v.refuse(
+        "save-view-filter",
+        &["--name", "Bad", "--conditions", "type eq girder"],
+    );
+    // The filters and the overrides ride in the views layer.
+    let body = std::fs::read_to_string(&v.file).unwrap();
+    assert!(body.contains("bim:view:filters") && body.contains("bim:view:filterOverrides"));
+    // A discipline preset carries overrides and applies them onto another view.
+    let presets = format!("{}.presets.json", v.file);
+    v.ok(
+        "define-preset",
+        &[
+            "--file",
+            &presets,
+            "--name",
+            "Beams hidden",
+            "--overrides",
+            "Beams|hide|-|0",
+        ],
+    );
+    v.view("save-view", &["--name", "Copy", "--parallel", "xz"]);
+    let applied = v.ok(
+        "apply-preset",
+        &[
+            "--file",
+            &presets,
+            "--views-file",
+            &v.file,
+            "--preset",
+            "Beams hidden",
+            "--view",
+            "Copy",
+        ],
+    );
+    assert_eq!(list(at(&applied, &["view"]), "overrides").len(), 1);
+    // A rename follows into every view; a removal drops the overrides.
+    v.view(
+        "save-view-filter",
+        &["--name", "Girders", "--rename-from", "Beams"],
+    );
+    let listed = v.view("list-view-filters", &[]);
+    let names: Vec<String> = list(&listed, "filters")
+        .iter()
+        .map(|f| text(f, "name"))
+        .collect();
+    assert_eq!(names, ["Girders"]);
+    let removed = v.view("remove-view-filter", &["--name", "Girders"]);
+    assert_eq!(at(&removed, &["views_changed"]).unsigned().unwrap(), 2);
+    assert!(list(&v.view("list-view-filters", &[]), "filters").is_empty());
+}
+
+#[test]
 fn the_views_file_is_a_camera_prim_layer_and_a_json_sidecar_migrates() {
     let v = Views::new();
     v.ok(

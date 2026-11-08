@@ -511,15 +511,11 @@ fn choice_combo(
             )
         })
         .unwrap_or_else(|| if required { "choose…" } else { "none" }.to_owned());
-    // The label sits left of the list (as with the text fields): drawn below it, it read as
-    // the label of the next drop-down.
-    ui.horizontal(|ui| {
-        ui.add_sized(
-            egui::vec2(70.0, 28.0),
-            egui::Label::new(egui::RichText::new(label).size(11.0)),
-        );
+    // The label sits in the properties grid's label column, as with the text fields.
+    crate::kit::prop_row(ui, label, |ui| {
         egui::ComboBox::from_id_salt(id)
-            .width(ui.available_width().max(80.0))
+            .width((ui.available_width() - crate::kit::FIT).max(80.0))
+            .truncate()
             .selected_text(selected)
             .show_ui(ui, |ui| {
                 if !required {
@@ -582,15 +578,17 @@ fn viewport_sense() -> egui::Sense {
     egui::Sense::CLICK | egui::Sense::DRAG
 }
 
+/// One text property: the label in the properties grid's label column, the field filling the
+/// value column (`width` is the most it takes, so a short number stays short).
 fn field(ui: &mut egui::Ui, label: &str, text: &mut String, width: f32) {
-    ui.horizontal(|ui| {
-        ui.add_sized(
-            egui::vec2(70.0, 28.0),
-            egui::Label::new(egui::RichText::new(label).size(11.0)),
-        );
+    crate::kit::prop_row(ui, label, |ui| {
         ui.add(
             egui::TextEdit::singleline(text)
-                .desired_width(width.min(ui.available_width()))
+                .desired_width(
+                    width
+                        .max(160.0)
+                        .min((ui.available_width() - crate::kit::FIT).max(40.0)),
+                )
                 .char_limit(MAX_TEXT),
         );
     });
@@ -904,6 +902,11 @@ impl App {
         match crate::views::load(&source.store) {
             Ok(book) => views.book = book,
             Err(note) => views.note = Some(Err(note)),
+        }
+        let (presets, presets_note) = crate::views::load_presets(source.config_dir.as_deref());
+        views.presets = presets;
+        if let Some(note) = presets_note {
+            views.note = Some(Err(note));
         }
         // The main viewport is the first pane: the free 3D view, shaded, grid guides on, on the
         // target built above.
@@ -1351,6 +1354,11 @@ impl App {
         let selection = self.selection.filter();
         // With an active model view only what it shows can be picked (V12).
         let view = self.views.active_view().cloned();
+        // What its filter overrides hide cannot be picked either.
+        let overlay = view
+            .as_ref()
+            .and_then(|v| self.views.overlays.get(&v.id))
+            .map(|o| Arc::clone(&o.overlay));
         let spawned = std::thread::Builder::new()
             .name("beamcraft-pick".into())
             .spawn(move || {
@@ -1363,6 +1371,7 @@ impl App {
                     &stats,
                     selection,
                     view.as_ref(),
+                    overlay.as_ref().map(|o| o.hidden()),
                 ));
             });
         if spawned.is_err() {
@@ -1780,10 +1789,18 @@ impl App {
 
     fn props_panel(&mut self, ui: &mut egui::Ui) {
         let Some(_id) = self.props.selected().map(str::to_owned) else {
-            ui.label("Select a part or grid to see its properties.");
+            let palette = crate::theme::Palette::current(ui);
+            ui.add_space(crate::kit::SPACE_S);
+            ui.label(
+                egui::RichText::new(
+                    "Click an element to see its properties, or a view in the browser or empty \
+                     space in the model to see the view's.",
+                )
+                .size(12.0)
+                .color(palette.muted),
+            );
             return;
         };
-        let palette = crate::theme::Palette::current(ui);
         let state = self.props.state();
         match &state {
             Some(State::Current) if self.props.head_known() => {}
@@ -1809,122 +1826,189 @@ impl App {
             if let Some((_, count)) = &details.shared_definition {
                 ui.label(format!("Shape and material edits affect all {count} shared parts. Name, position and level affect this part."));
             }
-            ui.add_space(8.0);
-            ui.label(
-                egui::RichText::new(details.kind.to_uppercase())
-                    .size(10.0)
-                    .color(palette.muted),
-            );
-            ui.label(crate::theme::bold(&details.name, 18.0));
-            let subtitle = [
-                details.profile_name.as_deref(),
-                details.material_name.as_deref(),
-            ]
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>()
-            .join(" · ");
-            if !subtitle.is_empty() {
-                ui.label(
-                    egui::RichText::new(subtitle)
-                        .size(11.0)
-                        .color(palette.muted),
-                );
+            let icon = match details.kind.as_str() {
+                "beam" => crate::theme::Icon::Beam,
+                "column" => crate::theme::Icon::Column,
+                "plate" => crate::theme::Icon::Plate,
+                _ => crate::theme::Icon::Block,
+            };
+            let mut kind = details.kind.clone();
+            if let Some(first) = kind.get_mut(0..1) {
+                first.make_ascii_uppercase();
             }
-            ui.add_space(12.0);
-            ui.separator();
-            ui.add_space(12.0);
+            crate::kit::type_box(ui, icon, &kind);
             // Borrowed beside the form (disjoint fields), never copied: the panel is laid out in
             // every frame the window draws.
             let materials = &self.tools.definitions.materials;
             ui.add_enabled_ui(editable && !busy, |ui| {
-                ui.label(egui::RichText::new("General").size(12.0));
-                field(ui, "Name", &mut self.props.form.name, 170.0);
-                field(ui, "Class", &mut self.props.form.class, 80.0);
-                if !details.is_plate() {
-                    // A member's profile is chosen from the model's and the project environment's
-                    // profiles; the engine rebuilds the body and the mass (`update-element`).
+                let base = self.props.baseline().clone();
+                let mark =
+                    |ui: &egui::Ui, changed: bool| crate::kit::mark_next_changed(ui, changed);
+                crate::kit::section(ui, "part", "Identity", true, |ui| {
+                    mark(ui, self.props.form.name != base.name);
+                    field(ui, "Name", &mut self.props.form.name, 170.0);
+                    mark(ui, self.props.form.class != base.class);
+                    field(ui, "Class", &mut self.props.form.class, 80.0);
+                });
+                crate::kit::section(ui, "part", "Section and material", true, |ui| {
+                    if !details.is_plate() {
+                        // A member's profile is chosen from the model's and the project
+                        // environment's profiles; the engine rebuilds the body and the mass
+                        // (`update-element`).
+                        mark(ui, self.props.form.profile != base.profile);
+                        choice_combo(
+                            ui,
+                            "props-profile",
+                            "Profile",
+                            &mut self.props.form.profile,
+                            &self.tools.definitions.profiles,
+                            false,
+                        );
+                    }
+                    mark(ui, self.props.form.material != base.material);
                     choice_combo(
                         ui,
-                        "props-profile",
-                        "Profile",
-                        &mut self.props.form.profile,
-                        &self.tools.definitions.profiles,
+                        "props-material",
+                        "Material",
+                        &mut self.props.form.material,
+                        materials,
                         false,
                     );
-                }
-                choice_combo(
-                    ui,
-                    "props-material",
-                    "Material",
-                    &mut self.props.form.material,
-                    materials,
-                    false,
-                );
-                if details.is_plate() {
-                    field(ui, "Thickness", &mut self.props.form.thickness, 80.0);
-                }
-                let level_label = self.props.form.level.as_ref().map_or_else(
-                    || "Not assigned".into(),
-                    |id| level_choice_label(id, &details.levels),
-                );
-                ui.label("Level");
-                egui::ComboBox::from_id_salt("props-level")
-                    .selected_text(level_label)
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut self.props.form.level, None, "Not assigned");
-                        for (id, _, _) in &details.levels {
-                            ui.selectable_value(
-                                &mut self.props.form.level,
-                                Some(id.clone()),
-                                level_choice_label(id, &details.levels),
-                            );
-                        }
-                    });
-                ui.add_space(18.0);
-                ui.label(egui::RichText::new("Position / mm").size(12.0));
-                ui.add_space(8.0);
-                for (axis, value) in ["X", "Y", "Z"]
-                    .into_iter()
-                    .zip(&mut self.props.form.translation)
-                {
-                    field(ui, axis, value, 170.0);
-                }
-            });
-            egui::CollapsingHeader::new("Quantities")
-                .default_open(true)
-                .show(ui, |ui| {
-                    let quantities = &details.quantities;
-                    for (label, number, unit, status, stored_freshness) in [
-                        (
-                            "Volume",
-                            quantities.volume_mm3,
-                            "mm³",
-                            quantities.volume_status.as_deref(),
-                            quantities.stored_volume_freshness.as_deref(),
-                        ),
-                        (
-                            "Mass",
-                            quantities.mass_kg,
-                            "kg",
-                            quantities.mass_status.as_deref(),
-                            quantities.stored_mass_freshness.as_deref(),
-                        ),
-                    ] {
-                        let mut value = match (number, status) {
-                            (Some(value), Some("current")) => format!("{value} {unit}"),
-                            (Some(value), Some("stale")) => format!("{value} {unit} · out of date"),
-                            _ => "Not available".into(),
-                        };
-                        if stored_freshness == Some("stale") {
-                            value.push_str(" · stored value out of date");
-                        }
-                        ui.horizontal(|ui| {
-                            ui.label(label);
-                            ui.label(value);
-                        });
+                    if details.is_plate() {
+                        mark(ui, self.props.form.thickness != base.thickness);
+                        field(ui, "Thickness, mm", &mut self.props.form.thickness, 80.0);
                     }
                 });
+                if !details.is_plate() {
+                    // As a CAD position dialog: where the section sits on the axis, how it is
+                    // turned about it, and how far its ends stand off the axis points.
+                    crate::kit::section(ui, "part", "Position", true, |ui| {
+                        let form = &mut self.props.form;
+                        mark(ui, form.plane != base.plane);
+                        crate::kit::prop_row(ui, "On plane", |ui| {
+                            egui::ComboBox::from_id_salt("props-plane")
+                                .width((ui.available_width() - crate::kit::FIT).max(60.0))
+                                .selected_text(match form.plane.as_str() {
+                                    "left" => "Left",
+                                    "right" => "Right",
+                                    _ => "Middle",
+                                })
+                                .show_ui(ui, |ui| {
+                                    for (token, name) in
+                                        [("left", "Left"), ("centre", "Middle"), ("right", "Right")]
+                                    {
+                                        ui.selectable_value(
+                                            &mut form.plane,
+                                            token.to_owned(),
+                                            name,
+                                        );
+                                    }
+                                });
+                        });
+                        mark(ui, form.plane_offset != base.plane_offset);
+                        field(ui, "On plane offset, mm", &mut form.plane_offset, 120.0);
+                        mark(ui, form.roll_deg != base.roll_deg);
+                        field(ui, "Rotation, °", &mut form.roll_deg, 120.0);
+                        mark(ui, form.depth != base.depth);
+                        crate::kit::prop_row(ui, "At depth", |ui| {
+                            egui::ComboBox::from_id_salt("props-depth")
+                                .width((ui.available_width() - crate::kit::FIT).max(60.0))
+                                .selected_text(match form.depth.as_str() {
+                                    "front" => "Front",
+                                    "back" => "Behind",
+                                    _ => "Middle",
+                                })
+                                .show_ui(ui, |ui| {
+                                    for (token, name) in [
+                                        ("front", "Front"),
+                                        ("centre", "Middle"),
+                                        ("back", "Behind"),
+                                    ] {
+                                        ui.selectable_value(
+                                            &mut form.depth,
+                                            token.to_owned(),
+                                            name,
+                                        );
+                                    }
+                                });
+                        });
+                        mark(ui, form.depth_offset != base.depth_offset);
+                        field(ui, "At depth offset, mm", &mut form.depth_offset, 120.0);
+                        mark(ui, form.start_offset != base.start_offset);
+                        field(ui, "Start offset, mm", &mut form.start_offset, 120.0);
+                        mark(ui, form.end_offset != base.end_offset);
+                        field(ui, "End offset, mm", &mut form.end_offset, 120.0);
+                    });
+                }
+                crate::kit::section(ui, "part", "Placement", true, |ui| {
+                    let level_label = self.props.form.level.as_ref().map_or_else(
+                        || "Not assigned".into(),
+                        |id| level_choice_label(id, &details.levels),
+                    );
+                    mark(ui, self.props.form.level != base.level);
+                    crate::kit::prop_row(ui, "Level", |ui| {
+                        egui::ComboBox::from_id_salt("props-level")
+                            .width((ui.available_width() - crate::kit::FIT).max(80.0))
+                            .truncate()
+                            .selected_text(level_label)
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(
+                                    &mut self.props.form.level,
+                                    None,
+                                    "Not assigned",
+                                );
+                                for (id, _, _) in &details.levels {
+                                    ui.selectable_value(
+                                        &mut self.props.form.level,
+                                        Some(id.clone()),
+                                        level_choice_label(id, &details.levels),
+                                    );
+                                }
+                            });
+                    });
+                    for ((axis, value), was) in ["X, mm", "Y, mm", "Z, mm"]
+                        .into_iter()
+                        .zip(&mut self.props.form.translation)
+                        .zip(&base.translation)
+                    {
+                        mark(ui, value != was);
+                        field(ui, axis, value, 170.0);
+                    }
+                });
+            });
+            crate::kit::section(ui, "part", "Quantities", true, |ui| {
+                let quantities = &details.quantities;
+                for (label, number, unit, status, stored_freshness) in [
+                    (
+                        "Volume",
+                        quantities.volume_mm3,
+                        "mm³",
+                        quantities.volume_status.as_deref(),
+                        quantities.stored_volume_freshness.as_deref(),
+                    ),
+                    (
+                        "Mass",
+                        quantities.mass_kg,
+                        "kg",
+                        quantities.mass_status.as_deref(),
+                        quantities.stored_mass_freshness.as_deref(),
+                    ),
+                ] {
+                    let (value, unit) = match (number, status) {
+                        (Some(value), Some("current")) => (format!("{value}"), Some(unit)),
+                        (Some(value), Some("stale")) => {
+                            (format!("{value} · out of date"), Some(unit))
+                        }
+                        _ => ("Not available".to_owned(), None),
+                    };
+                    let value = if stored_freshness == Some("stale") {
+                        format!("{value} · stored value out of date")
+                    } else {
+                        value
+                    };
+                    crate::kit::prop_value(ui, label, &value, unit);
+                }
+            });
             if !editable {
                 ui.label("Editing is off until the properties are current.");
             }
@@ -1934,15 +2018,7 @@ impl App {
         if self.props.busy() {
             ui.label("Running…");
         }
-        match &self.props_note {
-            Some(Ok(message)) => {
-                ui.label(message);
-            }
-            Some(Err(message)) => {
-                ui.colored_label(RED, message);
-            }
-            None => {}
-        }
+        // The outcome of an edit is told in the status bar (`App::status_note`).
     }
 
     fn property_actions(&mut self, ui: &mut egui::Ui) {
@@ -1977,50 +2053,6 @@ impl App {
             let id = details.id.clone();
             self.props.load(&id, Ok(details));
             self.props_note = None;
-        }
-    }
-
-    fn publish_panel(&mut self, ui: &mut egui::Ui) {
-        match self.publisher.target() {
-            Err(why) => {
-                ui.label(why);
-            }
-            Ok(_) => {
-                if let Some(status) = &self.publisher.status {
-                    ui.label(if status.unsent_revisions == 0 {
-                        "All changes are published."
-                    } else {
-                        "This workspace has unpublished changes."
-                    });
-                    if !status.base_is_current {
-                        ui.colored_label(
-                            RED,
-                            "The shared model changed. Review it before publishing.",
-                        );
-                    }
-                }
-                let enabled =
-                    self.publisher.phase() == Phase::Idle && !self.other_command_running();
-                if ui
-                    .add_enabled(enabled, egui::Button::new("Publish…"))
-                    .clicked()
-                    && let Err(why) = self.publisher.request()
-                {
-                    self.publisher.note = Some(Err(why.into()));
-                }
-                if self.publisher.phase() == Phase::Running {
-                    ui.label("Publishing…");
-                }
-            }
-        }
-        match &self.publisher.note {
-            Some(Ok(message)) => {
-                ui.label(message);
-            }
-            Some(Err(message)) => {
-                ui.colored_label(RED, message);
-            }
-            None => {}
         }
     }
 
@@ -2417,15 +2449,7 @@ impl App {
         if self.select_job.is_some() {
             ui.label("Looking up the element…");
         }
-        match &self.edit_note {
-            Some(Ok(message)) => {
-                ui.label(message);
-            }
-            Some(Err(message)) => {
-                ui.colored_label(RED, message);
-            }
-            None => {}
-        }
+        // The outcome of an edit is told in the status bar (`App::status_note`).
     }
 
     fn start_commit(&mut self) {
@@ -3005,6 +3029,7 @@ impl eframe::App for App {
         self.render_mode_shortcuts(ui.ctx());
         self.view_shortcuts(ui.ctx());
         self.poll_view_job();
+        self.poll_filter_overlays();
         self.perf_step(ui.ctx(), frame.info().cpu_usage);
         self.construction_keyboard(ui.ctx());
         if self.menu_open {
@@ -6756,11 +6781,13 @@ pub(crate) mod tests {
         assert_eq!(app.active_mode(), RenderMode::SelectedOnly);
         draw(&mut app, press(egui::Key::Num7, true));
         assert_eq!(app.active_mode(), RenderMode::Wireframe);
-        // The View tab's DISPLAY buttons set the same state a key press does.
+        // The View tab's Visual style dropdown sets the same state a key press does.
         let first = draw(&mut app, Vec::new());
         draw(&mut app, click(position(&first, "View")));
         let view_tab = draw(&mut app, Vec::new());
-        draw(&mut app, click(position(&view_tab, "Transparent")));
+        draw(&mut app, click(position(&view_tab, "Visual style")));
+        let menu = draw(&mut app, Vec::new());
+        draw(&mut app, click(position(&menu, "Transparent")));
         assert_eq!(app.active_mode(), RenderMode::Transparent);
     }
 
@@ -6883,7 +6910,8 @@ pub(crate) mod tests {
         assert_eq!(app.grid_form.name, "External change");
         // Delete edits text while a field has focus, and deletes the grid otherwise.
         let current = draw(&mut app, Vec::new());
-        let name_input = position(&current, "Name") + egui::vec2(0.0, 25.0);
+        // The field sits in the value cell, right of its label.
+        let name_input = position(&current, "Name") + egui::vec2(crate::kit::LABEL_WIDTH, 0.0);
         draw(&mut app, click(name_input));
         let key = |pressed| egui::Event::Key {
             key: egui::Key::Delete,
@@ -7488,7 +7516,7 @@ pub(crate) mod tests {
         app.views.book.insert(planned).unwrap();
         let labels = app_frame(&mut app, &ctx, vec![]);
         let shown: Vec<&str> = labels.iter().map(|(t, _)| t.as_str()).collect();
-        for expected in ["3D views", "3D View", "Plans", "Elevation A", "Level 1"] {
+        for expected in ["3D View", "Plans", "Elevation A", "Level 1"] {
             assert!(shown.contains(&expected), "{expected} is listed: {shown:?}");
         }
         for gone in [
@@ -7500,12 +7528,69 @@ pub(crate) mod tests {
         ] {
             assert!(!shown.contains(&gone), "{gone} is gone");
         }
-        // By folder, the folder replaces the kind groups.
-        app.views.by_folder = true;
+        // A folder made inside another is listed under it by its own name.
+        app.views
+            .book
+            .create_folder(&crate::views::new_folder_path("Plans", "Level 2"))
+            .unwrap();
         let labels = app_frame(&mut app, &ctx, vec![]);
         let shown: Vec<&str> = labels.iter().map(|(t, _)| t.as_str()).collect();
-        assert!(shown.contains(&"Plans"), "{shown:?}");
-        assert!(!shown.contains(&"3D views"), "{shown:?}");
+        assert!(shown.contains(&"Level 2"), "{shown:?}");
+        assert!(!shown.contains(&"Plans/Level 2"), "{shown:?}");
+        // A click on a view shows its properties without opening it; a double click opens it.
+        let id = Uuid7::parse("019a7bf0-0000-7000-8000-000000000011").unwrap();
+        let open = app.views.panes.len();
+        app.browser_action(super::view_panel::BrowserAction::Click(
+            id,
+            false,
+            false,
+            vec![id],
+        ));
+        assert_eq!(app.views.subject, crate::views::Subject::SavedView(id));
+        assert_eq!(app.views.panes.len(), open);
+        app.browser_action(super::view_panel::BrowserAction::Activate(id));
+        assert_eq!(app.views.active(), Some(id));
+        // A view dropped on a folder moves into it.
+        app.browser_action(super::view_panel::BrowserAction::Move(
+            id,
+            "Plans/Level 2".into(),
+        ));
+        assert_eq!(app.views.book.get(&id).unwrap().folder, "Plans/Level 2");
+    }
+
+    #[test]
+    fn a_browser_folder_renames_in_place_and_deletes_keeping_its_views() {
+        use super::view_panel::BrowserAction;
+        use beamcraft_engine::views::ModelView;
+        use beamcraft_engine::work_plane::WorkPlane;
+        use beamcraft_model::id::Uuid7;
+        let Some(mut app) = headless() else { return };
+        let mut plan = ModelView::new(
+            Uuid7::parse("019a7bf0-0000-7000-8000-000000000031").unwrap(),
+            "Plan",
+            WorkPlane::default(),
+            5000.0,
+        );
+        plan.folder = "Levlels".into();
+        app.views.book.insert(plan).unwrap();
+        // A wrong name is fixed in place.
+        app.browser_action(BrowserAction::StartRename("Levlels".into()));
+        assert_eq!(
+            app.views.folder_rename,
+            Some(("Levlels".to_owned(), "Levlels".to_owned()))
+        );
+        app.browser_action(BrowserAction::RenameFolder(
+            "Levlels".into(),
+            "Levels".into(),
+        ));
+        assert!(app.views.folder_rename.is_none());
+        let folder_of = |app: &super::App| app.views.book.find("Plan").unwrap().folder.clone();
+        assert_eq!(folder_of(&app), "Levels");
+        // Deleting the folder keeps the view, one level up.
+        app.browser_action(BrowserAction::DeleteFolder("Levels".into()));
+        assert!(app.views.book.find("Plan").is_some(), "the view stays");
+        assert_eq!(folder_of(&app), "");
+        assert!(!app.views.book.folders().any(|f| f == "Levels"));
     }
 
     #[test]
@@ -7518,9 +7603,9 @@ pub(crate) mod tests {
         let at = |labels: &[(String, egui::Pos2)]| {
             labels
                 .iter()
-                .find(|(t, _)| t == "Folder")
+                .find(|(t, _)| t == "Projection")
                 .map(|(_, p)| *p)
-                .unwrap_or_else(|| panic!("no Folder row: {labels:?}"))
+                .unwrap_or_else(|| panic!("no Projection row: {labels:?}"))
         };
         let first = at(&app_frame(&mut app, &ctx, vec![]));
         let mut last = first;
@@ -7643,7 +7728,7 @@ pub(crate) mod tests {
         assert_eq!(app.views.book.len(), before);
 
         // Panes are display-only and bounded; before any work-area frame none is placed.
-        for _ in 0..10 {
+        for _ in 0..(crate::views::MAX_WINDOWS + 2) {
             app.open_pane(None);
         }
         assert_eq!(app.views.panes.len(), crate::views::MAX_WINDOWS);
@@ -7657,21 +7742,28 @@ pub(crate) mod tests {
         crate::theme::install(&ctx);
         let mut labels = Vec::new();
         let mut rects = Vec::new();
-        // The first work-area frame places every pane inside, the first one maximized.
+        // The first work-area frame opens every pane as a tab of one group over the whole area,
+        // the active one shown.
         views_frame(&mut app, &ctx, vec![], &mut labels, &mut rects);
         let area = app.views.area.unwrap();
-        assert!(app.views.panes.iter().all(|p| p.placed));
-        assert!(app.views.panes.iter().all(|p| area.contains_rect(p.rect)));
-        assert!(app.views.panes[0].maximized);
-        assert_eq!(app.views.panes[0].rect, area);
-        // Tiled, every pane leaves the maximized state.
+        assert!(app.views.panes.iter().all(|p| p.placed && p.rect == area));
+        assert_eq!(app.views.panes.iter().filter(|p| p.shown).count(), 1);
+        assert!(app.views.active_pane().unwrap().shown);
+        // Tiled, the panes get groups of their own inside the area.
         app.arrange(super::work_area::Arrange::TileVertical);
         views_frame(&mut app, &ctx, vec![], &mut labels, &mut rects);
+        assert_eq!(app.views.dock.groups().len(), crate::dock::MAX_GROUPS);
         assert!(app.views.panes.iter().all(|p| !p.maximized));
         assert!(app.views.panes.iter().all(|p| area.contains_rect(p.rect)));
-        // The active pane's close glyph closes it.
-        let close = crate::panes::chrome(app.views.active_pane().unwrap().rect)
-            .close
+        // The active tab's close glyph closes it.
+        let active = app.views.active_pane().unwrap().key;
+        let close = app
+            .views
+            .tabs_drawn
+            .iter()
+            .find(|(k, _, _)| *k == active)
+            .unwrap()
+            .2
             .center();
         views_frame(&mut app, &ctx, click(close), &mut labels, &mut rects);
         views_frame(&mut app, &ctx, vec![], &mut labels, &mut rects);
@@ -7732,7 +7824,7 @@ pub(crate) mod tests {
         );
         assert_eq!(
             crate::views::view_kind(&view),
-            crate::views::ViewKind::Elevation
+            crate::views::ViewKind::Vertical
         );
         let camera = app.views.active_pane().unwrap().camera;
         assert!(camera.is_aligned() && camera.is_orthographic());
@@ -7898,25 +7990,44 @@ pub(crate) mod tests {
         views_frame(&mut app, &ctx, click(inside), &mut labels, &mut rects);
         assert_eq!(app.views.active_pane().unwrap().key, first);
         // The focus is applied after the drawing: the next frame strokes its frame as active.
+        // The frame runs round the view's image, under the tab strip.
         rects.clear();
         views_frame(&mut app, &ctx, vec![], &mut labels, &mut rects);
         let link = crate::theme::Palette::of(ctx.theme()).link;
+        let body = crate::panes::chrome(rect).body;
         assert!(
-            rects.iter().any(|(r, c)| *r == rect && *c == link),
+            rects.iter().any(|(r, c)| *r == body && *c == link),
             "no active frame around {rect:?}: {rects:?}"
         );
-        // Overlapping panes: a click in the overlap goes to the upper one, which stays active.
-        let area = app.views.area.unwrap();
-        let lower = egui::Rect::from_min_size(area.min, egui::vec2(500.0, 400.0));
-        let upper = lower.translate(egui::vec2(200.0, 150.0));
-        app.views.panes[1].rect = lower;
-        app.views.panes[2].rect = upper;
-        let top = app.views.panes[2].key;
-        app.focus_pane(top);
+        // As tabs of one group only the shown tab takes a click in the body; a click on another
+        // tab shows it and makes it active.
+        app.arrange(super::work_area::Arrange::Tabs);
         views_frame(&mut app, &ctx, vec![], &mut labels, &mut rects);
-        let overlap = lower.intersect(upper).center();
-        views_frame(&mut app, &ctx, click(overlap), &mut labels, &mut rects);
-        assert_eq!(app.views.active_pane().unwrap().key, top);
+        let shown = app.views.active_pane().unwrap().key;
+        let body = crate::panes::chrome(app.views.area.unwrap()).body.center();
+        views_frame(&mut app, &ctx, click(body), &mut labels, &mut rects);
+        assert_eq!(app.views.active_pane().unwrap().key, shown);
+        let (other, tab, _) = *app
+            .views
+            .tabs_drawn
+            .iter()
+            .find(|(k, _, _)| *k != shown)
+            .unwrap();
+        views_frame(
+            &mut app,
+            &ctx,
+            // Away from the close glyph, which macOS puts on the tab's left.
+            click(if crate::theme::TAB_CLOSE_LEADING {
+                tab.right_center() - egui::vec2(10.0, 0.0)
+            } else {
+                tab.left_center() + egui::vec2(10.0, 0.0)
+            }),
+            &mut labels,
+            &mut rects,
+        );
+        assert_eq!(app.views.active_pane().unwrap().key, other);
+        views_frame(&mut app, &ctx, vec![], &mut labels, &mut rects);
+        assert!(app.views.dock.is_shown(other) && !app.views.dock.is_shown(shown));
     }
 
     #[test]
@@ -8097,7 +8208,7 @@ pub(crate) mod tests {
             entry = find(&labels, "Tile vertical");
         }
         let entry = entry.unwrap_or_else(|| panic!("the Arrange popup did not open: {labels:?}"));
-        for item in ["Cascade", "Tile horizontal", "Maximize / restore"] {
+        for item in ["Tabs", "Tile horizontal", "Maximize / restore"] {
             assert!(find(&labels, item).is_some(), "no {item}: {labels:?}");
         }
         let active = app.views.active_pane().unwrap().key;
@@ -8122,16 +8233,7 @@ pub(crate) mod tests {
         for (r, next) in columns.iter().zip(columns.iter().skip(1)) {
             assert_eq!(r.max.x, next.min.x, "{columns:?}");
         }
-        // Cascade keeps the active pane on top.
-        app.arrange(Arrange::Cascade);
-        assert_eq!(app.views.active_pane().unwrap().key, active);
-        assert!(
-            app.views
-                .panes
-                .iter()
-                .all(|p| area.contains_rect(p.rect) && !p.maximized)
-        );
-        // Maximize, then restore.
+        // Maximize the active column, then restore.
         let before = app.views.active_pane().unwrap().rect;
         app.arrange(Arrange::ToggleMaximize);
         let pane = app.views.active_pane().unwrap();
@@ -8141,10 +8243,202 @@ pub(crate) mod tests {
         let pane = app.views.active_pane().unwrap();
         assert!(!pane.maximized);
         assert_eq!(pane.rect, before);
+        // Tabs put every view in one group over the whole area, the active one shown.
+        app.arrange(Arrange::Tabs);
+        assert_eq!(app.views.active_pane().unwrap().key, active);
+        assert!(
+            app.views
+                .panes
+                .iter()
+                .all(|p| p.rect == area && !p.maximized)
+        );
+        assert_eq!(app.views.panes.iter().filter(|p| p.shown).count(), 1);
         // Before any work-area frame there is nothing to lay out over.
         app.views.area = None;
         app.arrange(Arrange::TileHorizontal);
-        assert_eq!(app.views.active_pane().unwrap().rect, before);
+        assert_eq!(app.views.active_pane().unwrap().rect, area);
+    }
+
+    #[test]
+    fn a_double_click_in_the_browser_opens_the_view_as_a_tab() {
+        use beamcraft_engine::views::ModelView;
+        use beamcraft_engine::work_plane::WorkPlane;
+        use beamcraft_model::id::Uuid7;
+        let Some(mut app) = headless() else { return };
+        let ctx = views_context();
+        let id = Uuid7::parse("019a7bf0-0000-7000-8000-000000000031").unwrap();
+        app.views
+            .book
+            .insert(ModelView::new(id, "Plan A", WorkPlane::default(), 5000.0))
+            .unwrap();
+        let labels = app_frame(&mut app, &ctx, vec![]);
+        let at = labels.iter().find(|(t, _)| t == "Plan A").unwrap().1;
+        let tabs = app.views.panes.len();
+        app_frame(&mut app, &ctx, click(at));
+        assert_eq!(app.views.panes.len(), tabs, "a single click only selects");
+        assert_eq!(app.views.subject, crate::views::Subject::SavedView(id));
+        let mut both = click(at);
+        both.extend(click(at));
+        app_frame(&mut app, &ctx, both);
+        app_frame(&mut app, &ctx, vec![]);
+        assert_eq!(app.views.active(), Some(id), "the double click opens it");
+        assert_eq!(app.views.panes.len(), tabs + 1);
+    }
+
+    #[test]
+    fn a_view_takes_environment_filters_presets_and_new_filters() {
+        use beamcraft_engine::filter::Operator;
+        use beamcraft_engine::views::{
+            FilterCondition, FilterField, FilterOverride, ModelView, ViewFilter,
+        };
+        use beamcraft_engine::work_plane::WorkPlane;
+        use beamcraft_model::id::Uuid7;
+        let Some(mut app) = headless() else { return };
+        let dir = std::env::temp_dir().join(format!("beamcraft-vf-ui-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        app.source.store = dir.join("store");
+        app.source.config_dir = Some(dir.join("config"));
+        // The environment offers a filter and a preset that uses it.
+        let columns = ViewFilter::new(
+            "Columns",
+            vec![FilterCondition::new(
+                FilterField::Type,
+                Operator::Eq,
+                "column",
+            )],
+        );
+        let mut faded = ModelView::new(
+            Uuid7::parse("019a7bf0-0000-7000-8000-000000000099").unwrap(),
+            "x",
+            WorkPlane::default(),
+            8000.0,
+        );
+        faded.overrides = vec![FilterOverride::parse_spec("Columns|show|0.5,0.5,0.5|0.7").unwrap()];
+        app.tools.definitions.view_filters = vec![columns];
+        app.tools.definitions.view_presets =
+            vec![beamcraft_engine::presets::ViewPreset::from_view(
+                "Columns faded",
+                &faded,
+            )];
+        let id = Uuid7::parse("019a7bf0-0000-7000-8000-000000000021").unwrap();
+        app.views
+            .book
+            .insert(ModelView::new(id, "Plan 1", WorkPlane::default(), 5000.0))
+            .unwrap();
+        assert_eq!(app.filter_choices().len(), 1);
+        assert_eq!(app.preset_choices().len(), 1);
+        // Filling the form from the preset and applying brings the filter into the model.
+        app.edit_view(id);
+        let preset = app.preset_choices().remove(0);
+        app.views.form.copy_preset(&preset);
+        assert_eq!(app.views.form.overrides.len(), 1);
+        app.submit_view();
+        assert!(
+            app.views.book.filter("Columns").is_some(),
+            "{:?}",
+            app.views.note
+        );
+        let view = app.views.book.get(&id).unwrap();
+        assert_eq!(view.overrides[0].transparency, 0.7);
+        // A discipline preset carries no camera: the view keeps its own visible height.
+        assert_eq!(view.span_mm, 5000.0);
+        // A new filter from the editor joins the view's form; Apply keeps it.
+        app.open_filter_editor(None);
+        let (mut filter, previous) = app.views.filter_edit.clone().unwrap();
+        assert!(previous.is_none());
+        filter.name = "Main beams".into();
+        app.views.filter_edit = Some((filter.clone(), None));
+        app.views.book.save_filter(filter.clone(), None).unwrap();
+        app.views.filter_edit = None;
+        app.views
+            .form
+            .overrides
+            .push(FilterOverride::parse_spec("Main beams|hide").unwrap());
+        app.submit_view();
+        assert_eq!(app.views.book.get(&id).unwrap().overrides.len(), 2);
+        // The overlay waits for the matches, then hides and colours by the first override.
+        app.save_preset_from_form("Two filters");
+        assert!(app.views.presets.find("Two filters").is_some());
+        // The user's presets are personal configuration: they come back on the next open.
+        let (again, note) = crate::views::load_presets(app.source.config_dir.as_deref());
+        assert!(note.is_none() && again.find("two filters").is_some());
+        // A view preset applied from the browser fills the view at once.
+        app.browser_action(super::view_panel::BrowserAction::ApplyPreset(
+            id,
+            "Columns faded".into(),
+        ));
+        assert_eq!(app.views.book.get(&id).unwrap().overrides.len(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_dragged_tab_splits_the_group_it_is_dropped_on() {
+        let Some(mut app) = headless() else { return };
+        app.open_pane(None);
+        let ctx = views_context();
+        let (mut labels, mut rects) = (Vec::new(), Vec::new());
+        views_frame_with(
+            &mut app,
+            &ctx,
+            vec![],
+            &mut labels,
+            &mut rects,
+            false,
+            |_| {},
+        );
+        assert_eq!(app.views.dock.groups().len(), 1);
+        let area = app.views.area.unwrap();
+        let (key, tab, _) = app.views.tabs_drawn[0];
+        let from = tab.center() - egui::vec2(10.0, 0.0);
+        let to = egui::pos2(area.max.x - 20.0, area.center().y);
+        let mv = |pos| vec![egui::Event::PointerMoved(pos)];
+        views_frame_with(
+            &mut app,
+            &ctx,
+            press(from),
+            &mut labels,
+            &mut rects,
+            false,
+            |_| {},
+        );
+        for step in 1..=4 {
+            let pos = from + (to - from) * (step as f32 / 4.0);
+            views_frame_with(
+                &mut app,
+                &ctx,
+                mv(pos),
+                &mut labels,
+                &mut rects,
+                false,
+                |_| {},
+            );
+        }
+        views_frame_with(
+            &mut app,
+            &ctx,
+            release(to),
+            &mut labels,
+            &mut rects,
+            false,
+            |_| {},
+        );
+        views_frame_with(
+            &mut app,
+            &ctx,
+            vec![],
+            &mut labels,
+            &mut rects,
+            false,
+            |_| {},
+        );
+        assert_eq!(
+            app.views.dock.groups().len(),
+            2,
+            "the drop on the right edge splits"
+        );
+        let pane = app.views.panes.iter().find(|p| p.key == key).unwrap();
+        assert!(pane.rect.min.x > area.center().x - 1.0, "{:?}", pane.rect);
+        assert_eq!(app.views.active_pane().unwrap().key, key);
     }
 
     #[test]
@@ -8385,224 +8679,6 @@ pub(crate) mod tests {
         assert_eq!(restarted.preset, chosen);
         drop(restarted);
         let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn the_export_ifc_menu_row_writes_the_same_file_as_the_cli_by_hand() {
-        let mut app =
-            headless().expect("a native/software adapter is required for modelling acceptance");
-        let executable = std::env::current_exe().unwrap();
-        let cli = executable
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
-        assert!(
-            cli.is_file(),
-            "build beamcraft-cli before native modelling tests"
-        );
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!("bc-export-{}-{nanos}", std::process::id()));
-        std::fs::create_dir_all(&root).unwrap();
-        // The command refuses output paths through a symlinked ancestor (macOS maps /var to
-        // /private/var), so the fixture lives under its canonical name.
-        let root = std::fs::canonicalize(&root).unwrap();
-        let store = root.join("model");
-        std::fs::create_dir_all(&store).unwrap();
-        app.source.store = store.clone();
-        app.source.cli = cli.clone();
-        // One plate gives the export something to carry; the store it comes from is the real
-        // store the command reads, made by hand as a user makes one.
-        let run = |store: &std::path::Path, args: &[&str]| {
-            let output = std::process::Command::new(&cli)
-                .args(args)
-                .args(["--store", store.to_str().unwrap()])
-                .output()
-                .unwrap();
-            assert!(
-                output.status.success(),
-                "{}",
-                String::from_utf8_lossy(&output.stdout)
-            );
-            beamcraft_json::decode(&output.stdout, &beamcraft_json::Limits::DEFAULT).unwrap()
-        };
-        run(
-            &store,
-            &[
-                "create-plate",
-                "--width",
-                "1000",
-                "--length",
-                "500",
-                "--thickness",
-                "10",
-                "--name",
-                "Plate A",
-            ],
-        );
-        let ctx = egui::Context::default();
-        super::inter(&ctx);
-        crate::theme::install(&ctx);
-        // The menu page replaces the workbench while it is open, as `App::ui` draws it.
-        let frame = |app: &mut App, events| {
-            let output = ctx.run_ui(
-                egui::RawInput {
-                    screen_rect: Some(egui::Rect::from_min_size(
-                        egui::Pos2::ZERO,
-                        egui::vec2(1400.0, 900.0),
-                    )),
-                    events,
-                    ..Default::default()
-                },
-                |ui| {
-                    app.menu_page(ui);
-                },
-            );
-            let labels: Vec<(String, egui::Pos2)> = output
-                .shapes
-                .iter()
-                .filter_map(|shape| {
-                    if let egui::Shape::Text(text) = &shape.shape {
-                        Some((
-                            text.galley.text().to_owned(),
-                            text.pos + text.galley.size() / 2.0,
-                        ))
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            output.drop_without_applying_deltas();
-            labels
-        };
-        let click = |pos| {
-            vec![
-                egui::Event::PointerMoved(pos),
-                egui::Event::PointerButton {
-                    pos,
-                    button: egui::PointerButton::Primary,
-                    pressed: true,
-                    modifiers: egui::Modifiers::NONE,
-                },
-                egui::Event::PointerButton {
-                    pos,
-                    button: egui::PointerButton::Primary,
-                    pressed: false,
-                    modifiers: egui::Modifiers::NONE,
-                },
-            ]
-        };
-        app.menu_open = true;
-        // The navigation row is painted before the page heading of the same name, so the first
-        // "Export" label is the row a user clicks.
-        let export_row = frame(&mut app, vec![])
-            .iter()
-            .find(|(text, _)| text == "Export")
-            .map(|(_, pos)| *pos)
-            .expect("the menu shows the Export section");
-        frame(&mut app, click(export_row));
-        assert_eq!(
-            app.menu_section,
-            super::workbench::MenuSection::Export,
-            "the row opens the Export section"
-        );
-        assert!(!app.menu_export_open());
-        let ifc_row = frame(&mut app, vec![])
-            .iter()
-            .find(|(text, _)| text == "IFC")
-            .map(|(_, pos)| *pos)
-            .expect("the Export section shows the IFC row");
-        frame(&mut app, click(ifc_row));
-        assert!(app.menu_export_open());
-        // The form suggests the model's own folder and name.
-        assert_eq!(
-            app.menu_export.path,
-            root.join("model.ifc").to_string_lossy().into_owned()
-        );
-        let wait = |app: &mut App| {
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-            while app.menu_export.job.is_some() && std::time::Instant::now() < deadline {
-                frame(app, vec![]);
-                std::thread::sleep(std::time::Duration::from_millis(10));
-            }
-            assert!(app.menu_export.job.is_none(), "the export timed out");
-        };
-        let export_button = |app: &mut App| {
-            frame(app, vec![])
-                .iter()
-                .find(|(text, _)| text == "Export IFC")
-                .map(|(_, pos)| *pos)
-                .expect("the form shows Export IFC")
-        };
-        // The click runs the same `export-ifc` a user types.
-        let at = export_button(&mut app);
-        frame(&mut app, click(at));
-        assert!(app.menu_export.job.is_some(), "the click starts the export");
-        wait(&mut app);
-        let note = match &app.menu_export.note {
-            Some(Ok(note)) => note.clone(),
-            other => panic!("the export must succeed, got {other:?}"),
-        };
-        assert!(note.contains("Exported 1 of 1 elements"), "{note}");
-        let ifc = root.join("model.ifc");
-        assert!(ifc.is_file(), "{note}");
-        // The same command by hand writes the same file: the export is the CLI's, and the
-        // IFC stamp is a pure function of the revision, so the bytes agree.
-        let hand = root.join("hand.ifc");
-        run(&store, &["export-ifc", "--out", hand.to_str().unwrap()]);
-        assert_eq!(
-            std::fs::read(&ifc).unwrap(),
-            std::fs::read(&hand).unwrap(),
-            "the window's file equals the CLI's"
-        );
-        // A second export to the same file is the engine's refusal, and the file survives.
-        let before = std::fs::read(&ifc).unwrap();
-        let at = export_button(&mut app);
-        frame(&mut app, click(at));
-        wait(&mut app);
-        let refused = match &app.menu_export.note {
-            Some(Err(message)) => message.clone(),
-            other => panic!("an existing file must be refused, got {other:?}"),
-        };
-        assert!(
-            refused.contains("the output file exists and overwrite was not requested"),
-            "{refused}"
-        );
-        assert_eq!(std::fs::read(&ifc).unwrap(), before);
-        // With the switch on, the export replaces the file, and the bytes still agree.
-        let overwrite = frame(&mut app, vec![])
-            .iter()
-            .find(|(text, _)| text == "Replace an existing file")
-            .map(|(_, pos)| *pos)
-            .expect("the form shows the overwrite switch");
-        frame(&mut app, click(overwrite));
-        let at = export_button(&mut app);
-        frame(&mut app, click(at));
-        wait(&mut app);
-        assert!(
-            matches!(&app.menu_export.note, Some(Ok(note)) if note.contains("Exported 1 of 1 elements")),
-            "{:?}",
-            app.menu_export.note
-        );
-        assert_eq!(
-            std::fs::read(&ifc).unwrap(),
-            std::fs::read(&hand).unwrap(),
-            "the replaced file is still the CLI's"
-        );
-        // An export reads the store and never writes it.
-        assert_eq!(
-            run(&store, &["inspect-elements"])
-                .get("plates")
-                .and_then(|j| j.array())
-                .map(|p| p.len()),
-            Ok(1)
-        );
-        drop(app);
-        std::fs::remove_dir_all(root).unwrap();
     }
 }
 

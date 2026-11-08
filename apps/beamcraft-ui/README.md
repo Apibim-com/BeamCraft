@@ -53,7 +53,8 @@ beamcraft-ui --store ROOT --perf-run PLAN [--samples 1|4] [--cli PATH]
   from the CLI snapshot on a single background worker, cached for up to 20 models.
   Thumbnails have an 8,192-triangle budget; failures and larger models show an explicit message
   and Retry, not a fabricated or incomplete preview. Uninspected rows retain generic symbols.
-- The model workspace has a custom draggable title bar, native window controls, a project/save-state
+- The model workspace has a custom draggable title bar, window controls (on macOS the system's own
+  traffic lights over a transparent title bar; elsewhere drawn at the right), a project/save-state
   header and Publish for personal workspaces; Menu, Steel, Edit, View
   and Manage ribbon tabs; resizable project-browser and inspector panes; the native 3D viewport;
   and the compact selection/snap toolbar and status line. Views are listed in the browser.
@@ -74,14 +75,23 @@ beamcraft-ui --store ROOT --perf-run PLAN [--samples 1|4] [--cli PATH]
   elevation, section, grid, level, part, assembly, face and camera views, by picking points or a
   face in the model where needed (the picks fill the plane, Apply creates the view); each view has
   its own plane, projection, visible height, depth, work area, render mode, grids, hidden kinds,
-  colour and opacity. The view properties are in the right panel: clicking empty space in the
-  viewport shows them, and the free 3D view offers "Save as view". The project browser lists them
-  by folder with search, quick access, previews and a context menu; 3D / plane (Ctrl+P, shown in
-  its tooltip) toggles 3D and the view plane, and Ctrl+Tab cycles the open views. The work area
-  holds up to eight equal view windows inside it; the active one is highlighted and takes
-  selection, picking, snapping and tools; each moves, resizes, maximizes and closes, and the
-  last one may be closed. Arrange: Cascade, Tile horizontal, Tile vertical, Maximize / restore.
-  Views are display state beside the store and never change the model.
+  colour, opacity and filter overrides (each filter shown or hidden, coloured and made
+  transparent; the first matching filter decides). The view properties are in the right panel
+  as a properties grid with a view preset picker and the filters table: clicking empty space in
+  the viewport or a view in the browser shows them, and the free 3D view offers "Save as view".
+  View > Filters edits the filters (rows of field, operator and value). The project browser is a
+  tree of folders, as Revit's browser organised by folder: the default view on its own row,
+  then the folders and the views by name, each view's kind (plan, elevation or section,
+  inclined; 3D is a way of looking at any view, not a kind) shown by its icon; a search field, a filter menu (quick access, favourites, previews), drag to a folder or into the work area, and a context menu; a double click
+  opens a view. 3D / plane (Ctrl+P, shown in its tooltip) toggles 3D and the view plane, and
+  Ctrl+Tab cycles the open views. Views open as tabs in tab groups that split the work area: a
+  tab dragged onto a group's edge splits it, dividers resize the groups, and the active tab takes
+  selection, picking, snapping and tools. Windows: Open beside, Close inactive, Tab views, Tile
+  views, Arrange (Tabs, Tile, Tile horizontal, Tile vertical, Maximize / restore). Filters and
+  view presets also come from the environment's presets file, like the part presets; the
+  user's own view presets are kept in `view-presets.json` in the configuration directory.
+  On macOS a tab's close glyph sits first and shows under the pointer, as macOS tabs do;
+  elsewhere it sits last. Views are display state beside the store and never change the model.
   See [model views](../../docs/design/v12-named-views.md).
 - View retains all five render modes (Wireframe, Transparent, Grey, Shaded, Selected only)
   and the upstream remappable Ctrl+1 through Ctrl+5 shortcuts. Mode changes never reload the

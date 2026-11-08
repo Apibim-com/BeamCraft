@@ -56,15 +56,22 @@ fn view_colour(base: vec3f) -> vec3f {
     if (camera.tint.a <= 0.0) { discard; }
     return select(base, camera.tint.rgb, camera.tint.r >= 0.0);
 }
+// The overlay colour of a face: a white tint keeps the model colour exactly; any other tint
+// replaces it (as a colour override reads in Revit or Tekla), keeping a little of the face's
+// up-facing shading so the shape still reads.
+fn overlay(base: vec3f, tint: vec3f, n: vec3f) -> vec3f {
+    if (all(tint >= vec3f(0.999))) { return base; }
+    return tint * mix(0.82, 1.0, clamp(n.z, 0.0, 1.0));
+}
 // Cool steel faces keep the engineering model distinct from the application chrome. The
-// overlay tint multiplies the base colour (also in wireframe, which shares this fragment); a
+// overlay tint replaces the base colour (also in wireframe, which shares this fragment); a
 // white tint leaves the face untouched.
 @fragment fn shade(o: Out) -> @location(0) vec4f {
     cut(o.world);
     let n = normalize(o.normal);
     let base = view_colour(mix(vec3f(0.38, 0.51, 0.59), vec3f(0.74, 0.80, 0.84), clamp(n.z, 0.0, 1.0)));
     let light = 0.55 + 0.45 * max(dot(n, normalize(vec3f(0.3, -0.4, 0.85))), 0.0);
-    return vec4f(base * light * o.tint.rgb, 1.0);
+    return vec4f(overlay(base, o.tint.rgb, n) * light, 1.0);
 }
 // The ghost preview of the member being placed: the same lighting on a distinct amber, so the
 // not-yet-committed shape never reads as a model element.
@@ -89,5 +96,5 @@ fn view_colour(base: vec3f) -> vec3f {
     let n = normalize(o.normal);
     let base = view_colour(mix(vec3f(0.47, 0.71, 0.77), vec3f(0.96, 0.94, 0.88), clamp(n.z, 0.0, 1.0)));
     let light = 0.55 + 0.45 * max(dot(n, normalize(vec3f(0.3, -0.4, 0.85))), 0.0);
-    return vec4f(base * light * o.tint.rgb, 0.45 * o.tint.a * camera.tint.a);
+    return vec4f(overlay(base, o.tint.rgb, n) * light, 0.45 * o.tint.a * camera.tint.a);
 }

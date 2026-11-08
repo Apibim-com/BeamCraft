@@ -265,6 +265,16 @@ pub struct SetRoll {
     pub opinion: Opinion<f64>,
 }
 
+/// Replace a straight member's section position about its axis (P14) whole: the six
+/// placement attributes, or none of them for the centred default.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SetSectionPlacement {
+    /// Full target UUIDv7.
+    pub id: String,
+    /// The new position; `None` removes the opinion (the centred default).
+    pub placement: Option<SectionPlacement>,
+}
+
 /// Replace the required immutable member profile.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SetProfile {
@@ -368,6 +378,95 @@ impl ChangeHook for SetRoll {
 
     fn attributes(&self) -> Vec<(&'static str, &'static str)> {
         vec![("steel:member:rollRad", "double")]
+    }
+}
+
+impl ChangeHook for SetSectionPlacement {
+    member_change_common!("steel:member:planePosition");
+
+    fn validate(&self, _cx: &mut ChangeValidateCx<'_>) -> Result<(), Diagnostic> {
+        match &self.placement {
+            Some(p) => cap(
+                [
+                    p.plane_offset_mm,
+                    p.depth_offset_mm,
+                    p.start_offset_mm,
+                    p.end_offset_mm,
+                ],
+                1e6,
+            ),
+            None => Ok(()),
+        }
+    }
+
+    fn check_finite(&self) -> Result<(), Diagnostic> {
+        match &self.placement {
+            Some(p) => finite([
+                p.plane_offset_mm,
+                p.depth_offset_mm,
+                p.start_offset_mm,
+                p.end_offset_mm,
+            ]),
+            None => Ok(()),
+        }
+    }
+
+    fn author(&self, cx: &mut ChangeAuthorCx<'_>) -> Result<(), Diagnostic> {
+        let token = |t: &str| sdf::Value::token(t);
+        let fields: [(&str, &str, Option<sdf::Value>); 6] = match &self.placement {
+            Some(p) => [
+                (
+                    "steel:member:planePosition",
+                    "token",
+                    Some(token(p.plane.as_str())),
+                ),
+                (
+                    "steel:member:planeOffsetMm",
+                    "double",
+                    Some(sdf::Value::Double(p.plane_offset_mm)),
+                ),
+                (
+                    "steel:member:depthPosition",
+                    "token",
+                    Some(token(p.depth.as_str())),
+                ),
+                (
+                    "steel:member:depthOffsetMm",
+                    "double",
+                    Some(sdf::Value::Double(p.depth_offset_mm)),
+                ),
+                (
+                    "steel:member:startOffsetMm",
+                    "double",
+                    Some(sdf::Value::Double(p.start_offset_mm)),
+                ),
+                (
+                    "steel:member:endOffsetMm",
+                    "double",
+                    Some(sdf::Value::Double(p.end_offset_mm)),
+                ),
+            ],
+            None => [
+                ("steel:member:planePosition", "token", None),
+                ("steel:member:planeOffsetMm", "double", None),
+                ("steel:member:depthPosition", "token", None),
+                ("steel:member:depthOffsetMm", "double", None),
+                ("steel:member:startOffsetMm", "double", None),
+                ("steel:member:endOffsetMm", "double", None),
+            ],
+        };
+        for (name, ty, value) in fields {
+            let opinion = match value {
+                Some(value) => Opinion::Value(value),
+                None => Opinion::Remove,
+            };
+            attribute(cx.data, cx.path, name, ty, opinion, true)?;
+        }
+        Ok(())
+    }
+
+    fn attributes(&self) -> Vec<(&'static str, &'static str)> {
+        MEMBER_PLACEMENT.to_vec()
     }
 }
 

@@ -9,9 +9,12 @@
 use crate::Refusal;
 use crate::pipeline::{control, digest_of, open_request};
 use beamcraft_engine::solid::rotate_vector;
-use beamcraft_engine::views::{ModelView, Projection, ViewBook, ViewProvenance, WorkArea};
+use beamcraft_engine::views::{
+    FilterOverride, ModelView, Projection, ViewBook, ViewFilter, ViewProvenance, WorkArea,
+};
 use beamcraft_engine::work_plane::WorkPlane;
 use beamcraft_engine::{ElementKind, KindFilter, RenderMode};
+use beamcraft_json::Limits;
 use beamcraft_layer_engine::authored::views as layer;
 use beamcraft_layer_engine::authored::views::{CameraProjection, SavedView, ViewStamp, ViewsLayer};
 use beamcraft_layer_engine::{Asset, Prim, Reader};
@@ -122,6 +125,7 @@ fn to_saved(view: &ModelView) -> Result<SavedView, CommandError> {
     saved.opacity = view.opacity;
     saved.representation = view.representation.as_token().to_owned();
     saved.colour_set = view.colour_set.clone();
+    saved.filter_overrides = view.overrides.iter().map(FilterOverride::to_spec).collect();
     if let Some(provenance) = &view.provenance {
         saved.stamp = Some(
             ViewStamp::new(
@@ -183,6 +187,11 @@ fn to_view(saved: SavedView) -> Result<ModelView, CommandError> {
             )
         })?;
     view.colour_set = saved.colour_set;
+    view.overrides = saved
+        .filter_overrides
+        .iter()
+        .map(|spec| FilterOverride::parse_spec(spec))
+        .collect::<Result<Vec<_>, _>>()?;
     if let Some(stamp) = saved.stamp {
         view.provenance = Some(
             ViewProvenance::new(
@@ -221,14 +230,42 @@ pub fn layer_bytes(book: &ViewBook) -> Result<Vec<u8>, CommandError> {
         .filter(|folder| !used.contains(folder))
         .map(str::to_owned)
         .collect::<Vec<_>>();
+    let filters = book
+        .filters()
+        .iter()
+        .map(filter_text)
+        .collect::<Result<Vec<_>, _>>()?;
     layer::bytes(&ViewsLayer {
         views: saved,
         empty_folders: empty,
+        filters,
     })
     .map_err(from_layer("views.layer"))
 }
 
-/// The book of one views layer's bytes: camera prims back into engine views.
+/// One view filter as the compact JSON text the layer stores
+/// (`beamcraft_host::views::filter_to_json`).
+fn filter_text(filter: &ViewFilter) -> Result<String, CommandError> {
+    let bytes = beamcraft_host::views::filter_to_json(filter)
+        .encode(&Limits::DEFAULT)
+        .map_err(|_| refused(ErrorCode::InvalidArgument, "a view filter does not encode"))?;
+    String::from_utf8(bytes)
+        .map_err(|_| refused(ErrorCode::InvalidArgument, "a view filter does not encode"))
+}
+
+/// One view filter back from its stored JSON text.
+fn filter_from_text(text: &str) -> Result<ViewFilter, CommandError> {
+    let json = beamcraft_json::decode(text.as_bytes(), &Limits::DEFAULT).map_err(|_| {
+        refused(
+            ErrorCode::InvalidArgument,
+            "a stored view filter is not valid JSON",
+        )
+    })?;
+    beamcraft_host::views::filter_from_json(&json)
+}
+
+/// The book of one views layer's bytes: camera prims back into engine views, with the view
+/// filters their overrides name.
 pub fn book_from_layer(bytes: &[u8]) -> Result<ViewBook, CommandError> {
     let content = layer::read_layer(&prims(bytes)?).map_err(from_layer("views.layer"))?;
     let views = content
@@ -236,5 +273,47 @@ pub fn book_from_layer(bytes: &[u8]) -> Result<ViewBook, CommandError> {
         .into_iter()
         .map(to_view)
         .collect::<Result<Vec<_>, _>>()?;
-    ViewBook::from_parts(views, content.empty_folders)
+    let filters = content
+        .filters
+        .iter()
+        .map(|text| filter_from_text(text))
+        .collect::<Result<Vec<_>, _>>()?;
+    ViewBook::from_all(views, content.empty_folders, filters)
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing)]
+mod tests {
+    use super::*;
+    use beamcraft_engine::filter::Operator;
+    use beamcraft_engine::views::{FilterCondition, FilterField, FilterMatch};
+    use beamcraft_model::id::Uuid7;
+
+    #[test]
+    fn filters_and_overrides_ride_through_the_layer() {
+        let mut book = ViewBook::new();
+        let mut beams = ViewFilter::new(
+            "Beams",
+            vec![
+                FilterCondition::new(FilterField::Type, Operator::Eq, "beam"),
+                FilterCondition::new(
+                    FilterField::Attribute("Fire rating".into()),
+                    Operator::Eq,
+                    "R30",
+                ),
+            ],
+        );
+        beams.matching = FilterMatch::Any;
+        book.save_filter(beams, None).unwrap();
+        let mut plan = ModelView::new(
+            Uuid7::parse("0199e7a0-0000-7000-8000-0000000000a1").unwrap(),
+            "Plan",
+            WorkPlane::default(),
+            5000.0,
+        );
+        plan.overrides = vec![FilterOverride::parse_spec("Beams|hide|1,0.5,0|0.25").unwrap()];
+        book.insert(plan).unwrap();
+        let back = book_from_layer(&layer_bytes(&book).unwrap()).unwrap();
+        assert_eq!(back, book);
+    }
 }

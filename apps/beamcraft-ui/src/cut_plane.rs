@@ -159,7 +159,7 @@ impl Form {
     /// Show the cut editor and return an explicit action, or a validation error to display.
     pub fn show(&mut self, ui: &mut egui::Ui) -> Result<Option<Action>, FormError> {
         let mut action = None;
-        ui.collapsing("Cut plane", |ui| {
+        crate::kit::section(ui, "cut", "Cut plane", false, |ui| {
             egui::ComboBox::from_id_salt("cut-plane-mode")
                 .selected_text(match self.mode {
                     Mode::XY => "XY (cut below)",

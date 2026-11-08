@@ -5,12 +5,14 @@
 //! composing existing primitives only — the element-kind filter (whose `reference` kind is the
 //! reference visibility), the view depth slab above and below the plane (the underlay), the
 //! representation level (U12), the name of a saved colour set (V17) and the display option
-//! toggles (grid guides). A preset holds no camera, no work area, no provenance and no model
+//! toggles (grid guides) and the view filter overrides, which name filters of the view book the
+//! preset is applied in. A preset holds no camera, no work area, no provenance and no model
 //! revision: applying one to a view changes only that view's display bundle, so the model and
 //! the snapshot token never move.
 
 use crate::element::KindFilter;
 use crate::presentation::Representation;
+use crate::view_filter::{FilterOverride, validate_overrides};
 use crate::views::{MAX_DEPTH_MM, ModelView};
 use beamcraft_model::command::CommandError;
 use beamcraft_model::error::ErrorCode;
@@ -48,6 +50,9 @@ pub struct ViewPreset {
     pub colour_set: Option<String>,
     /// Whether grid guides are displayed.
     pub grids_visible: bool,
+    /// The view filter overrides, in order, by filter name. Applying the preset in a view book
+    /// that lacks one of the filters is refused by the book.
+    pub overrides: Vec<FilterOverride>,
 }
 
 impl ViewPreset {
@@ -61,6 +66,21 @@ impl ViewPreset {
             representation: Representation::Full,
             colour_set: None,
             grids_visible: true,
+            overrides: Vec::new(),
+        }
+    }
+
+    /// The display bundle of `view` as a preset named `name`: the fields [`Self::apply_to`]
+    /// writes, and nothing else.
+    pub fn from_view(name: &str, view: &ModelView) -> Self {
+        Self {
+            name: name.trim().to_owned(),
+            hidden_kinds: view.hidden_kinds,
+            depth: view.depth,
+            representation: view.representation,
+            colour_set: view.colour_set.clone(),
+            grids_visible: view.grids_visible,
+            overrides: view.overrides.clone(),
         }
     }
 
@@ -97,11 +117,11 @@ impl ViewPreset {
                 "a colour set name is 1 to 64 bytes without controls",
             ));
         }
-        Ok(())
+        validate_overrides(&self.overrides)
     }
 
     /// Applies the display bundle onto `view`: the kind filter, the depth slab, the
-    /// representation, the colour set and the grid toggle, and nothing else — the camera, the
+    /// representation, the colour set, the grid toggle and the filter overrides, and nothing else — the camera, the
     /// span, the render mode, the colour and opacity, the folder, the favourite and the
     /// provenance stay. A preset is display state, so this can never touch a model.
     ///
@@ -114,6 +134,7 @@ impl ViewPreset {
         view.representation = self.representation;
         view.colour_set = self.colour_set.clone();
         view.grids_visible = self.grids_visible;
+        view.overrides.clone_from(&self.overrides);
         Ok(())
     }
 }
@@ -184,6 +205,23 @@ impl PresetBook {
         Ok(())
     }
 
+    /// Adds `preset`, or replaces the one with the same name (case-insensitively).
+    pub fn save(&mut self, preset: ViewPreset) -> Result<(), CommandError> {
+        let wanted = preset.name.to_lowercase();
+        match self
+            .presets
+            .iter_mut()
+            .find(|p| p.name.to_lowercase() == wanted)
+        {
+            Some(slot) => {
+                preset.validate()?;
+                *slot = preset;
+                Ok(())
+            }
+            None => self.insert(preset),
+        }
+    }
+
     /// Removes the preset named by `selector`, returning it.
     pub fn remove(&mut self, selector: &str) -> Result<ViewPreset, CommandError> {
         let at = self
@@ -219,6 +257,7 @@ mod tests {
         p.representation = Representation::Simplified;
         p.colour_set = Some("Part classes".into());
         p.grids_visible = false;
+        p.overrides = vec![FilterOverride::new("Beams")];
         p
     }
 
@@ -270,6 +309,8 @@ mod tests {
         assert_eq!(v.representation, Representation::Simplified);
         assert_eq!(v.colour_set.as_deref(), Some("Part classes"));
         assert!(!v.grids_visible);
+        assert_eq!(v.overrides, [FilterOverride::new("Beams")]);
+        assert_eq!(ViewPreset::from_view("Fab", &v), preset("Fab"));
         // The camera, the display styling and the provenance stay untouched.
         assert_eq!(v.projection, before.projection);
         assert_eq!(v.span_mm, before.span_mm);
@@ -307,5 +348,14 @@ mod tests {
             "the book is bounded"
         );
         assert!(PresetBook::from_parts(vec![preset("a"), preset("A")]).is_err());
+        let mut again = preset("Fab");
+        full.remove("p0").unwrap();
+        full.save(again.clone()).unwrap();
+        again.grids_visible = true;
+        full.save(again).unwrap();
+        assert!(
+            full.find("FAB").unwrap().grids_visible,
+            "same name replaces"
+        );
     }
 }

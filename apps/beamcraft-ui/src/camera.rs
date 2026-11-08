@@ -93,7 +93,9 @@ impl Camera {
             yaw: -0.8,
             pitch: 0.85,
             distance: (extent / 2.0 / half.sin() * 1.05).clamp(10.0, 2e7),
-            orthographic: false,
+            // Steel detailing reads true lengths: every view starts orthographic, and the
+            // perspective is chosen per view when it is wanted.
+            orthographic: true,
             basis: None,
             reach: extent,
         })
@@ -464,12 +466,40 @@ mod tests {
         assert!(c.distance().is_finite());
     }
     #[test]
+    fn orthographic_zoom_toward_the_cursor_keeps_the_point_under_the_cursor_still() {
+        let aspect = 1.6;
+        for (a, b) in [(300.0f32, 120.0), (-250.0, -90.0), (0.0, 0.0)] {
+            for zoom in [0.7f32, -0.9, 2.0] {
+                let mut c = Camera::new([0.0; 3], 1000.0, aspect).unwrap();
+                assert!(c.is_orthographic(), "views start orthographic");
+                let v = c.view(aspect).unwrap();
+                // A point in the plane through the target, and the cursor on it.
+                let point = [
+                    v.right[0] * a + v.up[0] * b,
+                    v.right[1] * a + v.up[1] * b,
+                    v.right[2] * a + v.up[2] * b,
+                ];
+                let want = v.project(point);
+                let pan = c.cursor_zoom_pan([want[0], want[1]], aspect, zoom).unwrap();
+                c.navigate([0.0; 2], pan, zoom).unwrap();
+                let got = c.view(aspect).unwrap().project(point);
+                assert!(
+                    (want[0] - got[0]).abs() < 1e-3 && (want[1] - got[1]).abs() < 1e-3,
+                    "point {a},{b} zoom {zoom}: {want:?} -> {got:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn zoom_toward_the_cursor_keeps_the_point_under_the_cursor_still() {
         let aspect = 1.6;
         // A fresh camera per case: the invariant must not depend on navigation history.
         for ndc in [[0.5f32, 0.3], [-0.7, -0.4], [0.9, -0.8], [0.0, 0.0]] {
             for zoom in [0.7f32, -0.9, 2.0] {
                 let mut c = Camera::new([0.0; 3], 1000.0, aspect).unwrap();
+                // The anchor below is built with the perspective's field angle.
+                c.set_projection(false);
                 let v = c.view(aspect).unwrap();
                 let [tan, va, _, _] = v.params;
                 let d = c.distance();
@@ -498,6 +528,7 @@ mod tests {
         // At the zoom bounds navigate clamps the distance; the compensation follows the clamped
         // distance, so the anchor still stays still (a raw exponential here would miss).
         let mut c = Camera::new([0.0; 3], 1000.0, aspect).unwrap();
+        c.set_projection(false);
         let zoom = 6.0f32;
         let v = c.view(aspect).unwrap();
         let [tan, va, _, _] = v.params;

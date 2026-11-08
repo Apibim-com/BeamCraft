@@ -286,7 +286,9 @@ write.
 update-element --store ROOT --id UUID [--name TEXT] [--class INT32] [--profile-digest SHA256]
     [--profile TEXT] [--material-digest SHA256|none] [--thickness MM]
     [--thickness-side top|middle|bottom] [--corners V=chamfer:D1[,D2];V=round:R|none]
-    [--axis-point X,Y,Z;X,Y,Z;...] [--translation X,Y,Z] [--orientation-xyzw X,Y,Z,W|none]
+    [--axis-point X,Y,Z;X,Y,Z;...] [--roll RAD] [--section-plane left|centre|right]
+    [--section-plane-offset MM] [--section-depth front|centre|back] [--section-depth-offset MM]
+    [--start-offset MM] [--end-offset MM] [--translation X,Y,Z] [--orientation-xyzw X,Y,Z,W|none]
     [--level UUID|none] [--rotate-about X,Y,Z] [--rotate-axis X,Y,Z] [--rotate-angle RAD]
     [--mirror-point X,Y,Z] [--mirror-normal X,Y,Z] [--move-from X,Y,Z] [--move-to X,Y,Z]
     [--op-id UUID] [--revision-id UUID] [--actor-id UUID] [--project-id UUID]
@@ -1209,7 +1211,7 @@ save-view --file FILE [--name TEXT] [--new-id UUID] [--author TEXT] [--comment T
     [--render-mode wireframe|transparent|grey|shaded|selected] [--grids true|false]
     [--hidden-kinds none|KIND,...] [--work-area none|MM,MM,MM,MM,MM,MM] [--color default|R,G,B]
     [--opacity 0..1] [--representation full|simplified] [--colour-set none|NAME] [--folder PATH]
-    [--favorite true|false] [--default true|false] [--copy-from VIEW]
+    [--favorite true|false] [--default true|false] [--copy-from VIEW] [--overrides none|SPEC;...]
 ```
 
 ### update-view
@@ -1227,7 +1229,7 @@ update-view --file FILE --view ID|NAME [--name TEXT] [--store ROOT] [--target X,
     [--render-mode wireframe|transparent|grey|shaded|selected] [--grids true|false]
     [--hidden-kinds none|KIND,...] [--work-area none|MM,MM,MM,MM,MM,MM] [--color default|R,G,B]
     [--opacity 0..1] [--representation full|simplified] [--colour-set none|NAME] [--folder PATH]
-    [--favorite true|false] [--default true|false] [--copy-from VIEW]
+    [--favorite true|false] [--default true|false] [--copy-from VIEW] [--overrides none|SPEC;...]
 ```
 
 ### remove-view
@@ -1246,6 +1248,47 @@ read.
 apply-view --file FILE --view ID|NAME [--store ROOT]
 ```
 
+### list-view-filters
+
+read.
+
+```text
+list-view-filters --file FILE [--store ROOT]
+```
+
+### save-view-filter
+
+write.
+
+```text
+save-view-filter --file FILE --name TEXT [--store ROOT] [--rename-from NAME] [--match all|any]
+    [--conditions none|ROW;...]
+```
+
+### remove-view-filter
+
+write.
+
+```text
+remove-view-filter --file FILE --name NAME [--store ROOT]
+```
+
+### rename-view-folder
+
+write.
+
+```text
+rename-view-folder --file FILE --from PATH --to PATH [--store ROOT]
+```
+
+### remove-view-folder
+
+write.
+
+```text
+remove-view-folder --file FILE --name PATH [--store ROOT]
+```
+
 ### define-preset
 
 write.
@@ -1253,7 +1296,7 @@ write.
 ```text
 define-preset --file FILE --name TEXT [--store ROOT] [--hidden-kinds none|KIND,...]
     [--depth none|ABOVE,BELOW] [--representation full|simplified] [--colour-set none|NAME]
-    [--grids true|false]
+    [--grids true|false] [--overrides none|SPEC;...]
 ```
 
 ### list-presets

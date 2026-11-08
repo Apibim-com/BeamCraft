@@ -74,6 +74,24 @@ pub struct Quantities {
     pub density_kg_m3: Option<f64>,
 }
 
+/// A member's section position about its axis, as `inspect-elements` reports it: the tokens
+/// and millimetres of the engine's `SectionPlacement`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SectionPosition {
+    /// Across the width: `left`, `centre` or `right`.
+    pub plane: String,
+    /// Extra shift across the width, mm.
+    pub plane_offset_mm: f64,
+    /// Through the height: `front`, `centre` or `back`.
+    pub depth: String,
+    /// Extra shift through the height, mm.
+    pub depth_offset_mm: f64,
+    /// Offset of the start face along the axis, mm.
+    pub start_offset_mm: f64,
+    /// Offset of the end face along the axis, mm.
+    pub end_offset_mm: f64,
+}
+
 /// What `inspect-elements` reports about one element, read for the properties panel.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Details {
@@ -108,6 +126,10 @@ pub struct Details {
     pub profile: Option<String>,
     /// A member's profile name, when the definition has one.
     pub profile_name: Option<String>,
+    /// A straight member's roll about its axis in radians; `None` is zero.
+    pub roll_rad: Option<f64>,
+    /// A straight member's section position about its axis (P14); `None` is centred.
+    pub section_placement: Option<SectionPosition>,
     /// The assigned level's id.
     pub level: Option<String>,
     /// Pinned level choices as identity, name and elevation in millimetres.
@@ -285,6 +307,19 @@ pub fn parse_details(
             axis_points_mm,
             profile: text(element, "profile_digest"),
             profile_name: text(element, "profile_name"),
+            roll_rad: element.get("roll_rad").and_then(Json::float).ok(),
+            section_placement: element.get("section_placement").ok().and_then(|p| {
+                let token = |key: &str| p.get(key).and_then(Json::string).ok().map(str::to_owned);
+                let mm = |key: &str| p.get(key).and_then(Json::float).ok();
+                Some(SectionPosition {
+                    plane: token("plane")?,
+                    plane_offset_mm: mm("plane_offset_mm")?,
+                    depth: token("depth")?,
+                    depth_offset_mm: mm("depth_offset_mm")?,
+                    start_offset_mm: mm("start_offset_mm")?,
+                    end_offset_mm: mm("end_offset_mm")?,
+                })
+            }),
             level: text(element, "level"),
             levels,
             shared_definition,
@@ -465,6 +500,20 @@ pub struct Form {
     pub thickness: String,
     /// `--translation`, mm, absolute.
     pub translation: [String; 3],
+    /// A member's roll in degrees (`--roll` takes radians).
+    pub roll_deg: String,
+    /// `--section-plane`: `left`, `centre` or `right`.
+    pub plane: String,
+    /// `--section-plane-offset`, mm.
+    pub plane_offset: String,
+    /// `--section-depth`: `front`, `centre` or `back`.
+    pub depth: String,
+    /// `--section-depth-offset`, mm.
+    pub depth_offset: String,
+    /// `--start-offset`, mm.
+    pub start_offset: String,
+    /// `--end-offset`, mm.
+    pub end_offset: String,
 }
 
 impl Form {
@@ -478,6 +527,39 @@ impl Form {
             profile: details.profile.clone(),
             thickness: details.thickness_mm.map(show).unwrap_or_default(),
             translation: details.translation_mm.map(show),
+            roll_deg: show(details.roll_rad.unwrap_or(0.0).to_degrees()),
+            plane: details
+                .section_placement
+                .as_ref()
+                .map_or_else(|| "centre".to_owned(), |p| p.plane.clone()),
+            plane_offset: show(
+                details
+                    .section_placement
+                    .as_ref()
+                    .map_or(0.0, |p| p.plane_offset_mm),
+            ),
+            depth: details
+                .section_placement
+                .as_ref()
+                .map_or_else(|| "centre".to_owned(), |p| p.depth.clone()),
+            depth_offset: show(
+                details
+                    .section_placement
+                    .as_ref()
+                    .map_or(0.0, |p| p.depth_offset_mm),
+            ),
+            start_offset: show(
+                details
+                    .section_placement
+                    .as_ref()
+                    .map_or(0.0, |p| p.start_offset_mm),
+            ),
+            end_offset: show(
+                details
+                    .section_placement
+                    .as_ref()
+                    .map_or(0.0, |p| p.end_offset_mm),
+            ),
         }
     }
 }
@@ -557,6 +639,11 @@ impl Properties {
     /// The reading, when it could be taken.
     pub fn details(&self) -> Option<&Details> {
         self.read.as_ref()
+    }
+
+    /// The form as the element was loaded, before any edit.
+    pub fn baseline(&self) -> &Form {
+        &self.baseline
     }
 
     /// Takes the outcome of a details lookup for `id`: the form is reset to what the engine
@@ -743,6 +830,48 @@ impl Properties {
             let [x, y, z] = point;
             args.extend(["--translation".into(), format!("{},{},{}", x?, y?, z?)]);
             changed.push("position");
+        }
+        if !details.is_plate() && self.form.roll_deg != self.baseline.roll_deg {
+            let (_, degrees) = bounded("Rotation", &self.form.roll_deg, 360.0)?;
+            args.extend(["--roll".into(), show(degrees.to_radians())]);
+            changed.push("rotation");
+        }
+        let section = |f: &Form| {
+            [
+                f.plane.clone(),
+                f.plane_offset.clone(),
+                f.depth.clone(),
+                f.depth_offset.clone(),
+                f.start_offset.clone(),
+                f.end_offset.clone(),
+            ]
+        };
+        if !details.is_plate() && section(&self.form) != section(&self.baseline) {
+            // The section flags replace the position whole, so all six are sent.
+            for (flag, label, value) in [
+                (
+                    "--section-plane-offset",
+                    "On plane offset",
+                    &self.form.plane_offset,
+                ),
+                (
+                    "--section-depth-offset",
+                    "At depth offset",
+                    &self.form.depth_offset,
+                ),
+                ("--start-offset", "Start offset", &self.form.start_offset),
+                ("--end-offset", "End offset", &self.form.end_offset),
+            ] {
+                let (typed, _) = bounded(label, value, DIMENSION_CAP_MM)?;
+                args.extend([flag.into(), typed]);
+            }
+            args.extend([
+                "--section-plane".into(),
+                self.form.plane.clone(),
+                "--section-depth".into(),
+                self.form.depth.clone(),
+            ]);
+            changed.push("position on the axis");
         }
         if changed.is_empty() {
             return Err(refuse("Properties", "nothing was changed"));

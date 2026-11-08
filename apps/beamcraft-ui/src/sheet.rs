@@ -376,9 +376,9 @@ impl SheetEditor {
             "{} placed views; the primary view is placed by the document, not here.",
             doc.placed.len()
         ));
-        egui::CollapsingHeader::new("Sheet")
-            .default_open(false)
-            .show(ui, |ui| self.sheet_form(ui, cli, actor, stats, &doc));
+        crate::kit::section(ui, "sheet", "Sheet", false, |ui| {
+            self.sheet_form(ui, cli, actor, stats, &doc)
+        });
         self.note_view(ui);
     }
 

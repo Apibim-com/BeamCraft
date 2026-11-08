@@ -384,12 +384,12 @@ pub fn member_through_hole_with(
             }
         }
         if !finite
-            || !(a_lo.is_finite()
-                && t_hi.is_finite()
-                && y_lo.is_finite()
-                && z_hi.is_finite()
-                && b_lo.is_finite()
-                && b_hi.is_finite())
+            || !a_lo.is_finite()
+            || !t_hi.is_finite()
+            || !y_lo.is_finite()
+            || !z_hi.is_finite()
+            || !b_lo.is_finite()
+            || !b_hi.is_finite()
         {
             return Err(internal());
         }

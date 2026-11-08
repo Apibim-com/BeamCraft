@@ -5,7 +5,7 @@
 
 use super::{App, workbench::Bench};
 use crate::grid::{FamilyForm, GridScene};
-use crate::theme::{self, Kind, Palette};
+use crate::theme::{self, Palette};
 use crate::tools::ToolError;
 use egui::Ui;
 use std::sync::Arc;
@@ -19,54 +19,46 @@ pub(super) struct GridEdit {
     source: Option<beamcraft_model::grid::Grid>,
 }
 
+/// One text property of the grid form as a table row, with a muted hint while it is empty.
 fn field(ui: &mut Ui, label: &str, value: &mut String, hint: &str) {
-    ui.label(theme::bold(label, 12.0));
-    ui.add(
-        egui::TextEdit::singleline(value)
-            .hint_text(hint)
-            .desired_width(ui.available_width())
-            .char_limit(4096),
-    );
+    crate::kit::prop_row(ui, label, |ui| {
+        ui.add(
+            egui::TextEdit::singleline(value)
+                .hint_text(hint)
+                .desired_width((ui.available_width() - crate::kit::SPACE_XS).max(30.0))
+                .char_limit(4096),
+        );
+    });
 }
 
 fn family(ui: &mut Ui, title: &str, form: &mut FamilyForm, hint: &str) {
-    egui::CollapsingHeader::new(title)
-        .default_open(true)
-        .show(ui, |ui| {
-            field(
-                ui,
-                "Coordinates (mm)",
-                &mut form.expression,
-                "Start coordinate, then spacings",
-            );
-            if let Ok((_, positions)) =
-                beamcraft_model::grid::parse_grid_expression(form.expression.trim())
-            {
-                ui.label(egui::RichText::new(format!("{} axes", positions.len())).small());
-            }
-            ui.label(
-                egui::RichText::new(
-                    "First position, then positive spacings; N*D repeats a spacing.",
-                )
+    crate::kit::section(ui, "grid", title, true, |ui| {
+        field(
+            ui,
+            "Coordinates (mm)",
+            &mut form.expression,
+            "Start coordinate, then spacings",
+        );
+        if let Ok((_, positions)) =
+            beamcraft_model::grid::parse_grid_expression(form.expression.trim())
+        {
+            ui.label(egui::RichText::new(format!("{} axes", positions.len())).small());
+        }
+        ui.label(
+            egui::RichText::new("First position, then positive spacings; N*D repeats a spacing.")
                 .small(),
-            );
-            field(ui, "Labels", &mut form.labels, hint);
-            ui.label(
+        );
+        field(ui, "Labels", &mut form.labels, hint);
+        ui.label(
                 egui::RichText::new("Missing labels continue from the last one. Extra labels are unused. Leave blank for automatic labels.")
                     .small(),
             );
-            egui::CollapsingHeader::new("Line limits").show(ui, |ui| {
-                let [start, end] = &mut form.span;
-                ui.columns(2, |columns| {
-                    for (column, (label, value)) in columns.iter_mut().zip([
-                        ("Line start (mm)", start),
-                        ("Line end (mm)", end),
-                    ]) {
-                        field(column, label, value, "Automatic");
-                    }
-                });
-            });
+        crate::kit::fold(ui, title, "Line limits", false, |ui| {
+            let [start, end] = &mut form.span;
+            field(ui, "Line start (mm)", start, "Automatic");
+            field(ui, "Line end (mm)", end, "Automatic");
         });
+    });
 }
 
 impl App {
@@ -339,7 +331,11 @@ impl App {
             .is_none_or(|edit| edit.original != self.grid_form);
         let drawn = self.grid_drawn;
         let line_editable = self.grid_edit.as_ref().is_none_or(|e| !e.stale);
-        ui.label("Horizontal project axes. Levels are managed separately.");
+        crate::kit::type_box(
+            ui,
+            theme::Icon::Grid,
+            if editing { "Grid" } else { "New grid" },
+        );
         if self.grid_edit.as_ref().is_some_and(|edit| edit.stale) {
             ui.colored_label(Palette::current(ui).error, "This grid changed while you were editing. Select it again before applying changes.");
         }
@@ -354,11 +350,8 @@ impl App {
             });
         }
         ui.add_space(8.0);
-        let footer = if self.grid_note.is_some() {
-            180.0
-        } else {
-            120.0
-        };
+        // The action bar keeps one height; the outcome goes to the status bar.
+        let footer = 120.0;
         egui::ScrollArea::vertical()
             .id_salt("grid-form")
             .max_height((ui.available_height() - footer).max(0.0))
@@ -375,63 +368,40 @@ impl App {
                         family(ui, "V family · Y positions", &mut self.grid_form.v, "A B C");
                     }
                     if !drawn || !editing || self.grid_line.action == "update-grid" {
-                        egui::CollapsingHeader::new("Position")
-                            .default_open(false)
-                            .show(ui, |ui| {
-                                field(ui, "Origin X (mm)", &mut self.grid_form.origin[0], "0");
-                                field(ui, "Origin Y (mm)", &mut self.grid_form.origin[1], "0");
-                                field(ui, "Rotation (degrees)", &mut self.grid_form.rotation, "0");
-                            });
+                        crate::kit::section(ui, "grid", "Position", false, |ui| {
+                            field(ui, "Origin X (mm)", &mut self.grid_form.origin[0], "0");
+                            field(ui, "Origin Y (mm)", &mut self.grid_form.origin[1], "0");
+                            field(ui, "Rotation (degrees)", &mut self.grid_form.rotation, "0");
+                        });
                     }
                 });
             });
-        ui.add_space(8.0);
-        ui.horizontal(|ui| {
-            if theme::button(
-                ui,
-                Kind::Primary,
-                if editing {
-                    "Apply changes"
-                } else {
-                    "Create grid"
-                },
-                !busy
-                    && if drawn {
-                        line_editable
-                    } else {
-                        editable && changed
-                    },
-            )
-            .clicked()
-            {
-                self.start_grid();
-            }
-            if theme::button(ui, Kind::Secondary, "Cancel", !busy).clicked() {
-                self.grid_edit = None;
-                self.grid_line = crate::grid::DrawLineForm::default();
-                self.grid_form = crate::grid::GridForm::default();
-                self.grid_note = None;
-                self.set_bench(Bench::Select);
-            }
-        });
-        if self.grid_job.is_some() {
-            ui.spinner();
-            ui.label(if editing {
-                "Updating grid…"
+        let done = crate::kit::actions(
+            ui,
+            if editing {
+                "Apply changes"
             } else {
-                "Creating grid…"
-            });
+                "Create grid"
+            },
+            if drawn {
+                line_editable
+            } else {
+                editable && changed
+            },
+            "Cancel",
+            busy || self.grid_job.is_some(),
+        );
+        if done.primary {
+            self.start_grid();
         }
-        if let Some(note) = &self.grid_note {
-            match note {
-                Ok(message) => {
-                    ui.label(message);
-                }
-                Err(message) => {
-                    ui.colored_label(Palette::current(ui).error, message);
-                }
-            }
+        if done.cancel {
+            self.grid_edit = None;
+            self.grid_line = crate::grid::DrawLineForm::default();
+            self.grid_form = crate::grid::GridForm::default();
+            self.grid_note = None;
+            self.set_bench(Bench::Select);
         }
+        // Its outcome is told in the status bar (`App::status_note`).
     }
 
     fn start_grid(&mut self) {
