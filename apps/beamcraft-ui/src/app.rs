@@ -8015,7 +8015,12 @@ pub(crate) mod tests {
         views_frame(
             &mut app,
             &ctx,
-            click(tab.left_center() + egui::vec2(10.0, 0.0)),
+            // Away from the close glyph, which macOS puts on the tab's left.
+            click(if crate::theme::TAB_CLOSE_LEADING {
+                tab.right_center() - egui::vec2(10.0, 0.0)
+            } else {
+                tab.left_center() + egui::vec2(10.0, 0.0)
+            }),
             &mut labels,
             &mut rects,
         );
