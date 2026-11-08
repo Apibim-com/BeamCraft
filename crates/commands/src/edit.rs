@@ -500,7 +500,7 @@ pub fn update_element(
     if let Some(level) = command.patch.level {
         footprint = footprint.union(levels.assign(command.target_id, level)?.footprint)?;
     }
-    // A bolt group over a moved part follows it in the same transaction (issue 544): the
+    // A bolt group over a moved part follows it in the same transaction: the
     // group of a moved main part travels with it, every group over the part is re-placed and
     // its generated holes regenerated, or the whole edit refuses.
     let mut bolt_changes = Vec::new();

@@ -710,7 +710,7 @@ fn hole_changes(
 }
 
 /// [`hole_changes`] over several groups at once, each new hole tagged with its owning group,
-/// so groups sharing a plate rewrite its record set once (issue 544). `moved` replaces the
+/// so groups sharing a plate rewrite its record set once. `moved` replaces the
 /// head's authored record of that plate (a part the same command moves).
 #[allow(clippy::too_many_arguments)]
 fn regenerated_holes(
@@ -1385,7 +1385,7 @@ pub fn create_bolt(
     })
 }
 
-/// The bolt groups that follow a part one `update-element` moves (issue 544), as extra
+/// The bolt groups that follow a part one `update-element` moves, as extra
 /// changes and footprint of the same edit: the fasteners belong to the group's main part.
 ///
 /// The moved part's world geometry is carried by the rigid delta `new · old⁻¹`. A group whose

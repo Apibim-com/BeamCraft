@@ -160,7 +160,7 @@ fn run(args: &[OsString]) -> Result<Output, Refusal> {
     let inspection = inspect(&RevisionStore::new(blobs))?;
     // A plate kept without geometry (D-7 degenerate drafts, K1 unsupported planes) has no
     // body to draw: the snapshot leaves it out and the reply names it, so one bad contour
-    // never makes the whole revision unviewable (issue 545). Numbering, BOM and IFC still
+    // never makes the whole revision unviewable. Numbering, BOM and IFC still
     // refuse such a revision.
     let skipped_plates = Json::Array(
         inspection

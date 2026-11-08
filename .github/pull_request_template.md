@@ -12,10 +12,9 @@ completing a slice does not accept its parent gate. Record delivery evidence in 
 
 ## How you verified it
 
-- [ ] Recorded gate passed: `cargo run --locked -p beamcraft-test-gate -- check --scope full`
-- [ ] If CLI-only: explain unchanged UI-consumed commands/options/JSON and use `--scope cli --ui-independent-reason "..."`
-- [ ] Explicitly published the report for this exact head/base/tree (`publish --report PATH --pr NUMBER`)
-- [ ] Reviewed failed/timed-out/ignored test evidence; a later success did not hide a failure
+- [ ] `cargo fmt --all -- --check`
+- [ ] `cargo clippy --workspace --all-targets -- -D warnings`
+- [ ] `cargo test --workspace`
 
 New behaviour needs a test. For a bug fix, check that the test fails before your fix.
 

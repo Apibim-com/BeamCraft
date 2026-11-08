@@ -1,109 +1,373 @@
 name: CI
 
-# Canonical CI workflow: the single form shared by every BeamCraft repository. Anything
-# repository-specific belongs in its own workflow file beside this one, never inline
-# here, so syncing the repositories never conflicts in this path. Complete-workspace
-# test execution lives in ci-platform.yml beside this file (owner decision of
-# 2026-11-05); this wall stays receipt-gated and fast.
-
 on:
   push:
     branches: [master]
   pull_request:
-    types: [opened, synchronize, reopened, edited, ready_for_review]
   workflow_dispatch:
-    inputs:
-      pr_number:
-        description: 'Source PR with a current local report (optional for an integrated tree)'
-        type: string
-        required: false
 
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
-  CARGO_INCREMENTAL: 0
-  CARGO_PROFILE_TEST_OPT_LEVEL: 1
-  CARGO_PROFILE_TEST_DEBUG_ASSERTIONS: true
-  CARGO_PROFILE_TEST_OVERFLOW_CHECKS: true
-
-defaults:
-  run:
-    shell: bash
 
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
+  group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
   contents: read
-  pull-requests: read
 
 jobs:
-  plan:
-    name: validate local test report
+  # Decides whether a pull request changes only prose (tools/ci-changes.py): Markdown files that
+  # no program reads. Then the Rust builds and tests are skipped and `docs-checks` runs instead.
+  # Pushes to master always run everything.
+  changes:
+    name: changed files
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
-      oses: ${{ steps.plan.outputs.oses }}
-      primary: ${{ steps.plan.outputs.primary }}
+      prose: ${{ steps.classify.outputs.prose }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
-          fetch-depth: 0
-      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249
-        with:
-          toolchain: stable
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
-      - id: plan
-        name: Require fresh evidence and select the two other platforms
-        run: cargo run --locked -p beamcraft-test-gate -- ci-plan
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - id: classify
         env:
           GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          if [ "$EVENT" != pull_request ]; then
+            echo prose=false >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Any failure to list the files means the full CI runs.
+          if ! gh api "repos/$REPO/pulls/$PR/files" --paginate \
+              --jq '.[] | .filename, (.previous_filename // empty)' > changed.txt; then
+            echo prose=false >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          python3 tools/ci-changes.py changed.txt >> "$GITHUB_OUTPUT"
 
   quality:
     name: quality (${{ matrix.os }})
-    needs: plan
+    needs: changes
+    if: needs.changes.outputs.prose != 'true'
     runs-on: ${{ matrix.os }}
     env:
+      # Quality checks do not consume debug symbols; omitting them speeds up compilation
+      # and keeps the restored Cargo cache smaller.
       CARGO_PROFILE_DEV_DEBUG: 0
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON(needs.plan.outputs.oses || '[]') }}
+        # Owner decision 2026-10-24 (#180): Windows legs run on pushes to master and on manual
+        # runs, not on pull requests, so pull request bursts do not queue for Windows runners.
+        os: ${{ github.event_name == 'pull_request' && fromJSON('["ubuntu-latest", "macos-latest"]') || fromJSON('["windows-latest", "ubuntu-latest", "macos-latest"]') }}
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
-      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
         with:
           toolchain: stable
           components: clippy, rustfmt
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+
+      # rust-cache saves a pull request's own cache when its key (which hashes every Cargo.toml
+      # and Cargo.lock) differs from master's. Without that save, every push of a pull request
+      # that changes a manifest restores master's cache as a partial match, and rust-cache then
+      # deletes every artifact older than a week (restore.ts, cleanup.ts), so the dependencies
+      # that rarely change, the GUI stack first, rebuild on each push (2026-10-31: +40 s on macOS).
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
       - name: Format
-        if: matrix.os == needs.plan.outputs.primary
+        if: runner.os == 'Linux'
         run: cargo fmt --all -- --check
+
       - name: Clippy
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      # F07: committed fixtures must equal the generator output and their manifest digests.
       - name: Verify original fixtures
-        run: cargo run --locked -p beamcraft-fixtures -- verify --dir tests/fixtures/f07
+        run: cargo run -p beamcraft-fixtures -- verify --dir tests/fixtures/f07
+
+      # F08: workspace manifests must obey the module table (also run by cargo test).
       - name: Check module boundaries
         run: cargo run --locked -p beamcraft-boundaries -- check
+
       - name: Docs
-        if: matrix.os == needs.plan.outputs.primary
-        run: cargo doc --workspace --no-deps --locked
+        if: runner.os == 'Linux'
+        run: cargo doc --workspace --no-deps
         env:
           RUSTDOCFLAGS: -D warnings
 
+  test-archive-ubuntu:
+    name: build test archive (ubuntu-latest)
+    needs: changes
+    if: needs.changes.outputs.prose != 'true'
+    runs-on: ubuntu-latest
+    env:
+      # Keep the debug test profile and assertions, but omit bulky debug symbols from the archive.
+      CARGO_PROFILE_TEST_DEBUG: 0
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
+        with:
+          tool: cargo-nextest@0.9.149
+
+      - name: Build and archive tests
+        run: cargo nextest archive --workspace --locked --archive-file nextest-archive.tar.zst
+
+      # nextest archives do not contain rustdoc tests; keep them in the full cross-platform gate.
+      - name: Test documentation
+        run: cargo test --workspace --doc --locked
+
+      # The full test list of this platform, for the `ci-ok` completeness check. It lists the
+      # binaries just built, so it needs no second build and no archive extraction.
+      - name: List the tests
+        shell: bash
+        run: cargo nextest list --workspace --locked --profile ci --message-format json > test-list.json
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: test-list-ubuntu-latest
+          path: test-list.json
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: nextest-archive-ubuntu-latest
+          path: nextest-archive.tar.zst
+          compression-level: 0
+          if-no-files-found: error
+
+  test-ubuntu:
+    name: test (ubuntu-latest, shard ${{ matrix.shard }}/8)
+    needs: test-archive-ubuntu
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+    timeout-minutes: 45
+    steps:
+      # The archive needs the matching revision's source tree for fixtures and runtime assets.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
+        with:
+          tool: cargo-nextest@0.9.149
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: nextest-archive-ubuntu-latest
+          path: nextest-archive
+
+      - name: Install software Vulkan for native UI tests
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends mesa-vulkan-drivers
+
+      - name: Run archived test partition
+        shell: bash
+        run: mkdir -p target/tmp && cargo nextest run --profile ci --archive-file nextest-archive/nextest-archive.tar.zst --extract-to . --extract-overwrite --no-fail-fast --partition hash:${{ matrix.shard }}/8
+
+      # The `ci-ok` job checks every shard's report against the platform's test list.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: junit-ubuntu-latest-${{ matrix.shard }}
+          path: target/nextest/ci/junit.xml
+          overwrite: true
+          if-no-files-found: error
+
+  test-archive-windows:
+    name: build test archive (windows-latest)
+    # Not on pull requests (owner decision 2026-10-24, #180); the shards below skip with it.
+    if: github.event_name != 'pull_request'
+    runs-on: windows-latest
+    env:
+      # Keep the debug test profile and assertions, but omit bulky debug symbols from the archive.
+      CARGO_PROFILE_TEST_DEBUG: 0
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
+        with:
+          tool: cargo-nextest@0.9.149
+
+      - name: Build and archive tests
+        run: cargo nextest archive --workspace --locked --archive-file nextest-archive.tar.zst
+
+      # nextest archives do not contain rustdoc tests; keep them in the full cross-platform gate.
+      - name: Test documentation
+        run: cargo test --workspace --doc --locked
+
+      # The full test list of this platform, for the `ci-ok` completeness check. It lists the
+      # binaries just built, so it needs no second build and no archive extraction.
+      - name: List the tests
+        shell: bash
+        run: cargo nextest list --workspace --locked --profile ci --message-format json > test-list.json
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: test-list-windows-latest
+          path: test-list.json
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: nextest-archive-windows-latest
+          path: nextest-archive.tar.zst
+          compression-level: 0
+          if-no-files-found: error
+
+  test-windows:
+    name: test (windows-latest, shard ${{ matrix.shard }}/8)
+    needs: test-archive-windows
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+    timeout-minutes: 45
+    steps:
+      # The archive needs the matching revision's source tree for fixtures and runtime assets.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
+        with:
+          tool: cargo-nextest@0.9.149
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: nextest-archive-windows-latest
+          path: nextest-archive
+
+      - name: Run archived test partition
+        shell: bash
+        run: mkdir -p target/tmp && cargo nextest run --profile ci --archive-file nextest-archive/nextest-archive.tar.zst --extract-to . --extract-overwrite --no-fail-fast --partition hash:${{ matrix.shard }}/8
+
+      # The `ci-ok` job checks every shard's report against the platform's test list.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: junit-windows-latest-${{ matrix.shard }}
+          path: target/nextest/ci/junit.xml
+          overwrite: true
+          if-no-files-found: error
+
+  test-archive-macos:
+    name: build test archive (macos-latest)
+    needs: changes
+    if: needs.changes.outputs.prose != 'true'
+    runs-on: macos-latest
+    env:
+      # Keep the debug test profile and assertions, but omit bulky debug symbols from the archive.
+      CARGO_PROFILE_TEST_DEBUG: 0
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
+        with:
+          tool: cargo-nextest@0.9.149
+
+      - name: Build and archive tests
+        run: cargo nextest archive --workspace --locked --archive-file nextest-archive.tar.zst
+
+      # nextest archives do not contain rustdoc tests; keep them in the full cross-platform gate.
+      - name: Test documentation
+        run: cargo test --workspace --doc --locked
+
+      # The full test list of this platform, for the `ci-ok` completeness check. It lists the
+      # binaries just built, so it needs no second build and no archive extraction.
+      - name: List the tests
+        shell: bash
+        run: cargo nextest list --workspace --locked --profile ci --message-format json > test-list.json
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: test-list-macos-latest
+          path: test-list.json
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: nextest-archive-macos-latest
+          path: nextest-archive.tar.zst
+          compression-level: 0
+          if-no-files-found: error
+
+  test-macos:
+    name: test (macos-latest, shard ${{ matrix.shard }}/5)
+    needs: test-archive-macos
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The account runs at most five macOS jobs at once. A sixth shard always waited for
+        # another to finish (30-80 s in the runs of 2026-10-31), so five shards finish sooner.
+        shard: [1, 2, 3, 4, 5]
+    timeout-minutes: 45
+    steps:
+      # The archive needs the matching revision's source tree for fixtures and runtime assets.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
+        with:
+          tool: cargo-nextest@0.9.149
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: nextest-archive-macos-latest
+          path: nextest-archive
+
+      # `count:` deals the tests out in list order, so the slow suites of one binary spread over
+      # the shards; with five shards it gives a shorter longest shard than `hash:` on the
+      # measured test durations. Either way nextest runs every test exactly once.
+      - name: Run archived test partition
+        shell: bash
+        run: mkdir -p target/tmp && cargo nextest run --profile ci --archive-file nextest-archive/nextest-archive.tar.zst --extract-to . --extract-overwrite --no-fail-fast --partition count:${{ matrix.shard }}/5
+
+      # The `ci-ok` job checks every shard's report against the platform's test list.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: junit-macos-latest-${{ matrix.shard }}
+          path: target/nextest/ci/junit.xml
+          overwrite: true
+          if-no-files-found: error
+
   build-timings:
-    needs: plan
     name: cold release (${{ matrix.target }})
+    needs: changes
+    if: needs.changes.outputs.prose != 'true'
     runs-on: ${{ matrix.os }}
-    # The cold-build gate rides master pushes (and dispatch): a release is cut
-    # from a master tag, so master has always passed the gate before a release.
-    # PR runs keep the ~2 min of hosted runners off the critical window.
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     strategy:
       fail-fast: false
       matrix:
@@ -137,8 +401,9 @@ jobs:
           if-no-files-found: error
 
   wasm:
-    needs: plan
     name: wasm32 check
+    needs: changes
+    if: needs.changes.outputs.prose != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -159,8 +424,43 @@ jobs:
           test -n "$list"
           cargo check --locked --target wasm32-unknown-unknown $list
 
+  # Runs instead of the builds when a pull request changes only prose: the checks whose inputs are
+  # documents (the F08 table, the F07 fixture derivation, the generated command reference), in
+  # case a document became an input without the classifier knowing.
+  docs-checks:
+    name: document checks
+    needs: changes
+    if: needs.changes.outputs.prose == 'true'
+    runs-on: ubuntu-latest
+    env:
+      # Same as test-archive-ubuntu, so the cache key below is that job's key.
+      CARGO_PROFILE_TEST_DEBUG: 0
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          toolchain: stable
+
+      # This job never runs on master, so a cache of its own would never be saved where pull
+      # requests can restore it. It reads test-archive-ubuntu's cache (same key, same profile
+      # and environment) and saves nothing.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: test-archive-ubuntu
+          save-if: false
+
+      - name: Check module boundaries
+        run: cargo run --locked -p beamcraft-boundaries -- check
+
+      - name: Verify original fixtures
+        run: cargo run --locked -p beamcraft-fixtures -- verify --dir tests/fixtures/f07
+
+      - name: Command reference matches the registry
+        run: "cargo test --locked -p beamcraft-cli --test cli -- 'registry::'"
+
   deny:
-    needs: plan
     name: dependency licences and advisories
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -170,24 +470,68 @@ jobs:
         with:
           command: check
 
-  verdict:
-    name: CI verdict
+  # The one check to require on master. It passes only when every other job succeeded (a pull
+  # request may skip the Windows jobs, #180) and, on each platform that ran, the shards together
+  # ran every listed test exactly once with nothing filtered out (tools/ci-gate.py). It runs
+  # with `always()`, never `!cancelled()`: GitHub counts a skipped required check as passing,
+  # so the gate must run, and fail, when a job it waits for failed or was cancelled. Keep its
+  # name literal; branch protection refers to it by name.
+  ci-ok:
+    name: ci-ok
     if: always()
+    needs:
+      - changes
+      - docs-checks
+      - quality
+      - test-archive-ubuntu
+      - test-ubuntu
+      - test-archive-windows
+      - test-windows
+      - test-archive-macos
+      - test-macos
+      - build-timings
+      - wasm
+      - deny
     runs-on: ubuntu-latest
-    needs: [plan, quality, build-timings, wasm, deny]
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
-          fetch-depth: 0
-      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249
-        with:
-          toolchain: stable
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
-      - name: Require all planned checks and distinguish intentional skips
-        run: cargo run --locked -p beamcraft-test-gate -- ci-verdict
+          pattern: "{test-list,junit}-*"
+          path: reports
+
+      - name: Test the gate and the change classifier
+        run: |
+          python3 tools/test-ci-gate.py
+          python3 tools/test-ci-changes.py
+
+      - name: Every job succeeded and is gated
         env:
-          GATE_NEEDS: ${{ toJSON(needs) }}
-          GATE_OSES: ${{ needs.plan.outputs.oses }}
-          GH_TOKEN: ${{ github.token }}
+          NEEDS: ${{ toJSON(needs) }}
+          EVENT: ${{ github.event_name }}
+          PROSE: ${{ needs.changes.outputs.prose }}
+        run: |
+          printf '%s' "$NEEDS" > needs.json
+          python3 tools/ci-gate.py jobs --event "$EVENT" --prose "${PROSE:-false}" --needs needs.json --workflow .github/workflows/ci.yml
+
+      - name: Every test ran exactly once
+        if: needs.changes.outputs.prose != 'true'
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          platforms="ubuntu-latest macos-latest"
+          if [ "$EVENT" != pull_request ]; then platforms="$platforms windows-latest"; fi
+          status=0
+          for os in $platforms; do
+            list="reports/test-list-$os/test-list.json"
+            if [ ! -f "$list" ]; then
+              echo "$os: no test list was uploaded"
+              status=1
+              continue
+            fi
+            python3 tools/ci-gate.py tests --label "$os" --list "$list" \
+              --ignored .config/ci-ignored.txt reports/junit-"$os"-*/junit.xml || status=1
+          done
+          exit "$status"

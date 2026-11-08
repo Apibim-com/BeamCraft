@@ -306,7 +306,7 @@ snapshot token or any export (`GR-USE-005`).
 ### 7.5 Magnetic mode (O-G5 answered 2026-11-08)
 
 The owner wants a **magnetic** mode in which elements placed on a grid follow it (D8). The
-answers, recorded in `docs/plan/decisions.md` (2026-11-08) and delivered by T01.8:
+answers, recorded by the owner on 2026-11-08 and delivered by T01.8:
 
 - **Where the switch lives.** In the element itself, explicit: `bind-grid` binds a placed member
   (plates follow in a later slice) to a local grid, `unbind-grid` releases it. There is no global
@@ -444,7 +444,7 @@ magnetic placement, which is explicitly outside T01.1 to T01.7 and waits for T01
 
 | # | Question | Blocks |
 |---|----------|--------|
-| O-G5 | **Answered 2026-11-08** (section 7.5, `docs/plan/decisions.md`): the switch is the element's explicit grid binding; bound elements follow the grid frame; a shared-grid edit writes only the grid; a grid with followers refuses deletion (`GRID_IN_USE`); hand edits detach in the same atomic change; a pinned foreign grid is never followed. Line-level following and session-wide modes stay post-MVP. | T01.8 |
+| O-G5 | **Answered 2026-11-08** (section 7.5): the switch is the element's explicit grid binding; bound elements follow the grid frame; a shared-grid edit writes only the grid; a grid with followers refuses deletion (`GRID_IN_USE`); hand edits detach in the same atomic change; a pinned foreign grid is never followed. Line-level following and session-wide modes stay post-MVP. | T01.8 |
 
 `T01.7` has exact tube geometry and purpose rules in section 11 and acceptance case GR-P16.
 Questions O-G7 and O-G11 to O-G16 from the original #192 draft are resolved by the defaults in

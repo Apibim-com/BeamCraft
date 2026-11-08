@@ -147,7 +147,7 @@ pub fn load_within(
 }
 
 /// The pinned view snapshot of the published head and the project grids of the same pinned
-/// inspection (issue 543): the framed `export-view --with-grids true` the window refreshes
+/// inspection: the framed `export-view --with-grids true` the window refreshes
 /// with, so a headless screenshot draws and fits the same grids the window shows.
 pub fn load_with_grids(
     cli: &Path,

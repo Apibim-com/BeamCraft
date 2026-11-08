@@ -4,7 +4,7 @@
 //! One offscreen viewport screenshot of a scene as a PNG file: the same renderer the window
 //! draws with, headless, with the camera fitted over the whole scene and its project grids
 //! like the `Fit model` action. The grid lines and labels are painted over the render by the
-//! window's own grid painter through a headless egui pass (issue 543). The pixels come back
+//! window's own grid painter through a headless egui pass. The pixels come back
 //! through the renderer's own readback and are encoded by the `image` crate; the file is
 //! created new, never overwritten.
 

@@ -116,7 +116,7 @@ fn a_valid_near_planar_plate_is_saved_without_partial_geometry_and_replays() {
     assert_eq!(text(&replay, "outcome"), "plate_replayed");
     assert_eq!(f.ok("open-revision", &[]), before);
     // The view bundle leaves the bodiless plate out and names it instead of refusing the
-    // whole revision (issue 545); totals and numbering still refuse below.
+    // whole revision; totals and numbering still refuse below.
     let exported = f.ok("export-view", &["--out", &f.path("unsupported.bundle")]);
     assert_eq!(text(&exported, "elements"), "0");
     assert_eq!(

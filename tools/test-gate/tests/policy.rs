@@ -200,30 +200,32 @@ fn sync_report_must_bind_full_scope_tree_and_both_actual_parents() {
 }
 
 #[test]
-fn required_ci_jobs_cannot_be_skipped_or_failed_while_platform_tests_run_beside_the_pipeline() {
+fn required_ci_jobs_cannot_be_skipped_or_failed_while_the_other_os_is_intentionally_skipped() {
     let oses = vec!["macos-latest".into(), "windows-latest".into()];
     let mut needs = serde_json::json!({});
-    for name in ["plan", "quality", "wasm", "deny"] {
+    for name in [
+        "plan",
+        "quality",
+        "wasm",
+        "deny",
+        "test-archive-macos",
+        "test-macos",
+        "test-archive-windows",
+        "test-windows",
+    ] {
         needs[name] = serde_json::json!({"result":"success"});
     }
-    needs["build-timings"] = serde_json::json!({"result":"skipped"});
-    // Platform test lanes are absent from the CI wall: the verdict accepts their
-    // hand-off to ci-platform.yml and must not require them here.
+    for name in ["test-archive-ubuntu", "test-ubuntu", "build-timings"] {
+        needs[name] = serde_json::json!({"result":"skipped"});
+    }
     github::verdict(&needs, &oses, "pull_request").unwrap();
     for bad in ["failure", "cancelled", "skipped"] {
         let mut changed = needs.clone();
-        changed["quality"]["result"] = bad.into();
+        changed["test-windows"]["result"] = bad.into();
         assert!(github::verdict(&changed, &oses, "pull_request").is_err());
     }
     needs["plan"]["result"] = "failure".into();
     assert!(github::verdict(&needs, &oses, "pull_request").is_err());
-    // A push keeps the cold release gate required.
-    let mut push = needs.clone();
-    push["plan"]["result"] = "success".into();
-    push["build-timings"] = serde_json::json!({"result":"success"});
-    github::verdict(&push, &oses, "push").unwrap();
-    push["build-timings"] = serde_json::json!({"result":"skipped"});
-    assert!(github::verdict(&push, &oses, "push").is_err());
 }
 
 #[test]

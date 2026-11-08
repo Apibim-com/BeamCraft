@@ -167,7 +167,7 @@ beamcraft-ui --store ROOT --perf-run PLAN [--samples 1|4] [--cli PATH]
   `export-view --with-grids true`, the camera fits the union of model and grids, and the
   window's own grid painter draws the lines and labels over the render through one headless
   egui pass (`grid_lines` in the reply counts them); `--grids false` leaves them out of both
-  the picture and the fit (issue 543).
+  the picture and the fit.
   `beamcraft screenshot-view --store ROOT --out FILE [--yaw RAD] [--pitch RAD] [--projection
   ortho] [--zoom F32] [--pan X,Y] [--colour-set TEXT] [--background light|dark]
   [--grids true|false]` drives this

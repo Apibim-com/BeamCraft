@@ -193,7 +193,7 @@ pub fn bind_grid(
     }
     let member = head_member(store, context, &command.target_id)?;
     let grid = head_grid(store, context, &command.grid)?;
-    // The member's placement is applied before the grid frame (issue 549): the record holds
+    // The member's placement is applied before the grid frame: the record holds
     // the true world axis, so a placed member follows the frame like an unplaced one.
     let local_axis_mm = steel::engine::member::grid_local_axis(
         &grid,
@@ -267,7 +267,7 @@ pub fn unbind_grid(
     })?;
     let grid = head_grid(store, context, &follow.grid)?;
     // The released axis is element-local, like every stored member axis: the placement stays
-    // on the member and is applied on top by every consumer (issue 549).
+    // on the member and is applied on top by every consumer.
     let released = steel::engine::member::grid_world_axis(
         &grid,
         &member.authored.placement,

@@ -1211,7 +1211,7 @@ fn create(
             ("revision", revision_json(&created.revision)),
             ("footprint", footprint_json(created.footprint.as_ref())),
             // Kept, but without a body (D-7, K1): say so at create time instead of leaving it
-            // to be discovered from a view, total or export later (issue 545).
+            // to be discovered from a view, total or export later.
             ("warning", Json::text(kept_without_geometry(&created.plate))),
         ])),
     }

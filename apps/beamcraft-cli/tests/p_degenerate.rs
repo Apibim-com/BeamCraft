@@ -74,7 +74,7 @@ impl Fixture {
         assert_eq!(text(plate, "geometry_status"), "degenerate");
         assert_eq!(text(plate, "geometry_code"), "INVALID_ARGUMENT");
         assert_eq!(text(plate, "geometry_reason"), "contour_winding_clockwise");
-        // The create reply says the plate is saved without geometry (issue 545).
+        // The create reply says the plate is saved without geometry.
         assert!(text(&created, "warning").contains("degenerate without geometry"));
         assert!(matches!(plate.get("mesh_digest"), Ok(Json::Null)));
         assert!(matches!(plate.get("world_bounds_mm"), Ok(Json::Null)));
@@ -122,7 +122,7 @@ fn a_wrongly_built_plate_is_kept_degenerate_and_repairs_once_fixed() {
     assert_eq!(text(listed, "geometry_status"), "degenerate");
     assert!(matches!(listed.get("mesh_digest"), Ok(Json::Null)));
     // One degenerate plate does not make the revision unviewable: the view bundle leaves it
-    // out and lists it (issue 545).
+    // out and lists it.
     let bundle = f
         .shared
         .root

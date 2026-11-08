@@ -36,7 +36,7 @@ over the byte cap refuses instead of being rescaled or clipped. Content may not 
 title block either: every view, annotation, dimension and drawn-object stroke is clipped
 against the block rectangle, and one that crosses its interior refuses `LIMIT_EXCEEDED`
 (`drawing content overlaps the title block`) on both surfaces, since a stroke can cross the
-block with both ends outside it; touching the block's border is allowed (issue 546). A document without a sheet
+block with both ends outside it; touching the block's border is allowed. A document without a sheet
 keeps the D03 loose-paper export, and the pdf print defaults its sheet to the document's
 sheet size.
 

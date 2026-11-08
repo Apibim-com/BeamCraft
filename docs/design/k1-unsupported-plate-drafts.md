@@ -44,7 +44,7 @@ supported geometry and return `DEPENDENCY_UNAVAILABLE` rather than misreporting 
 element or silently excluding it. The binary viewport bundle (`export-view`, and through it
 `screenshot-view` and the window) leaves a plate without geometry out and names it instead:
 the JSON summary lists its id in `skipped_plates`, so one unsupported or degenerate plate no
-longer makes the whole revision unviewable (issue 545). Existing supported plates can coexist
+longer makes the whole revision unviewable. Existing supported plates can coexist
 with unsupported plates and retain their meshes and quantities.
 
 ## P-Degenerate: the degenerate class and repair (A-2 D-7)
@@ -64,9 +64,8 @@ admission driver, superseded by the amendment, not edited.
 Retention is unconditional: the F04 §4 `on_invalid_shape` option with its `reject` default is
 not implemented, and `create-plate` saves a wrongly built contour instead of refusing it. The
 create reply carries a `warning` that the plate is saved without geometry, and the
-`create-plate` help says so (issue 545). Restating the default, or recording this as a
-deviation from F04 §4 and the P-Degenerate acceptance item (e), is an owner decision for
-`docs/plan/decisions.md`.
+`create-plate` help says so. Restating the default, or recording this as a
+deviation from F04 §4 and the P-Degenerate acceptance item (e), is an owner decision.
 
 Editing is implemented for retained plates: `update-element` patches the authored record,
 reclassifies the result once, and either repairs the element (the kernel evaluates the body,

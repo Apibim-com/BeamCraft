@@ -18,7 +18,7 @@
 //! [--pitch RAD] [--projection perspective|ortho] [--zoom F32] [--pan X,Y]
 //! [--colour-set TEXT] [--background light|dark] [--grids true|false] [--cli PATH]` renders the
 //! store's published head once offscreen with the camera fitted over the whole scene and its
-//! project grids, paints the grid lines and labels like the window (issue 543; `--grids false`
+//! project grids, paints the grid lines and labels like the window ( `--grids false`
 //! leaves them out), and writes
 //! `FILE` as a PNG (created new, never overwritten), printing one JSON summary; `--yaw` and
 //! `--pitch` (radians, `pitch` above the horizon) point the fitted camera from another
@@ -306,7 +306,7 @@ fn run() -> Result<Option<(String, u8)>, Error> {
             Some("light") => screenshot::Background::Light,
             Some(_) => return Err(usage()),
         };
-        // The project grids ride the screenshot like the window's (issue 543); `--grids false`
+        // The project grids ride the screenshot like the window's; `--grids false`
         // leaves them out of both the picture and the fit.
         let (snapshot, grids) = match map.get("--grids").map(String::as_str) {
             None | Some("true") => source::load_with_grids(&cli, &store, &stats)?,

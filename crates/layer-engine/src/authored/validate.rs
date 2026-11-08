@@ -1493,7 +1493,7 @@ pub(super) fn changes(
                 group,
             });
         }
-        // A placement rewrite is a hand edit too (issue 549): the grid-local record holds the
+        // A placement rewrite is a hand edit too: the grid-local record holds the
         // placed world axis, so moving the member would silently split the two.
         if (w.contains(&Group::ShapeInputs) || w.contains(&Group::Placement))
             && !matches!(change, Change::Follow { .. })

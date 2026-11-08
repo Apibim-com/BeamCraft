@@ -50,7 +50,7 @@ upgrades them); no new A05 group can be authored.
 - **The group footprint writes the parts**: `for_update(part, shape)` per affected plate
   unions into the group's footprint, so a concurrent edit of a drilled part conflicts as for
   any operation, as the amendment says.
-- **A moved part regenerates the holes (issue 544).** Moving a connected part re-places its
+- **A moved part regenerates the holes.** Moving a connected part re-places its
   groups (A14.3 decision "a group belongs to its main part") and rewrites every group's
   records in one pass over the plates, the moved plate evaluated at its new placement; groups
   sharing a plate rewrite its record set once, with one serial for the derived record ids.

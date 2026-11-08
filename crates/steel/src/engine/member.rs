@@ -206,7 +206,7 @@ pub struct GridFollow {
 
 /// Maps a member's element-local axis points into the grid's local frame (T01.8): the
 /// member's placement is applied first, so the grid-local record holds the member's true
-/// world axis (issue 549). `z` is kept as placed.
+/// world axis. `z` is kept as placed.
 pub fn grid_local_axis(
     grid: &beamcraft_model::grid::Grid,
     placement: &Placement,
