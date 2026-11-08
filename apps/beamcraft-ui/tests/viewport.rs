@@ -471,13 +471,19 @@ fn an_attached_reference_is_uploaded_and_renders_visible_pixels() {
 /// Full readback of the framed scene, for pixel-by-pixel comparisons. `clip` is the display
 /// cut uniform: a zero count draws everything.
 fn render_pixels(gpu: &Gpu, scene: &Scene, clip: &ClipGpu) -> Vec<u8> {
+    render_pixels_at(gpu, scene, clip, 128)
+}
+
+/// [`render_pixels`] on a `size` x `size` target, for a picture whose smallest part (a bolt
+/// group in a frame) must still cover pixels on a software rasteriser.
+fn render_pixels_at(gpu: &Gpu, scene: &Scene, clip: &ClipGpu, size: u32) -> Vec<u8> {
     let (target, extent) = scene.framing();
     // Drawn in perspective, as the silhouettes were recorded; views start orthographic.
     let mut camera = Camera::new(target, extent, 1.0).unwrap();
     camera.set_projection(false);
     let view = camera.view(1.0).unwrap();
     let stats = Stats::default();
-    let renderer = Renderer::new(&gpu.adapter, &gpu.device, 128, 128, &stats).unwrap();
+    let renderer = Renderer::new(&gpu.adapter, &gpu.device, size, size, &stats).unwrap();
     let uploaded = Uploaded::new(&gpu.device, &gpu.queue, scene, &stats).unwrap();
     let scope = gpu.device.push_error_scope(wgpu::ErrorFilter::Validation);
     let index = renderer.draw(
@@ -1012,7 +1018,8 @@ fn the_default_catalogue_set_colours_the_element_classes_in_the_viewport() {
     assert_eq!(overlay.len(), 3, "every element takes its class colour");
     let gpu = gpu();
     let scene = Scene::from_snapshot(&snapshot, Representation::Full).unwrap();
-    let plain = render_pixels(&gpu, &scene, &ClipGpu::none());
+    // Large enough that the bolt group covers pixels on a software rasteriser too.
+    let plain = render_pixels_at(&gpu, &scene, &ClipGpu::none(), 512);
     // One overlay per class: a tint reaches only its element's instances, so a picture that
     // differs from the plain one is exactly that class coloured in the image, and the class
     // pictures come out pairwise distinct — per-class pixel colours in the hues recorded in
@@ -1032,7 +1039,7 @@ fn the_default_catalogue_set_colours_the_element_classes_in_the_viewport() {
             Some(&one),
         )
         .unwrap();
-        let pixels = render_pixels(&gpu, &class_scene, &ClipGpu::none());
+        let pixels = render_pixels_at(&gpu, &class_scene, &ClipGpu::none(), 512);
         if pixels == plain {
             panic!("the tinted class must change the picture");
         }
@@ -1052,7 +1059,7 @@ fn the_default_catalogue_set_colours_the_element_classes_in_the_viewport() {
         None,
     )
     .unwrap();
-    if render_pixels(&gpu, &cleared, &ClipGpu::none()) != plain {
+    if render_pixels_at(&gpu, &cleared, &ClipGpu::none(), 512) != plain {
         panic!("a cleared set returns the uniform grey picture");
     }
     let _ = std::fs::remove_dir_all(&root);
