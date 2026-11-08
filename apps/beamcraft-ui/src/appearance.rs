@@ -142,6 +142,7 @@ impl Appearance {
             .show(ui, |ui| {
                 crate::theme::titlebar_drag_with_maximize(ui, maximize);
                 ui.horizontal_centered(|ui| {
+                    crate::theme::native_controls_inset(ui);
                     ui.label(egui::RichText::new("BeamCraft").size(12.0));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         crate::theme::window_controls_with_maximize(ui, maximize);

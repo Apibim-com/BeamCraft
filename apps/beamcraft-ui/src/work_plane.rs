@@ -117,7 +117,7 @@ impl Form {
     /// Show the frame editor and return an explicit action, or a validation error to display.
     pub fn show(&mut self, ui: &mut egui::Ui) -> Result<Option<Action>, FormError> {
         let mut action = None;
-        ui.collapsing("Work plane", |ui| {
+        crate::kit::section(ui, "plane", "Work plane", false, |ui| {
             egui::ComboBox::from_id_salt("work-plane-mode")
                 .selected_text(match self.mode {
                     Mode::XY => "XY",

@@ -6,6 +6,7 @@
 //! loaded snapshot, and the model is never written.
 
 use crate::camera::Camera;
+use beamcraft_engine::presets::{PresetBook, ViewPreset as PresetBookEntry};
 use beamcraft_engine::views::{
     AxisPick, ModelView, PartSide, Projection, ViewBook, WorkArea, validate_folder,
 };
@@ -83,6 +84,77 @@ pub fn persist(store: &Path, book: &ViewBook) -> Result<(), String> {
     std::fs::write(&temp, &bytes)
         .and_then(|()| std::fs::rename(&temp, &path))
         .map_err(|e| format!("the saved views could not be written: {}", e.kind()))
+}
+
+/// The file the user's discipline view presets (V07) are kept in, inside the configuration
+/// directory: personal configuration, like the colour sets, never part of a model.
+pub const PRESETS_FILE: &str = "view-presets.json";
+
+/// Reads the user's view presets from `config_dir` (the platform default when `None`). A missing
+/// file is an empty book; an unreadable one is an empty book and a note.
+pub fn load_presets(config_dir: Option<&Path>) -> (PresetBook, Option<String>) {
+    let Some(dir) =
+        config_dir.map_or_else(crate::shortcuts::default_dir, |d| Some(d.to_path_buf()))
+    else {
+        return (PresetBook::new(), None);
+    };
+    let bytes = match std::fs::read(dir.join(PRESETS_FILE)) {
+        Ok(bytes) if bytes.len() <= beamcraft_host::presets::MAX_BYTES => bytes,
+        Ok(_) => {
+            return (
+                PresetBook::new(),
+                Some("the view presets file is larger than 64 KiB".into()),
+            );
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return (PresetBook::new(), None),
+        Err(e) => {
+            return (
+                PresetBook::new(),
+                Some(format!("the view presets could not be read: {}", e.kind())),
+            );
+        }
+    };
+    let book = beamcraft_json::decode(&bytes, &Limits::DEFAULT)
+        .map_err(|_| "the view presets file is not valid JSON".to_owned())
+        .and_then(|json| {
+            beamcraft_host::presets::book_from_json(&json)
+                .map_err(|e| format!("the view presets were refused: {e}"))
+        });
+    match book {
+        Ok(book) => (book, None),
+        Err(note) => (PresetBook::new(), Some(note)),
+    }
+}
+
+/// Writes the user's view presets into `config_dir` (the platform default when `None`) through
+/// a sibling temporary file, so a failed write keeps the old content.
+pub fn persist_presets(config_dir: Option<&Path>, book: &PresetBook) -> Result<(), String> {
+    let Some(dir) =
+        config_dir.map_or_else(crate::shortcuts::default_dir, |d| Some(d.to_path_buf()))
+    else {
+        return Err("there is no configuration directory for the view presets".into());
+    };
+    let bytes = beamcraft_host::presets::book_to_json(book)
+        .and_then(|json| {
+            json.encode(&Limits::DEFAULT).map_err(|_| {
+                beamcraft_model::command::CommandError::new(
+                    beamcraft_model::error::ErrorCode::InvalidArgument,
+                    "presets",
+                    "the view presets do not encode",
+                )
+            })
+        })
+        .map_err(|e| format!("the view presets were refused: {e}"))?;
+    if bytes.len() > beamcraft_host::presets::MAX_BYTES {
+        return Err("the view presets exceed 64 KiB".into());
+    }
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| format!("the view presets could not be written: {}", e.kind()))?;
+    let path = dir.join(PRESETS_FILE);
+    let temp = path.with_extension("json.tmp");
+    std::fs::write(&temp, &bytes)
+        .and_then(|()| std::fs::rename(&temp, &path))
+        .map_err(|e| format!("the view presets could not be written: {}", e.kind()))
 }
 
 /// How a new view gets its plane.
@@ -306,6 +378,8 @@ pub struct Form {
     pub color: [f32; 3],
     /// Opacity, 0..1.
     pub opacity: f32,
+    /// The filter overrides, in order: the first whose filter matches decides.
+    pub overrides: Vec<beamcraft_engine::views::FilterOverride>,
     /// Whether the picks of a pick-based construction are all in.
     pub picked: bool,
 }
@@ -341,6 +415,7 @@ impl Default for Form {
             color_on: false,
             color: [0.65, 0.75, 0.8],
             opacity: 1.0,
+            overrides: Vec::new(),
             picked: false,
         }
     }
@@ -377,7 +452,7 @@ impl Form {
     /// Takes the display properties of `view`, nothing else.
     pub fn copy_display(&mut self, view: &ModelView) {
         self.projection = view.projection;
-        self.span = format!("{}", view.span_mm);
+        self.span = format!("{}", view.span_mm.round().max(1.0));
         self.depth_on = view.depth.is_some();
         if let Some([above, below]) = view.depth {
             self.depth = [format!("{above}"), format!("{below}")];
@@ -392,6 +467,19 @@ impl Form {
             self.color = color.map(|c| c as f32);
         }
         self.opacity = view.opacity as f32;
+        self.overrides.clone_from(&view.overrides);
+    }
+
+    /// Fills the display fields a discipline preset carries (the depth slab, the grid toggle,
+    /// the hidden kinds and the filter overrides), as a part preset fills a new part's form.
+    pub fn copy_preset(&mut self, preset: &PresetBookEntry) {
+        self.depth_on = preset.depth.is_some();
+        if let Some([above, below]) = preset.depth {
+            self.depth = [format!("{above}"), format!("{below}")];
+        }
+        self.grids = preset.grids_visible;
+        self.hidden = preset.hidden_kinds;
+        self.overrides.clone_from(&preset.overrides);
     }
 
     /// Writes the identity-free properties of the form into `view`: name, folder, marks and
@@ -434,6 +522,7 @@ impl Form {
         view.work_area = self.area;
         view.color = self.color_on.then(|| self.color.map(f64::from));
         view.opacity = f64::from(self.opacity).clamp(0.0, 1.0);
+        view.overrides.clone_from(&self.overrides);
         view.validate().map_err(|e| e.to_string())
     }
 
@@ -470,28 +559,30 @@ impl Picking {
     }
 }
 
-/// What a view looks at, as the browser groups it: a 3D view, a plan, or an elevation or
-/// section.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+/// How a view's plane lies, as the browser groups it. Every view can be looked at in 3D (the
+/// 3D/plane toggle orbits any of them), so "3D" is a way of looking, not a kind: the kind is
+/// the orientation of the plane the view is built on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub enum ViewKind {
-    /// A perspective or oblique view, and the default view.
-    ThreeD,
-    /// A view straight down (or up) the vertical axis.
+    /// A horizontal plane: the view looks straight down (or up).
+    #[default]
     Plan,
-    /// A view along a horizontal direction.
-    Elevation,
+    /// A vertical plane: an elevation, or a section when its depth is limited.
+    Vertical,
+    /// A plane neither horizontal nor vertical.
+    Inclined,
 }
 
 impl ViewKind {
     /// The kinds in browser order.
-    pub const ALL: [Self; 3] = [Self::ThreeD, Self::Plan, Self::Elevation];
+    pub const ALL: [Self; 3] = [Self::Plan, Self::Vertical, Self::Inclined];
 
     /// The group title.
     pub fn label(self) -> &'static str {
         match self {
-            Self::ThreeD => "3D views",
             Self::Plan => "Plans",
-            Self::Elevation => "Sections and elevations",
+            Self::Vertical => "Elevations & sections",
+            Self::Inclined => "Inclined",
         }
     }
 
@@ -503,26 +594,111 @@ impl ViewKind {
     /// The icon of the kind.
     pub fn icon(self) -> crate::theme::Icon {
         match self {
-            Self::ThreeD => crate::theme::Icon::Block,
-            Self::Plan => crate::theme::Icon::Grid,
-            Self::Elevation => crate::theme::Icon::ViewFrame,
+            Self::Plan => crate::theme::Icon::PlanView,
+            Self::Vertical => crate::theme::Icon::ElevationView,
+            Self::Inclined => crate::theme::Icon::InclinedView,
         }
     }
 }
 
-/// The kind of `view`: from its projection and the direction its camera looks along.
+/// The kind of `view`: from its projection, the direction its camera looks along and whether
+/// its depth is limited.
 pub fn view_kind(view: &ModelView) -> ViewKind {
-    if view.is_default || view.projection == Projection::Perspective {
-        return ViewKind::ThreeD;
-    }
-    let normal = view.camera_plane().unwrap_or(view.plane).normal();
-    let up = normal[2].abs();
+    // The plane the view is built on decides, not the camera turned about it: a plan stays a
+    // plan while it is orbited in 3D.
+    let up = view.plane.normal()[2].abs();
     if up > 0.999 {
         ViewKind::Plan
     } else if up < 0.001 {
-        ViewKind::Elevation
+        ViewKind::Vertical
     } else {
-        ViewKind::ThreeD
+        ViewKind::Inclined
+    }
+}
+
+/// One folder of the browser tree: its name, the stored folder path its views carry, its
+/// subfolders and its views.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FolderNode {
+    /// The last path segment, as listed.
+    pub name: String,
+    /// The folder path a view dropped here gets (empty for a kind's own top level).
+    pub stored: String,
+    /// Subfolders by name.
+    pub folders: Vec<FolderNode>,
+    /// The views directly in this folder, the default first, then by name.
+    pub views: Vec<Uuid7>,
+}
+
+impl FolderNode {
+    fn new(name: &str, stored: String) -> Self {
+        Self {
+            name: name.to_owned(),
+            stored,
+            folders: Vec::new(),
+            views: Vec::new(),
+        }
+    }
+
+    /// Makes the folder at the shown `path` under this one (with its ancestors; each new node's
+    /// stored path is `prefix` and the path so far) and lists `view` in it.
+    fn place(&mut self, path: &[&str], prefix: &str, view: Option<Uuid7>) {
+        let Some((first, rest)) = path.split_first() else {
+            self.views.extend(view);
+            return;
+        };
+        let at = match self.folders.iter().position(|f| f.name == *first) {
+            Some(at) => at,
+            None => {
+                let stored = if self.stored.is_empty() {
+                    if prefix.is_empty() {
+                        (*first).to_owned()
+                    } else {
+                        format!("{prefix}/{first}")
+                    }
+                } else {
+                    format!("{}/{first}", self.stored)
+                };
+                self.folders.push(Self::new(first, stored));
+                self.folders.len() - 1
+            }
+        };
+        if let Some(node) = self.folders.get_mut(at) {
+            node.place(rest, prefix, view);
+        }
+    }
+
+    /// Every view in this folder and below, in listed order.
+    pub fn all_views(&self) -> Vec<Uuid7> {
+        let mut out = Vec::new();
+        for folder in &self.folders {
+            out.extend(folder.all_views());
+        }
+        out.extend(self.views.iter().copied());
+        out
+    }
+
+    fn sort(&mut self, book: &ViewBook) {
+        self.folders.sort_by_key(|f| f.name.to_lowercase());
+        for folder in &mut self.folders {
+            folder.sort(book);
+        }
+        self.views.sort_by_key(|id| {
+            book.get(id).map_or((true, String::new()), |v| {
+                (!v.is_default, v.name.to_lowercase())
+            })
+        });
+    }
+}
+
+/// The stored path a new folder `name` gets inside `parent` (a stored path; empty for the top
+/// level of the browser).
+pub fn new_folder_path(parent: &str, name: &str) -> String {
+    let name = name.trim();
+    if parent.is_empty() {
+        name.to_owned()
+    } else {
+        format!("{parent}/{name}")
     }
 }
 
@@ -560,6 +736,8 @@ impl Subject {
 pub struct Views {
     /// The book: saved and temporary views and the folders.
     pub book: ViewBook,
+    /// The user's discipline view presets (V07), kept in the configuration directory.
+    pub presets: PresetBook,
     /// Why the last action failed, or what it did.
     pub note: Option<Result<String, String>>,
     /// The panes of the work area in z-order: the last one is active.
@@ -578,6 +756,16 @@ pub struct Views {
     pub picking: Option<Picking>,
     /// The last work-area rect, in points; `None` before the first work-area frame.
     pub area: Option<egui::Rect>,
+    /// The tab layout of the work area: which pane is a tab of which group, and where the
+    /// groups sit.
+    pub dock: crate::dock::Dock,
+    /// The tabs drawn last frame: pane key, tab rect and close glyph rect.
+    pub tabs_drawn: Vec<(u64, egui::Rect, egui::Rect)>,
+    /// What the filters of the open views match on the head on screen.
+    pub matches: crate::view_overlay::FilterMatches,
+    /// The overlay each open view with filter overrides draws with: the key it was built for,
+    /// the overlay, and the filters that were refused (name and reason).
+    pub overlays: BTreeMap<Uuid7, ViewOverlay>,
     /// The pane a primary press just focused, until that button is released: its click only
     /// focuses unless it may select.
     pub focus_press: Option<u64>,
@@ -585,8 +773,6 @@ pub struct Views {
     pub tab: BrowserTab,
     /// Browser search.
     pub search: String,
-    /// Group the browser by folder instead of by view kind.
-    pub by_folder: bool,
     /// Show only favourites.
     pub favorites_only: bool,
     /// Show only quick access: favourites, temporary and open views.
@@ -595,12 +781,19 @@ pub struct Views {
     pub selected: BTreeSet<Uuid7>,
     /// The anchor of a Shift range.
     pub anchor: Option<Uuid7>,
-    /// A cut (true) or copied view waiting to be pasted.
-    pub clipboard: Option<(Uuid7, bool)>,
     /// Destination of a paste or a new folder.
     pub destination: String,
     /// Whether the new-folder field is shown.
     pub new_folder: bool,
+    /// The folder being renamed in place: its stored path and the name being typed.
+    pub folder_rename: Option<(String, String)>,
+    /// The name a "Save as view preset" gets, while its field is shown.
+    pub preset_name: Option<String>,
+    /// The filter editor: the filter being edited (a working copy) and the name it was saved
+    /// under (`None` for a new one).
+    pub filter_edit: Option<(beamcraft_engine::views::ViewFilter, Option<String>)>,
+    /// Where the new folder goes: the stored path of its parent folder, empty for the top level.
+    pub folder_parent: String,
     /// A delete waiting for confirmation.
     pub confirm_delete: Option<Uuid7>,
     /// A store-backed construction running in the CLI.
@@ -614,8 +807,21 @@ pub struct Views {
     pub previews: BTreeMap<Uuid7, (u64, crate::panes::RenderTarget)>,
 }
 
-/// Most view panes open at once in the work area.
-pub const MAX_WINDOWS: usize = 8;
+/// The overlay one view draws its filter overrides with.
+#[derive(Clone)]
+pub struct ViewOverlay {
+    /// What it was built from (`crate::view_overlay::overlay_key`).
+    pub key: u64,
+    /// The colours and hidden elements.
+    pub overlay: std::sync::Arc<crate::colour_sets::Overlay>,
+    /// Whether every override's filter has been evaluated.
+    pub complete: bool,
+    /// The filters the evaluator refused, by name, with the reason.
+    pub refused: Vec<(String, String)>,
+}
+
+/// Most views open at once as tabs in the work area.
+pub const MAX_WINDOWS: usize = 16;
 /// Most previews kept rendered.
 pub const MAX_PREVIEWS: usize = 64;
 /// Preview size in pixels.
@@ -662,51 +868,52 @@ impl Views {
         tint_of(self.active_view())
     }
 
-    /// The views the browser lists under `search` and the favourites and quick-access switches.
-    /// Grouped by what the views look at (3D views, plans, sections and elevations, as a
-    /// Revit-style browser does), or, with `by_folder`, by folder (the root first; empty folders
-    /// are listed unless a filter is on). Each group is sorted by name, the default view first.
-    pub fn browser_groups(&self) -> Vec<(String, Vec<&ModelView>)> {
+    /// Whether the browser lists `view` under the search and the favourites and quick-access
+    /// switches.
+    fn listed(&self, view: &ModelView) -> bool {
         let needle = self.search.trim().to_lowercase();
-        let mut groups: BTreeMap<String, Vec<&ModelView>> = BTreeMap::new();
+        (!self.favorites_only || view.favorite)
+            && (!self.quick_access
+                || view.favorite
+                || view.temporary
+                || self.open.contains(&view.id))
+            && format!("{} {}", view.name, view.folder)
+                .to_lowercase()
+                .contains(&needle)
+    }
+
+    /// The default view when the browser lists it: it heads the tree on its own row, above
+    /// the kinds, since it is the model's home view rather than one of a kind.
+    pub fn browser_home(&self) -> Option<Uuid7> {
+        self.book
+            .default_view()
+            .filter(|view| self.listed(view))
+            .map(|view| view.id)
+    }
+
+    /// The browser tree: the views in their folders, as Revit's project browser lists views
+    /// when it is organised by folder. The kind of a view (plan, elevation or section,
+    /// inclined) shows as its icon, not as a group; the default view is not in the tree
+    /// ([`Self::browser_home`]). Folders come first, then the views, each by name. Empty
+    /// folders are hidden while a search or switch filters the list.
+    pub fn browser_tree(&self) -> FolderNode {
+        let filtering = !self.search.trim().is_empty() || self.favorites_only || self.quick_access;
+        let mut root = FolderNode::new("Views", String::new());
         for view in self.book.views() {
-            let listed = (!self.favorites_only || view.favorite)
-                && (!self.quick_access
-                    || view.favorite
-                    || view.temporary
-                    || self.open.contains(&view.id))
-                && format!("{} {}", view.name, view.folder)
-                    .to_lowercase()
-                    .contains(&needle);
-            if listed {
-                let key = if self.by_folder {
-                    view.folder.clone()
-                } else {
-                    // The kind's position, so the groups come out in kind order.
-                    (view_kind(view) as u8).to_string()
-                };
-                groups.entry(key).or_default().push(view);
+            if view.is_default || !self.listed(view) {
+                continue;
             }
+            let path: Vec<&str> = view.folder.split('/').filter(|s| !s.is_empty()).collect();
+            root.place(&path, "", Some(view.id));
         }
-        if self.by_folder && !self.favorites_only && !self.quick_access {
+        if !filtering {
             for folder in self.book.folders() {
-                if folder.to_lowercase().contains(&needle) {
-                    groups.entry(folder.to_owned()).or_default();
-                }
+                let path: Vec<&str> = folder.split('/').filter(|s| !s.is_empty()).collect();
+                root.place(&path, "", None);
             }
         }
-        let mut out: Vec<(String, Vec<&ModelView>)> = groups.into_iter().collect();
-        for (key, views) in &mut out {
-            views.sort_by_key(|v| (!v.is_default, v.name.to_lowercase()));
-            if !self.by_folder {
-                *key = key
-                    .parse::<usize>()
-                    .ok()
-                    .and_then(|n| ViewKind::ALL.get(n))
-                    .map_or_else(String::new, |k| k.label().to_owned());
-            }
-        }
-        out
+        root.sort(&self.book);
+        root
     }
 
     /// Applies a browser click: plain selects one, Ctrl toggles, Shift extends from the anchor
@@ -750,15 +957,11 @@ impl Views {
         }
     }
 
-    /// Forgets a view in the session: its camera, the open and selected marks and the
-    /// clipboard. Its panes are closed by the window.
+    /// Forgets a view in the session: its camera and the open and selected marks. Its panes are closed by the window.
     pub fn forget(&mut self, id: &Uuid7) {
         self.cameras.remove(id);
         self.open.retain(|v| v != id);
         self.selected.remove(id);
-        if self.clipboard.is_some_and(|(c, _)| c == *id) {
-            self.clipboard = None;
-        }
     }
 }
 
@@ -913,7 +1116,7 @@ mod tests {
     }
 
     #[test]
-    fn the_browser_groups_views_by_kind_with_the_default_first() {
+    fn the_browser_lists_views_by_name_with_their_kind_and_the_default_on_its_own() {
         use beamcraft_engine::work_plane::WorkPlane;
         let mut views = Views::default();
         let mut home = view(1, "Z home", "");
@@ -922,56 +1125,87 @@ mod tests {
         let plan = view(2, "A plan", "");
         let mut elevation = view(3, "Elevation", "");
         elevation.plane = WorkPlane::parallel("xz", 0.0).unwrap();
+        let mut section = view(5, "Section A", "");
+        section.plane = WorkPlane::parallel("yz", 0.0).unwrap();
+        section.depth = Some([500.0, 500.0]);
+        // A perspective look at a plan is still a plan: 3D is a way of looking.
         let mut spatial = view(4, "B spatial", "");
         spatial.projection = Projection::Perspective;
-        for v in [plan, elevation, spatial, home] {
+        let mut roof = view(6, "Roof", "");
+        roof.plane = WorkPlane::new([0.0; 3], [1.0, 0.0, 0.0], [0.0, 0.8, 0.6]).unwrap();
+        for v in [plan, elevation, spatial, home, section, roof] {
             views.book.insert(v).unwrap();
         }
-        let groups = views.browser_groups();
-        let names: Vec<(&str, Vec<&str>)> = groups
+        let tree = views.browser_tree();
+        // No grouping by kind: one list by name, each view's kind shown by its icon.
+        let names: Vec<(String, ViewKind)> = tree
+            .views
             .iter()
-            .map(|(f, v)| (f.as_str(), v.iter().map(|v| v.name.as_str()).collect()))
+            .map(|id| {
+                let view = views.book.get(id).unwrap();
+                (view.name.clone(), view_kind(view))
+            })
             .collect();
         assert_eq!(
             names,
             [
-                ("3D views", vec!["Z home", "B spatial"]),
-                ("Plans", vec!["A plan"]),
-                ("Sections and elevations", vec!["Elevation"]),
+                ("A plan".to_owned(), ViewKind::Plan),
+                ("B spatial".to_owned(), ViewKind::Plan),
+                ("Elevation".to_owned(), ViewKind::Vertical),
+                ("Roof".to_owned(), ViewKind::Inclined),
+                ("Section A".to_owned(), ViewKind::Vertical),
             ]
         );
+        assert_eq!(views.browser_home(), Some(id(1)));
     }
 
     #[test]
-    fn the_browser_groups_filters_and_selects() {
-        let mut views = Views {
-            by_folder: true,
-            ..Views::default()
-        };
-        views.book.insert(view(1, "b plan", "")).unwrap();
+    fn the_browser_tree_nests_folders_filters_and_selects() {
+        let mut views = Views::default();
+        views
+            .book
+            .insert(view(1, "b plan", "Plans/Level 1"))
+            .unwrap();
         views.book.insert(view(2, "A plan", "")).unwrap();
-        let mut fav = view(3, "Section", "Sections");
+        let mut fav = view(3, "Old plan", "Archive");
         fav.favorite = true;
         views.book.insert(fav).unwrap();
-        views.book.create_folder("Empty").unwrap();
-        let groups = views.browser_groups();
-        let names: Vec<(&str, Vec<&str>)> = groups
+        views
+            .book
+            .create_folder(&new_folder_path("Plans", "Level 2"))
+            .unwrap();
+        views
+            .book
+            .create_folder(&new_folder_path("", "Grid A"))
+            .unwrap();
+        let tree = views.browser_tree();
+        let plans = &tree.folders[2];
+        let folders: Vec<(&str, &str, usize)> = plans
+            .folders
             .iter()
-            .map(|(f, v)| (f.as_str(), v.iter().map(|v| v.name.as_str()).collect()))
+            .map(|f| (f.name.as_str(), f.stored.as_str(), f.views.len()))
             .collect();
         assert_eq!(
-            names,
+            folders,
             [
-                ("", vec!["A plan", "b plan"]),
-                ("Empty", vec![]),
-                ("Sections", vec!["Section"])
+                ("Level 1", "Plans/Level 1", 1),
+                ("Level 2", "Plans/Level 2", 0),
             ]
         );
+        let top: Vec<&str> = tree.folders.iter().map(|f| f.name.as_str()).collect();
+        assert_eq!(top, ["Archive", "Grid A", "Plans"], "folders by name");
+        assert_eq!(tree.views, [id(2)]);
+        assert_eq!(tree.all_views().len(), 3);
         views.favorites_only = true;
-        assert_eq!(views.browser_groups().len(), 1);
+        assert_eq!(views.browser_tree().all_views(), [id(3)]);
         views.favorites_only = false;
         views.search = "PLAN".into();
-        assert_eq!(views.browser_groups()[0].1.len(), 2);
+        let found = views.browser_tree();
+        assert_eq!(found.all_views().len(), 3);
+        assert!(
+            found.folders.iter().all(|f| !f.all_views().is_empty()),
+            "empty folders hide"
+        );
         // Plain, Ctrl and Shift clicks.
         let order = [id(2), id(1), id(3)];
         assert!(views.click(id(2), false, false, &order));

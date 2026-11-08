@@ -472,7 +472,10 @@ fn an_attached_reference_is_uploaded_and_renders_visible_pixels() {
 /// cut uniform: a zero count draws everything.
 fn render_pixels(gpu: &Gpu, scene: &Scene, clip: &ClipGpu) -> Vec<u8> {
     let (target, extent) = scene.framing();
-    let view = Camera::new(target, extent, 1.0).unwrap().view(1.0).unwrap();
+    // Drawn in perspective, as the silhouettes were recorded; views start orthographic.
+    let mut camera = Camera::new(target, extent, 1.0).unwrap();
+    camera.set_projection(false);
+    let view = camera.view(1.0).unwrap();
     let stats = Stats::default();
     let renderer = Renderer::new(&gpu.adapter, &gpu.device, 128, 128, &stats).unwrap();
     let uploaded = Uploaded::new(&gpu.device, &gpu.queue, scene, &stats).unwrap();

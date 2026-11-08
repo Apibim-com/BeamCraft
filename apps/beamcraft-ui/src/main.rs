@@ -48,7 +48,7 @@ use std::sync::atomic::AtomicBool;
 
 fn usage() -> Error {
     Error::Input(
-        "usage: beamcraft-ui [--cli PATH] [--config-dir DIR] [--samples 1|4] (start page) | beamcraft-ui (--store ROOT | --workspace DIR [--published ROOT]) [--actor-id UUID] [--cli PATH] [--config-dir DIR] [--samples 1|4] [--metrics FRAMES [--width W] [--height H] | --screenshot FILE [--width W] [--height H] [--yaw RAD] [--pitch RAD] [--projection perspective|ortho] [--zoom F32] [--pan X,Y] [--colour-set TEXT] [--background light|dark] | --perf-run PLAN] | --synthetic COUNT --metrics FRAMES [--samples 1|4]",
+        "usage: beamcraft-ui [--cli PATH] [--config-dir DIR] [--samples 1|4] (start page) | beamcraft-ui (--store ROOT | --workspace DIR [--published ROOT]) [--actor-id UUID] [--cli PATH] [--config-dir DIR] [--samples 1|4] [--metrics FRAMES [--width W] [--height H] | --screenshot FILE [--width W] [--height H] [--yaw RAD] [--pitch RAD] [--projection perspective|ortho] [--zoom F32] [--pan X,Y] [--colour-set TEXT] [--background light|dark] | --window-shot FILE.png | --perf-run PLAN] | --self-test FILE.json | --synthetic COUNT --metrics FRAMES [--samples 1|4]",
     )
 }
 
@@ -88,6 +88,8 @@ fn options() -> Result<BTreeMap<String, String>, Error> {
                 | "--background"
                 | "--config-dir"
                 | "--actor-id"
+                | "--window-shot"
+                | "--self-test"
         );
         if !known || value.len() > 4096 || map.insert(key.clone(), value.clone()).is_some() {
             return Err(usage());
@@ -104,6 +106,40 @@ fn number(map: &BTreeMap<String, String>, key: &str, default: u32) -> Result<u32
 /// What a run printed and its exit status, or `None` for a window that just closed.
 fn run() -> Result<Option<(String, u8)>, Error> {
     let map = options()?;
+    // The scripted check of the view workflow runs on the window's state alone, without a window.
+    if let Some(path) = map.get("--self-test") {
+        if map.len() != 1 {
+            return Err(usage());
+        }
+        let report = beamcraft_ui::selftest::run();
+        let bytes = report
+            .encode(&beamcraft_json::Limits::DEFAULT)
+            .map_err(|_| Error::Input("the self-test report does not encode"))?;
+        let path = PathBuf::from(path);
+        if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+            std::fs::create_dir_all(parent).map_err(Error::Io)?;
+        }
+        std::fs::write(&path, &bytes).map_err(Error::Io)?;
+        let passed = !String::from_utf8_lossy(&bytes).contains("\"passed\":false");
+        return Ok(Some((
+            String::from_utf8_lossy(&bytes).into_owned(),
+            if passed { 0 } else { 1 },
+        )));
+    }
+    // The window's own picture after it settled (the start page or a model), unlike
+    // `--screenshot`, which renders the model alone.
+    if let Some(path) = map.get("--window-shot") {
+        if map.contains_key("--metrics")
+            || map.contains_key("--perf-run")
+            || map.contains_key("--screenshot")
+        {
+            return Err(usage());
+        }
+        let _ = SHOT.set((
+            PathBuf::from(path),
+            std::sync::Arc::new(std::sync::Mutex::new(None)),
+        ));
+    }
     // One window, one set of counters; shared with its worker threads (see beamcraft_ui::stats).
     let stats = Arc::new(Stats::default());
     let samples = map
@@ -162,12 +198,13 @@ fn run() -> Result<Option<(String, u8)>, Error> {
                 && !map.contains_key("--screenshot")
                 && !map.contains_key("--actor-id") =>
         {
-            return start_page(
+            start_page(
                 cli,
                 map.get("--config-dir").map(PathBuf::from),
                 samples,
                 stats,
-            );
+            )?;
+            return shot_reply();
         }
         _ => return Err(usage()),
     };
@@ -343,7 +380,7 @@ fn run() -> Result<Option<(String, u8)>, Error> {
         }),
     )?;
     if !perf_run {
-        return Ok(None);
+        return shot_reply();
     }
     match reports.try_recv() {
         Ok((json, ok)) => Ok(Some((json, if ok { 0 } else { 1 }))),
@@ -367,8 +404,46 @@ fn start_page(
     Ok(None)
 }
 
+/// The `--window-shot FILE` of this run: the file and where its outcome lands.
+static SHOT: std::sync::OnceLock<(PathBuf, beamcraft_ui::capture::Outcome)> =
+    std::sync::OnceLock::new();
+
+/// The reply of a `--window-shot` run once its window closed.
+fn shot_reply() -> Result<Option<(String, u8)>, Error> {
+    let Some((path, outcome)) = SHOT.get() else {
+        return Ok(None);
+    };
+    let result = outcome.lock().ok().and_then(|mut o| o.take());
+    match result {
+        Some(Ok(())) => Ok(Some((
+            format!(
+                "{{\"outcome\":\"screenshot_saved\",\"path\":{},\"frames\":{}}}",
+                json_string(&path.to_string_lossy()),
+                beamcraft_ui::capture::FRAMES
+            ),
+            0,
+        ))),
+        Some(Err(message)) => Err(Error::Graphics(message)),
+        None => Err(Error::Graphics(
+            "the window closed before its picture was taken".into(),
+        )),
+    }
+}
+
 /// Runs one native window until it closes.
 fn window(size: egui::Vec2, create: eframe::AppCreator<'_>) -> Result<(), Error> {
+    let create: eframe::AppCreator<'_> = match SHOT.get() {
+        Some((path, outcome)) => {
+            let (path, outcome) = (path.clone(), std::sync::Arc::clone(outcome));
+            Box::new(move |cc| {
+                let inner = create(cc)?;
+                Ok(Box::new(beamcraft_ui::capture::Capture::new(
+                    inner, path, outcome,
+                )))
+            })
+        }
+        None => create,
+    };
     let mut setup = eframe::egui_wgpu::WgpuSetupCreateNew::without_display_handle();
     setup.instance_descriptor.backends =
         wgpu::Backends::DX12 | wgpu::Backends::VULKAN | wgpu::Backends::METAL;
@@ -382,9 +457,19 @@ fn window(size: egui::Vec2, create: eframe::AppCreator<'_>) -> Result<(), Error>
     });
     let viewport = egui::ViewportBuilder::default()
         .with_inner_size(size)
-        .with_decorations(false)
         .with_title("BeamCraft")
         .with_icon(load_icon());
+    // macOS keeps the native frame and its traffic lights over a transparent title bar, with
+    // our header drawn under them; elsewhere the window is frameless and draws its own controls.
+    let viewport = if beamcraft_ui::theme::NATIVE_WINDOW_CONTROLS {
+        viewport
+            .with_decorations(true)
+            .with_fullsize_content_view(true)
+            .with_titlebar_shown(false)
+            .with_title_shown(false)
+    } else {
+        viewport.with_decorations(false)
+    };
     // The Wayland app ID and X11 window class match the desktop entry `install-linux.sh`
     // registers, so the running window groups with its launcher and shows its icon.
     #[cfg(target_os = "linux")]

@@ -34,6 +34,8 @@ pub const VIEWS_SCHEMA_DESCRIPTOR: &str = concat!(
     "bim:view:representation=token(full|simplified,optional,default full);bim:view:colourSet=string(1..=64 bytes,no controls,optional);\n",
     "bim:view:folders=string[](on the views scope,exactly the folders no view uses,sorted unique,each at most 512 bytes,\n",
     "at most 8 nonempty segments without controls,outer spaces or dot names,at most 512 entries,optional)\n",
+    "bim:view:filterOverrides=string[](on the camera,<=16 entries,each 1..=512 bytes,no controls,in order,optional);\n",
+    "bim:view:filters=string[](on the views scope,<=64 entries,each 1..=8192 bytes,no controls,in order,optional)\n",
     "provenance(W01)=bim:view:author=string(1..=128,no controls,trimmed);bim:view:savedAtMs=uint64(unix milliseconds);\n",
     "bim:view:comment=string(<=512,no controls);bim:view:modelRevision=string(uuid7);all four or none\n",
     "a saved view is display state,not model data: no element identity,no model keys,no numbering\n",
@@ -67,6 +69,12 @@ pub const MAX_VIEWS: usize = 256;
 
 /// The visible-height and visible-depth caps in millimetres; mirrors the engine's caps.
 pub const MAX_SPAN_MM: f64 = 2e7;
+/// Most filter overrides on one saved view.
+pub const MAX_OVERRIDES: usize = 16;
+/// Most view filters one views layer stores.
+pub const MAX_FILTERS: usize = 64;
+/// Most bytes in one stored view filter record.
+pub const MAX_FILTER_BYTES: usize = 8192;
 
 /// The camera projection of a saved view; the standard USD camera projections.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -185,6 +193,9 @@ pub struct SavedView {
     pub representation: String,
     /// The saved colour set (V17) the view colours by, by name; `None` colours by the model.
     pub colour_set: Option<String>,
+    /// The view's filter overrides in order, each one opaque bounded text the caller encodes
+    /// (at most [`MAX_OVERRIDES`] entries of 1 to 512 bytes without controls).
+    pub filter_overrides: Vec<String>,
     /// The saved view's provenance (W01), present exactly for a provenance-bearing capture.
     pub stamp: Option<ViewStamp>,
 }
@@ -217,6 +228,7 @@ impl SavedView {
             opacity: 1.0,
             representation: "full".to_owned(),
             colour_set: None,
+            filter_overrides: Vec::new(),
             stamp: None,
         };
         out.validate()?;
@@ -311,11 +323,21 @@ impl SavedView {
         {
             return Err(invalid());
         }
+        if self.filter_overrides.len() > MAX_OVERRIDES
+            || !self.filter_overrides.iter().all(|o| bounded_text(o, 512))
+        {
+            return Err(invalid());
+        }
         if let Some(stamp) = &self.stamp {
             stamp.validate()?;
         }
         Ok(())
     }
+}
+
+/// Whether `text` is 1 to `max` bytes without control characters.
+fn bounded_text(text: &str, max: usize) -> bool {
+    !text.is_empty() && text.len() <= max && !text.chars().any(char::is_control)
 }
 
 /// The `bim:view:*` attribute profile: names and their USD types, in authoring order. The
@@ -336,6 +358,7 @@ pub const FIELDS: &[(&str, &str)] = &[
     ("bim:view:opacity", "double"),
     ("bim:view:representation", "token"),
     ("bim:view:colourSet", "string"),
+    ("bim:view:filterOverrides", "string[]"),
     ("bim:view:author", "string"),
     ("bim:view:savedAtMs", "uint64"),
     ("bim:view:comment", "string"),
@@ -520,6 +543,15 @@ fn author(data: &mut sdf::Data, view: &SavedView) -> Result<(), Diagnostic> {
             sdf::Value::String(set.clone()),
         )?;
     }
+    if !view.filter_overrides.is_empty() {
+        edit::attr(
+            data,
+            &p,
+            "bim:view:filterOverrides",
+            "string[]",
+            sdf::Value::StringVec(view.filter_overrides.clone()),
+        )?;
+    }
     if let Some(stamp) = &view.stamp {
         edit::attr(
             data,
@@ -562,6 +594,9 @@ pub struct ViewsLayer {
     pub views: Vec<SavedView>,
     /// The folders no view uses, in any order; the layer text stores them sorted and unique.
     pub empty_folders: Vec<String>,
+    /// The view filters, in order, each one opaque bounded text the caller encodes (at most
+    /// [`MAX_FILTERS`] entries of 1 to [`MAX_FILTER_BYTES`] bytes without controls).
+    pub filters: Vec<String>,
 }
 
 /// Produces the canonical views layer text: the header, the views folder and one camera prim per
@@ -576,6 +611,16 @@ pub fn bytes(layer: &ViewsLayer) -> Result<Vec<u8>, Diagnostic> {
     }
     for folder in &layer.empty_folders {
         validate_folder(folder)?;
+    }
+    if layer.filters.len() > MAX_FILTERS {
+        return Err(limit());
+    }
+    if !layer
+        .filters
+        .iter()
+        .all(|f| bounded_text(f, MAX_FILTER_BYTES))
+    {
+        return Err(invalid());
     }
     let schema = views_schema_identity()?;
     let mut ordered = layer.views.clone();
@@ -601,6 +646,15 @@ pub fn bytes(layer: &ViewsLayer) -> Result<Vec<u8>, Diagnostic> {
             "bim:view:folders",
             "string[]",
             sdf::Value::StringVec(folders),
+        )?;
+    }
+    if !layer.filters.is_empty() {
+        edit::attr(
+            &mut data,
+            VIEWS_FOLDER,
+            "bim:view:filters",
+            "string[]",
+            sdf::Value::StringVec(layer.filters.clone()),
         )?;
     }
     for view in &ordered {
@@ -664,6 +718,23 @@ fn triple(p: &Prim, name: &str) -> Result<[f64; 3], Diagnostic> {
     };
     let read = values.iter().map(number).collect::<Result<Vec<_>, _>>()?;
     <[f64; 3]>::try_from(read).map_err(|_| invalid())
+}
+
+/// A `string[]` of at most `max` text entries.
+fn strings(p: &Prim, name: &str, max: usize) -> Result<Vec<String>, Diagnostic> {
+    let Value::Array(values) = property(p, name, "string[]")? else {
+        return Err(invalid());
+    };
+    if values.len() > max {
+        return Err(limit());
+    }
+    values
+        .iter()
+        .map(|t| match t {
+            Value::Text(s) => Ok(s.clone()),
+            _ => Err(invalid()),
+        })
+        .collect()
 }
 
 fn tokens(p: &Prim, name: &str) -> Result<Vec<String>, Diagnostic> {
@@ -767,6 +838,10 @@ pub fn read(p: &Prim) -> Result<SavedView, Diagnostic> {
                 None
             }
         },
+        filter_overrides: optional(p, "bim:view:filterOverrides", |p| {
+            strings(p, "bim:view:filterOverrides", MAX_OVERRIDES)
+        })?
+        .unwrap_or_default(),
         stamp: {
             let present = |name: &str| p.properties.iter().any(|v| v.name == name);
             match (
@@ -815,24 +890,25 @@ pub fn read_layer(prims: &[Prim]) -> Result<ViewsLayer, Diagnostic> {
                 }
                 layer.views.push(read(p)?);
             }
-            // Presence is by name alone: a `bim:view:folders` of another USD type, or one
-            // whose parsed value is not an array, refuses the prim, never silently absent
-            // (the same rule the optional record attributes follow).
-            _ if p.path == VIEWS_FOLDER
-                && p.properties.iter().any(|v| v.name == "bim:view:folders") =>
-            {
-                let Value::Array(entries) = property(p, "bim:view:folders", "string[]")? else {
-                    return Err(invalid());
-                };
-                if entries.len() > 512 {
-                    return Err(limit());
+            // Presence is by name alone: a `bim:view:folders` or `bim:view:filters` of another
+            // USD type, or one whose parsed value is not an array, refuses the prim, never
+            // silently absent (the same rule the optional record attributes follow).
+            _ if p.path == VIEWS_FOLDER => {
+                if let Some(folders) = optional(p, "bim:view:folders", |p| {
+                    strings(p, "bim:view:folders", 512)
+                })? {
+                    for folder in &folders {
+                        validate_folder(folder)?;
+                    }
+                    layer.empty_folders = folders;
                 }
-                for entry in entries {
-                    let Value::Text(folder) = entry else {
+                if let Some(filters) = optional(p, "bim:view:filters", |p| {
+                    strings(p, "bim:view:filters", MAX_FILTERS)
+                })? {
+                    if !filters.iter().all(|f| bounded_text(f, MAX_FILTER_BYTES)) {
                         return Err(invalid());
-                    };
-                    validate_folder(folder)?;
-                    layer.empty_folders.push(folder.clone());
+                    }
+                    layer.filters = filters;
                 }
             }
             _ => (),

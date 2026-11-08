@@ -8,7 +8,9 @@
 //! `beam`, `column` or `plate`), `steel:preset:name` (string), `steel:preset:class` (int) and
 //! optional `steel:preset:material` (a material display name), `steel:preset:profile` (a profile
 //! designation, members only) and `steel:preset:thicknessMm` (double, plates only). The first
-//! entry of a kind in id order is its default. Presets are inputs like libraries: reading one
+//! entry of a kind in id order is its default. The same file may hold view filters
+//! (`steel:preset:kind = "filter"`) and view presets (`"view"`), the display rules a model view
+//! is filled from; see [`Presets::filters`] and [`Presets::views`]. Presets are inputs like libraries: reading one
 //! never changes a model, and the file is read under the foreign-layer budgets. A refused entry
 //! is reported and skipped, never silently dropped.
 
@@ -17,6 +19,9 @@ use crate::library::read_all;
 use crate::plate::{number, text};
 use crate::project::project_environment_file;
 use crate::source_file::read_file;
+use beamcraft_engine::presets::ViewPreset;
+use beamcraft_engine::views::{FilterCondition, FilterMatch, FilterOverride, ViewFilter};
+use beamcraft_engine::{ElementKind, KindFilter, Representation};
 use beamcraft_layer_engine::{Prim, Value};
 use beamcraft_model::command::label_is_valid;
 use beamcraft_model::error::ErrorCode;
@@ -91,10 +96,122 @@ pub struct RejectedPreset {
 /// The presets of one file.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Presets {
-    /// Admitted presets in id order.
+    /// Admitted part presets in id order.
     pub presets: Vec<Preset>,
+    /// Admitted view filters (`steel:preset:kind = "filter"`) in id order.
+    pub filters: Vec<ViewFilter>,
+    /// Admitted view presets (`steel:preset:kind = "view"`) in id order. Their overrides name
+    /// filters of the same file.
+    pub views: Vec<ViewPreset>,
     /// Refused entries in path order.
     pub rejected: Vec<RejectedPreset>,
+}
+
+/// What one entry of the presets file is.
+enum Entry {
+    Part(Preset),
+    Filter(ViewFilter),
+    View(ViewPreset),
+}
+
+fn strings(prim: &Prim, name: &str, ty: &str) -> Result<Vec<String>, &'static str> {
+    match typed(prim, name, ty)? {
+        None => Ok(Vec::new()),
+        Some(Value::Array(items)) => items
+            .iter()
+            .map(|v| {
+                text(v)
+                    .map(str::to_owned)
+                    .ok_or("a preset list holds a non-text item")
+            })
+            .collect(),
+        Some(_) => Err("a preset list is not an array"),
+    }
+}
+
+fn doubles(prim: &Prim, name: &str) -> Result<Option<Vec<f64>>, &'static str> {
+    match typed(prim, name, "double[]")? {
+        None => Ok(None),
+        Some(Value::Array(items)) => items
+            .iter()
+            .map(|v| number(v).ok_or("a preset number list holds a non-number"))
+            .collect::<Result<Vec<_>, _>>()
+            .map(Some),
+        Some(_) => Err("a preset number list is not an array"),
+    }
+}
+
+/// A view filter entry: `steel:preset:name`, optional `steel:preset:match` (`all` or `any`)
+/// and `steel:preset:conditions`, a `string[]` of `field op value` rows.
+fn decode_filter(prim: &Prim) -> Result<ViewFilter, &'static str> {
+    let name = label(prim, "steel:preset:name")?.ok_or("the preset has no name")?;
+    let matching = match typed(prim, "steel:preset:match", "token")?.and_then(text) {
+        None => FilterMatch::All,
+        Some(token) => FilterMatch::parse(token).map_err(|_| "a filter matches all or any")?,
+    };
+    let rows = strings(prim, "steel:preset:conditions", "string[]")?;
+    if rows.len() > beamcraft_engine::view_filter::MAX_CONDITIONS {
+        return Err("a filter has at most 16 conditions");
+    }
+    let conditions = rows
+        .iter()
+        .map(|row| FilterCondition::parse_row(row).map_err(|_| "a filter condition is not valid"))
+        .collect::<Result<Vec<_>, _>>()?;
+    let filter = ViewFilter {
+        name,
+        matching,
+        conditions,
+    };
+    filter.validate().map_err(|_| "the filter is not valid")?;
+    Ok(filter)
+}
+
+/// A view preset entry: `steel:preset:name` and the discipline display bundle (V07), each
+/// optional with the default of a new preset: `depthMm` (`double[]` of two), `representation`
+/// (token), `colourSet` (string), `grids` (bool), `hiddenKinds` (`token[]`) and `overrides`
+/// (`string[]` of `filter|show|r,g,b|transparency`).
+fn decode_view(prim: &Prim) -> Result<ViewPreset, &'static str> {
+    let name = label(prim, "steel:preset:name")?.ok_or("the preset has no name")?;
+    let mut preset = ViewPreset::new(&name);
+    preset.depth = match doubles(prim, "steel:preset:depthMm")? {
+        None => None,
+        Some(v) => Some(<[f64; 2]>::try_from(v).map_err(|_| "the preset depth needs two numbers")?),
+    };
+    if let Some(token) = typed(prim, "steel:preset:representation", "token")?.and_then(text) {
+        preset.representation =
+            Representation::parse(token).ok_or("the preset representation is unknown")?;
+    }
+    preset.colour_set = typed(prim, "steel:preset:colourSet", "string")?
+        .and_then(text)
+        .map(str::to_owned);
+    preset.grids_visible = match typed(prim, "steel:preset:grids", "bool")? {
+        None => true,
+        Some(Value::Bool(b)) => *b,
+        Some(_) => return Err("the preset grids mark is not a bool"),
+    };
+    let mut hidden = KindFilter::SHOW_ALL;
+    for kind in strings(prim, "steel:preset:hiddenKinds", "token[]")? {
+        hidden = hidden.hiding(ElementKind::parse(&kind).ok_or("a hidden kind is unknown")?);
+    }
+    preset.hidden_kinds = hidden;
+    preset.overrides = strings(prim, "steel:preset:overrides", "string[]")?
+        .iter()
+        .map(|spec| {
+            FilterOverride::parse_spec(spec).map_err(|_| "a view preset override is not valid")
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    preset
+        .validate()
+        .map_err(|_| "the view preset is not valid")?;
+    Ok(preset)
+}
+
+fn decode_entry(prim: &Prim, id: &str) -> Result<Entry, &'static str> {
+    match typed(prim, "steel:preset:kind", "token")?.and_then(text) {
+        Some("filter") => decode_filter(prim).map(Entry::Filter),
+        Some("view") => decode_view(prim).map(Entry::View),
+        _ => decode(prim, id).map(Entry::Part),
+    }
 }
 
 impl Presets {
@@ -179,6 +296,8 @@ pub fn load_bytes(bytes: Vec<u8>) -> Result<Presets, Refusal> {
     )?;
     let prims = read_all(&layer.reader, &layer.opened, &layer.control)?;
     let mut out = Presets::default();
+    let mut filters = Vec::new();
+    let mut views = Vec::new();
     let mut count = 0usize;
     for prim in &prims {
         let Some((parent, id)) = prim.path.rsplit_once('/') else {
@@ -195,16 +314,59 @@ pub fn load_bytes(bytes: Vec<u8>) -> Result<Presets, Refusal> {
             ));
         }
         let decoded = if prim.active {
-            decode(prim, id)
+            decode_entry(prim, id)
         } else {
             Err("the preset is inactive")
         };
         match decoded {
-            Ok(preset) => out.presets.push(preset),
+            Ok(Entry::Part(preset)) => out.presets.push(preset),
+            Ok(Entry::Filter(filter)) => filters.push((id.to_owned(), prim.path.clone(), filter)),
+            Ok(Entry::View(view)) => views.push((id.to_owned(), prim.path.clone(), view)),
             Err(message) => out.rejected.push(RejectedPreset {
                 prim_path: prim.path.clone(),
                 message,
             }),
+        }
+    }
+    filters.sort_by(|a, b| a.0.cmp(&b.0));
+    views.sort_by(|a, b| a.0.cmp(&b.0));
+    // Names stay unique like in a view book, and a view preset may only name filters of the
+    // file; a later duplicate or a dangling override is refused, never half-applied.
+    for (_, path, filter) in filters {
+        let taken = out
+            .filters
+            .iter()
+            .any(|f| f.name.to_lowercase() == filter.name.to_lowercase());
+        if taken {
+            out.rejected.push(RejectedPreset {
+                prim_path: path,
+                message: "another filter preset has this name",
+            });
+        } else {
+            out.filters.push(filter);
+        }
+    }
+    for (_, path, view) in views {
+        let taken = out
+            .views
+            .iter()
+            .any(|v| v.name.to_lowercase() == view.name.to_lowercase());
+        let dangling = view.overrides.iter().any(|o| {
+            !out.filters
+                .iter()
+                .any(|f| f.name.to_lowercase() == o.filter.to_lowercase())
+        });
+        if taken || dangling {
+            out.rejected.push(RejectedPreset {
+                prim_path: path,
+                message: if taken {
+                    "another view preset has this name"
+                } else {
+                    "a view preset names a filter the file does not have"
+                },
+            });
+        } else {
+            out.views.push(view);
         }
     }
     out.presets.sort_by(|a, b| a.id.cmp(&b.id));
@@ -303,6 +465,39 @@ mod tests {
     }
 
     #[test]
+    fn filters_and_view_presets_are_read_beside_the_part_presets() {
+        let bytes = layer(
+            r#"
+    def Scope "F_Beams" { token steel:preset:kind = "filter"
+        string steel:preset:name = "Beams"
+        string[] steel:preset:conditions = ["type eq beam", "class ge 2"] }
+    def Scope "F_Twice" { token steel:preset:kind = "filter"
+        string steel:preset:name = "beams" }
+    def Scope "F_Bad" { token steel:preset:kind = "filter"
+        string steel:preset:name = "Bad"
+        string[] steel:preset:conditions = ["type eq girder"] }
+    def Scope "V_Plan" { token steel:preset:kind = "view"
+        string steel:preset:name = "Plan"
+        double[] steel:preset:depthMm = [1000, 500]
+        token[] steel:preset:hiddenKinds = ["grid"]
+        string[] steel:preset:overrides = ["Beams|hide"] }
+    def Scope "V_Dangling" { token steel:preset:kind = "view"
+        string steel:preset:name = "Other"
+        string[] steel:preset:overrides = ["Plates"] }
+"#,
+        );
+        let loaded = load_bytes(bytes).unwrap();
+        assert_eq!(loaded.filters.len(), 1);
+        assert_eq!(loaded.filters[0].conditions.len(), 2);
+        assert_eq!(loaded.views.len(), 1);
+        let plan = &loaded.views[0];
+        assert_eq!(plan.depth, Some([1000.0, 500.0]));
+        assert!(!plan.hidden_kinds.is_visible(ElementKind::Grid));
+        assert!(!plan.overrides[0].visible);
+        assert_eq!(loaded.rejected.len(), 3, "{:?}", loaded.rejected);
+    }
+
+    #[test]
     fn bytes_that_are_not_a_layer_are_refused() {
         assert_eq!(
             load_bytes(b"not usd".to_vec()).unwrap_err().code,
@@ -327,6 +522,8 @@ mod tests {
         for kind in [PresetKind::Beam, PresetKind::Column, PresetKind::Plate] {
             assert!(loaded.default_for(kind).is_some(), "{kind:?}");
         }
+        assert_eq!(loaded.filters.len(), 4);
+        assert_eq!(loaded.views.len(), 4);
         for profile in loaded.presets.iter().filter_map(|p| p.profile.as_deref()) {
             let lookup = crate::library::Lookup::new(environment.sources.clone());
             assert!(lookup.find(profile).is_ok(), "{profile}");

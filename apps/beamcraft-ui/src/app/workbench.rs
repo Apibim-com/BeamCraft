@@ -471,6 +471,7 @@ impl App {
             .show(ui, |ui| {
                 theme::titlebar_drag(ui);
                 ui.horizontal_centered(|ui| {
+                    theme::native_controls_inset(ui);
                     if self.logo.is_none() && !self.logo_tried {
                         self.logo_tried = true;
                         self.logo = theme::load_logo(ui.ctx(), 96);
@@ -599,17 +600,58 @@ impl App {
                         }
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui
-                            .add(
-                                egui::Button::new(
-                                    RichText::new("Find a command")
-                                        .size(11.0)
-                                        .color(palette.muted),
-                                )
-                                .frame(false),
+                        // A search field look-alike that opens the command search; the shortcut
+                        // sits at its end, as a CAD command line advertises it.
+                        let shortcut = ui.ctx().format_shortcut(&egui::KeyboardShortcut::new(
+                            egui::Modifiers::COMMAND,
+                            egui::Key::K,
+                        ));
+                        let (rect, response) =
+                            ui.allocate_exact_size(vec2(220.0, 24.0), Sense::click());
+                        let painter = ui.painter();
+                        let hovered = response.hovered();
+                        painter.rect(
+                            rect,
+                            4,
+                            if hovered {
+                                palette.select
+                            } else {
+                                palette.head
+                            },
+                            Stroke::new(1.0, palette.rule),
+                            StrokeKind::Inside,
+                        );
+                        theme::paint_icon(
+                            painter,
+                            Rect::from_center_size(
+                                rect.left_center() + vec2(14.0, 0.0),
+                                vec2(14.0, 14.0),
+                            ),
+                            Icon::Search,
+                            palette.muted,
+                        );
+                        painter.text(
+                            rect.left_center() + vec2(28.0, 0.0),
+                            egui::Align2::LEFT_CENTER,
+                            "Find a command",
+                            egui::FontId::proportional(11.0),
+                            palette.muted,
+                        );
+                        painter.text(
+                            rect.right_center() - vec2(8.0, 0.0),
+                            egui::Align2::RIGHT_CENTER,
+                            shortcut,
+                            egui::FontId::proportional(10.0),
+                            palette.muted,
+                        );
+                        response.widget_info(|| {
+                            egui::WidgetInfo::labeled(
+                                egui::Role::SearchInput,
+                                true,
+                                "Find a command",
                             )
-                            .clicked()
-                        {
+                        });
+                        if response.on_hover_cursor(egui::CursorIcon::Text).clicked() {
                             self.command_search = true;
                             self.command_focus = true;
                         }
@@ -645,17 +687,18 @@ impl App {
                         ui.separator();
                     };
                     let bench = self.bench;
-                    if matches!(self.ribbon_tab, RibbonTab::Steel | RibbonTab::Edit) {
-                    group(ui, "Select", &mut |ui| {
+                                        // Select opens the first group of the Steel and Edit tabs rather than a
+                    // group of one button.
+                    let select = |ui: &mut Ui, pick: &mut Option<Bench>| {
                         if tool_button(ui, Icon::Select, "Select", matches!(bench, Bench::Select | Bench::View), edits_free)
                             .clicked()
                         {
-                            pick = Some(Bench::Select);
+                            *pick = Some(Bench::Select);
                         }
-                    });
-                    }
+                    };
                     if self.ribbon_tab == RibbonTab::Steel {
-                    group(ui, "Members", &mut |ui| {
+                                        group(ui, "Members", &mut |ui| {
+                        select(ui, &mut pick);
                         for (b, icon, label) in [
                             (Bench::Column, Icon::Column, "Column"),
                             (Bench::Beam, Icon::Beam, "Beam"),
@@ -665,7 +708,7 @@ impl App {
                                 pick = Some(b);
                             }
                         }
-                        tool_button(ui, Icon::Beam, "Brace", false, false);
+                        tool_button(ui, Icon::Brace, "Brace", false, false);
                     });
                     group(ui, "Connect", &mut |ui| {
                         if tool_button(ui, Icon::Bolt, "Bolts", bench == Bench::Bolt, true).clicked() {
@@ -677,7 +720,8 @@ impl App {
                     });
                     }
                     if self.ribbon_tab == RibbonTab::Edit {
-                    group(ui, "Modify", &mut |ui| {
+                                        group(ui, "Modify", &mut |ui| {
+                        select(ui, &mut pick);
                         for (b, icon, label) in [
                             (Bench::Move, Icon::Move, "Move"),
                             (Bench::Copy, Icon::Copy, "Copy"),
@@ -713,24 +757,35 @@ impl App {
                         {
                             self.toggle_view_plane();
                         }
-                        ui.add_enabled_ui(has_pane, |ui| {
-                            ui.menu_button("Direction", |ui| {
-                                for (direction, label) in crate::views::Direction::ALL {
-                                    if ui.button(label).clicked() {
-                                        self.orient_view(direction);
-                                        ui.close();
-                                    }
+                                                let mut direction = None;
+                        dropdown_button(ui, Icon::ElevationView, "Direction", has_pane, |ui| {
+                            for (towards, label) in crate::views::Direction::ALL {
+                                if ui.button(label).clicked() {
+                                    direction = Some(towards);
+                                    ui.close();
                                 }
-                            });
+                            }
                         });
+                        if let Some(towards) = direction {
+                            self.orient_view(towards);
+                        }
                     });
                     group(ui, "Windows", &mut |ui| {
-                        if tool_button(ui, Icon::Copy, "New view window", false, self.views.panes.len() < crate::views::MAX_WINDOWS).clicked() {
-                            self.open_pane(self.views.active());
+                        if tool_button(ui, Icon::Beside, "Open beside", false, has_pane && self.views.panes.len() < crate::views::MAX_WINDOWS).on_hover_text("Open the active view again in a new group on the right").clicked() {
+                            self.open_beside(self.views.active());
+                        }
+                        if tool_button(ui, Icon::CloseOthers, "Close inactive", false, self.views.panes.len() > 1).on_hover_text("Close every view tab but the active one").clicked() {
+                            self.close_inactive();
+                        }
+                        if tool_button(ui, Icon::ViewFrame, "Tab views", false, has_pane).on_hover_text("Every open view as a tab of one group").clicked() {
+                            self.arrange(Arrange::Tabs);
+                        }
+                        if tool_button(ui, Icon::Arrange, "Tile views", false, self.views.panes.len() > 1).on_hover_text("Every open view side by side in a grid").clicked() {
+                            self.arrange(Arrange::Tile);
                         }
                         dropdown_button(ui, Icon::Arrange, "Arrange", has_pane, |ui| {
                             for (how, label) in [
-                                (Arrange::Cascade, "Cascade"),
+                                (Arrange::Tabs, "Tabs"),
                                 (Arrange::Tile, "Tile"),
                                 (Arrange::TileHorizontal, "Tile horizontal"),
                                 (Arrange::TileVertical, "Tile vertical"),
@@ -747,17 +802,33 @@ impl App {
                             }
                         });
                     });
-                    group(ui, "Display", &mut |ui| {
-                        for (mode, label) in [
-                            (beamcraft_engine::RenderMode::Wireframe, "Wireframe"),
-                            (beamcraft_engine::RenderMode::Transparent, "Transparent"),
-                            (beamcraft_engine::RenderMode::Grey, "Grey"),
-                            (beamcraft_engine::RenderMode::Shaded, "Shaded"),
-                            (beamcraft_engine::RenderMode::SelectedOnly, "Selected only"),
-                        ] {
-                            if tool_button(ui, Icon::Block, label, has_pane && self.active_mode() == mode, has_pane).clicked() {
-                                self.set_active_mode(mode);
+                                        group(ui, "Display", &mut |ui| {
+                        // The display modes in one dropdown, as a CAD view control shows the
+                        // visual style: its icon is the active pane's mode.
+                        let modes = [
+                            (beamcraft_engine::RenderMode::Wireframe, Icon::Wire, "Wireframe"),
+                            (beamcraft_engine::RenderMode::Transparent, Icon::Transparent, "Transparent"),
+                            (beamcraft_engine::RenderMode::Grey, Icon::GreyShaded, "Grey"),
+                            (beamcraft_engine::RenderMode::Shaded, Icon::Shaded, "Shaded"),
+                            (beamcraft_engine::RenderMode::SelectedOnly, Icon::SelectedOnly, "Selected only"),
+                        ];
+                        let active = self.active_mode();
+                        let shown = modes.iter().find(|(m, _, _)| *m == active).map_or(Icon::Shaded, |(_, icon, _)| *icon);
+                        let mut chosen = None;
+                        dropdown_button(ui, shown, "Visual style", has_pane, |ui| {
+                            for (mode, icon, label) in modes {
+                                let row = ui.horizontal(|ui| {
+                                    theme::icon(ui, icon, 16.0, Palette::current(ui).text);
+                                    ui.selectable_label(has_pane && active == mode, label)
+                                });
+                                if row.inner.clicked() {
+                                    chosen = Some(mode);
+                                    ui.close();
+                                }
                             }
+                        });
+                        if let Some(mode) = chosen {
+                            self.set_active_mode(mode);
                         }
                         if tool_button(ui, Icon::Grid, "Grid guides", self.grids_shown(), has_pane).clicked() {
                             let on = !self.grids_shown();
@@ -766,14 +837,21 @@ impl App {
                         }
                     });
                     group(ui, "Colour", &mut |ui| {
-                        if tool_button(ui, Icon::Block, "Colour", self.bench == Bench::Colour, true)
+                        if tool_button(ui, Icon::Filter, "Filters", self.views.filter_edit.is_some(), true)
+                            .on_hover_text("Make and edit the filters a view shows, colours or hides")
+                            .clicked()
+                        {
+                            let first = self.filter_choices().first().map(|f| f.name.clone());
+                            self.open_filter_editor(first);
+                        }
+                        if tool_button(ui, Icon::Palette, "Colour", self.bench == Bench::Colour, true)
                             .clicked()
                         {
                             pick = Some(Bench::Colour);
                         }
                     });
                     group(ui, "Cut", &mut |ui| {
-                        if tool_button(ui, Icon::Block, "Cut plane", self.bench == Bench::CutPlane, true).clicked() {
+                        if tool_button(ui, Icon::CutPlane, "Cut plane", self.bench == Bench::CutPlane, true).clicked() {
                             pick = Some(Bench::CutPlane);
                         }
                     });
@@ -791,7 +869,7 @@ impl App {
                     }
                     if matches!(self.ribbon_tab, RibbonTab::Steel | RibbonTab::View) {
                         group(ui, "Inspect", &mut |ui| {
-                            tool_button(ui, Icon::Plate, "Measure", false, false);
+                            tool_button(ui, Icon::Measure, "Measure", false, false);
                             if tool_button(ui, Icon::Fit, "Fit model", false, has_pane).clicked() {
                                 self.pending_fit = true;
                             }
@@ -806,10 +884,19 @@ impl App {
                                 pick = Some(Bench::Annotations);
                             }
                         });
-                        ui.vertical(|ui| {
-                            ui.label(theme::bold("Workspace", 13.0));
-                            ui.label("Publish from the header; inspect revision and navigation in Details.");
-                            if ui.button("Details").clicked() {
+                        group(ui, "Drawings", &mut |ui| {
+                            if tool_button(ui, Icon::Sheet, "Sheet editor", self.sheet_editor.open, true).clicked() {
+                                self.sheet_editor.open = true;
+                            }
+                            if tool_button(ui, Icon::Table, "Drawing document", self.drawing_manager.open, true).clicked() {
+                                self.drawing_manager.open = true;
+                            }
+                        });
+                                                group(ui, "Workspace", &mut |ui| {
+                            if tool_button(ui, Icon::Recent, "Details", self.details, true)
+                                .on_hover_text("Revision, navigation and display settings; publish from the header")
+                                .clicked()
+                            {
                                 self.details = true;
                             }
                         });
@@ -839,7 +926,7 @@ impl App {
             });
     }
 
-    /// The inspector: what the chosen tool needs, then the publishing state.
+    /// The inspector: the properties of what is selected, or what the chosen tool needs.
     pub(crate) fn inspector(&mut self, ui: &mut Ui) {
         let palette = Palette::current(ui);
         egui::Panel::right("model-inspector")
@@ -902,6 +989,22 @@ impl App {
                     self.view_panel(ui);
                     return;
                 }
+                // The tools' action bars stay pinned under their forms, like the properties'.
+                if matches!(self.bench, Bench::Bolt | Bench::Weld) {
+                    egui::Panel::bottom("tool-actions")
+                        .frame(
+                            egui::Frame::new()
+                                .fill(palette.surface)
+                                .inner_margin(egui::Margin::symmetric(0, 4)),
+                        )
+                        .show(ui, |ui| {
+                            if self.bench == Bench::Bolt {
+                                self.bolt_actions(ui);
+                            } else {
+                                self.weld_actions(ui);
+                            }
+                        });
+                }
                 if self.bench == Bench::Select && self.props.selected().is_some() {
                     egui::Panel::bottom("property-actions")
                         .exact_size(54.0)
@@ -930,33 +1033,28 @@ impl App {
                             Bench::Annotations => self.annotation_panel(ui),
                             Bench::View => self.view_panel(ui),
                         }
-                        ui.add_space(12.0);
-                        egui::CollapsingHeader::new("Publishing")
-                            .default_open(false)
-                            .show(ui, |ui| self.publish_panel(ui));
-                        egui::CollapsingHeader::new("Sheet editor")
-                            .default_open(false)
-                            .show(ui, |ui| {
-                                ui.label(
-                                    "Move the placed views of a drawing document on its sheet.",
-                                );
-                                if ui.button("Open sheet editor").clicked() {
-                                    self.sheet_editor.open = true;
-                                }
-                            });
-                        egui::CollapsingHeader::new("Drawing document")
-                            .default_open(false)
-                            .show(ui, |ui| {
-                                ui.label(
-                                    "Publish a drawing document version and export one, bound \
-                                     to its archived model source.",
-                                );
-                                if ui.button("Open drawing document").clicked() {
-                                    self.drawing_manager.open = true;
-                                }
-                            });
                     });
             });
+    }
+
+    /// What the active editor last has to tell the user (an outcome or a refusal), for the
+    /// status bar: the panel of the bench in use first, then the selection's edits.
+    pub(crate) fn status_note(&self) -> Option<Result<&str, &str>> {
+        let bench_note = match self.bench {
+            Bench::View => self.views.note.as_ref(),
+            Bench::Bolt => self.bolt.note.as_ref(),
+            Bench::Weld => self.weld.note.as_ref(),
+            Bench::Grid => self.grid_note.as_ref(),
+            Bench::Plate | Bench::Beam | Bench::Column => self.tool_note.as_ref(),
+            Bench::Annotations => self.annotation.note.as_ref(),
+            Bench::Move | Bench::Copy | Bench::Delete => self.edit_note.as_ref(),
+            Bench::Select => self.props_note.as_ref().or(self.grid_note.as_ref()),
+            Bench::CutPlane | Bench::Colour => None,
+        };
+        bench_note
+            .or(self.edit_note.as_ref())
+            .or(self.views.note.as_ref())
+            .map(|note| note.as_ref().map(String::as_str).map_err(String::as_str))
     }
 
     /// The status bar: the selection, snap switches (not available yet) and Details.
@@ -1012,6 +1110,18 @@ impl App {
                     ui.label(RichText::new(selection).size(10.0).color(palette.muted));
                     if self.select_job.is_some() {
                         ui.label(RichText::new("Looking up…").small().color(palette.muted));
+                    }
+                    // What the active editor has to tell, in one place for every panel.
+                    if let Some(note) = self.status_note() {
+                        ui.separator();
+                        match note {
+                            Ok(message) => {
+                                ui.label(RichText::new(message).size(10.0).color(palette.text));
+                            }
+                            Err(message) => {
+                                ui.label(RichText::new(message).size(10.0).color(palette.error));
+                            }
+                        }
                     }
                     if let Some(error) = &self.error {
                         ui.label(RichText::new(error).small().color(palette.error));
@@ -1099,12 +1209,13 @@ impl App {
         for label in [
             "View properties",
             "3D / plane view",
-            "New view window",
-            "Cascade view windows",
-            "Tile view windows",
-            "Tile view windows horizontally",
-            "Tile view windows vertically",
-            "Maximize or restore the view window",
+            "Open the view beside",
+            "Close inactive views",
+            "Tab views",
+            "Tile views",
+            "Tile views horizontally",
+            "Tile views vertically",
+            "Maximize or restore the view group",
             "Next open view",
         ] {
             if label.to_lowercase().contains(&query)
@@ -1115,12 +1226,13 @@ impl App {
                 match label {
                     "View properties" => self.show_view_properties(),
                     "3D / plane view" => self.toggle_view_plane(),
-                    "New view window" => self.open_pane(self.views.active()),
-                    "Cascade view windows" => self.arrange(Arrange::Cascade),
-                    "Tile view windows" => self.arrange(Arrange::Tile),
-                    "Tile view windows horizontally" => self.arrange(Arrange::TileHorizontal),
-                    "Tile view windows vertically" => self.arrange(Arrange::TileVertical),
-                    "Maximize or restore the view window" => self.arrange(Arrange::ToggleMaximize),
+                    "Open the view beside" => self.open_beside(self.views.active()),
+                    "Close inactive views" => self.close_inactive(),
+                    "Tab views" => self.arrange(Arrange::Tabs),
+                    "Tile views" => self.arrange(Arrange::Tile),
+                    "Tile views horizontally" => self.arrange(Arrange::TileHorizontal),
+                    "Tile views vertically" => self.arrange(Arrange::TileVertical),
+                    "Maximize or restore the view group" => self.arrange(Arrange::ToggleMaximize),
                     _ => {
                         if let Some(next) = self.views.next_open() {
                             self.activate_view(Some(next));

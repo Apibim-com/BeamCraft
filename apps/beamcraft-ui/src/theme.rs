@@ -292,6 +292,27 @@ pub fn icon_text_button(
     response
 }
 
+/// Whether the operating system draws the window controls. On macOS the window keeps its native
+/// frame with a transparent title bar under our own header, so the traffic lights are the
+/// system's own (with their fullscreen, zoom and window-tiling menus); elsewhere the frameless
+/// window draws its controls itself, at the right as Windows and most Linux desktops do.
+pub const NATIVE_WINDOW_CONTROLS: bool = cfg!(target_os = "macos");
+
+/// The width the system's window controls take at the left of a title bar, in points; zero
+/// where the window draws its own controls.
+pub const NATIVE_CONTROLS_INSET: f32 = if NATIVE_WINDOW_CONTROLS { 72.0 } else { 0.0 };
+
+/// Reserves the room the system's window controls take at the start of a title bar row.
+pub fn native_controls_inset(ui: &mut Ui) {
+    if NATIVE_WINDOW_CONTROLS {
+        ui.add_space(NATIVE_CONTROLS_INSET);
+    }
+}
+
+/// Whether a closable tab puts its close glyph first, as macOS tabs do, rather than last, as
+/// Windows and Linux tabs do.
+pub const TAB_CLOSE_LEADING: bool = cfg!(target_os = "macos");
+
 /// Native title-bar dragging and double-click maximization, without an extra OS title bar.
 pub fn titlebar_drag(ui: &mut Ui) {
     titlebar_drag_with_maximize(ui, true);
@@ -319,8 +340,12 @@ pub fn window_controls(ui: &mut Ui) {
     window_controls_with_maximize(ui, true);
 }
 
-/// Equal-sized window controls, omitting maximize for the fixed-size welcome window.
+/// Equal-sized window controls, omitting maximize for the fixed-size welcome window. Nothing is
+/// drawn where the operating system draws the controls ([`NATIVE_WINDOW_CONTROLS`]).
 pub fn window_controls_with_maximize(ui: &mut Ui, maximize: bool) {
+    if NATIVE_WINDOW_CONTROLS {
+        return;
+    }
     let maximized = ui.input(|input| input.viewport().maximized.unwrap_or(false));
     let size = vec2(if maximize { 40.0 } else { 28.0 }, 28.0);
     ui.scope(|ui| {
@@ -536,6 +561,36 @@ pub enum Icon {
     Arrange,
     /// A view frame with a section line: a model view.
     ViewFrame,
+    /// A horizontal slab seen from above with the cut level line: a plan view.
+    PlanView,
+    /// A vertical frame standing on a ground line: an elevation or section view.
+    ElevationView,
+    /// A tilted frame on a ground line: an inclined view.
+    InclinedView,
+    /// A funnel: filter what a list shows.
+    Filter,
+    /// A pencil: rename.
+    Rename,
+    /// A diagonal member between two points: a brace.
+    Brace,
+    /// A ruler with its ticks: measure.
+    Measure,
+    /// A box with its hidden edges dashed: the transparent display.
+    Transparent,
+    /// A box filled in one flat tone: the grey display.
+    GreyShaded,
+    /// A box with lit and shadowed faces: the shaded display.
+    Shaded,
+    /// A dashed box around one solid part: only the selection is drawn.
+    SelectedOnly,
+    /// A palette with three paint wells: colour by a colour set.
+    Palette,
+    /// A box with a plane slicing through it: the cut plane.
+    CutPlane,
+    /// Two frames side by side: open a view beside the active one.
+    Beside,
+    /// A frame with a cross and a frame behind it: close the other views.
+    CloseOthers,
     /// A page with a folded corner and text lines: a drawing sheet.
     Sheet,
     /// A table of rows and columns: a schedule.
@@ -563,7 +618,6 @@ enum Face {
     Cream,
     Teal,
     TealDark,
-    Brand,
 }
 
 /// One convex face on the 24 x 24 icon grid.
@@ -583,64 +637,6 @@ const BLOCK: &[Polygon] = &[
         Face::Cream,
     ),
 ];
-const PLATE: &[Polygon] = &[
-    (
-        &[[3.0, 12.0], [3.0, 14.5], [12.0, 19.0], [12.0, 16.5]],
-        Face::TealDark,
-    ),
-    (
-        &[[12.0, 16.5], [21.0, 12.0], [21.0, 14.5], [12.0, 19.0]],
-        Face::Teal,
-    ),
-    (
-        &[[3.0, 12.0], [12.0, 7.5], [21.0, 12.0], [12.0, 16.5]],
-        Face::Cream,
-    ),
-];
-const BEAM: &[Polygon] = &[
-    (
-        &[[7.0, 11.0], [17.0, 7.0], [17.0, 11.0], [7.0, 15.0]],
-        Face::TealDark,
-    ),
-    (
-        &[[9.0, 15.0], [19.0, 11.0], [19.0, 13.0], [9.0, 17.0]],
-        Face::Teal,
-    ),
-    (
-        &[[3.0, 9.0], [13.0, 5.0], [19.0, 5.0], [9.0, 9.0]],
-        Face::Cream,
-    ),
-    (
-        &[[9.0, 9.0], [19.0, 5.0], [19.0, 7.0], [9.0, 11.0]],
-        Face::Teal,
-    ),
-    (
-        &[[3.0, 9.0], [9.0, 9.0], [9.0, 11.0], [3.0, 11.0]],
-        Face::Cream,
-    ),
-    (
-        &[[5.0, 11.0], [7.0, 11.0], [7.0, 15.0], [5.0, 15.0]],
-        Face::Cream,
-    ),
-    (
-        &[[3.0, 15.0], [9.0, 15.0], [9.0, 17.0], [3.0, 17.0]],
-        Face::Cream,
-    ),
-];
-const COLUMN: &[Polygon] = &[
-    (
-        &[[10.5, 6.0], [13.5, 6.0], [13.5, 20.0], [10.5, 20.0]],
-        Face::TealDark,
-    ),
-    (
-        &[[6.0, 4.0], [10.5, 4.0], [10.5, 21.0], [6.0, 21.0]],
-        Face::Cream,
-    ),
-    (
-        &[[13.5, 4.0], [18.0, 4.0], [18.0, 21.0], [13.5, 21.0]],
-        Face::Teal,
-    ),
-];
 const FOLDER: &[Polygon] = &[
     (
         &[[3.0, 5.5], [9.5, 5.5], [11.5, 8.0], [3.0, 8.0]],
@@ -656,48 +652,6 @@ const FOLDER: &[Polygon] = &[
     ),
 ];
 
-const BOLT: &[Polygon] = &[
-    (
-        &[[11.0, 10.5], [13.0, 10.5], [13.0, 21.0], [11.0, 21.0]],
-        Face::Teal,
-    ),
-    (
-        &[[7.0, 6.0], [7.0, 8.5], [12.0, 11.0], [12.0, 8.5]],
-        Face::TealDark,
-    ),
-    (
-        &[[12.0, 8.5], [12.0, 11.0], [17.0, 8.5], [17.0, 6.0]],
-        Face::Teal,
-    ),
-    (
-        &[[7.0, 6.0], [12.0, 3.5], [17.0, 6.0], [12.0, 8.5]],
-        Face::Cream,
-    ),
-];
-const WELD: &[Polygon] = &[
-    (
-        &[[3.0, 16.0], [12.0, 11.5], [21.0, 16.0], [12.0, 20.5]],
-        Face::Cream,
-    ),
-    (
-        &[[8.0, 13.5], [8.0, 5.0], [16.0, 9.0], [16.0, 17.5]],
-        Face::Teal,
-    ),
-    (
-        &[[8.0, 13.5], [16.0, 17.5], [14.5, 18.5], [6.5, 14.5]],
-        Face::Brand,
-    ),
-];
-const COPY: &[Polygon] = &[
-    (
-        &[[8.0, 3.0], [20.0, 3.0], [20.0, 15.0], [8.0, 15.0]],
-        Face::Teal,
-    ),
-    (
-        &[[4.0, 9.0], [16.0, 9.0], [16.0, 21.0], [4.0, 21.0]],
-        Face::Cream,
-    ),
-];
 const DELETE: &[Polygon] = &[
     (
         &[[6.0, 8.0], [18.0, 8.0], [17.0, 21.0], [7.0, 21.0]],
@@ -723,6 +677,19 @@ pub fn paint_icon(painter: &Painter, rect: Rect, icon: Icon, line: Color32) {
                 stroke,
             ));
         }
+    };
+    // One outlined face with a tonal fill of the line colour (0 leaves it open), as the
+    // display-mode icons are drawn.
+    let shade = |points: &[[f32; 2]], tone: f32| {
+        painter.add(egui::Shape::convex_polygon(
+            points.iter().map(|p| at(*p)).collect(),
+            if tone > 0.0 {
+                stroke.color.gamma_multiply(tone)
+            } else {
+                Color32::TRANSPARENT
+            },
+            stroke,
+        ));
     };
     let polyline = |points: &[[f32; 2]]| {
         painter.add(egui::Shape::line(
@@ -771,9 +738,69 @@ pub fn paint_icon(painter: &Painter, rect: Rect, icon: Icon, line: Color32) {
             let tip = [a, b, c, d];
             painter.add(egui::Shape::closed_line(tip.map(at).to_vec(), stroke));
         }
-        Icon::Bolt => faces(BOLT),
-        Icon::Weld => faces(WELD),
-        Icon::Copy => faces(COPY),
+        Icon::Bolt => {
+            // Hexagon head over a threaded shank.
+            shade(
+                &[
+                    [8.5, 3.0],
+                    [15.5, 3.0],
+                    [17.5, 5.75],
+                    [15.5, 8.5],
+                    [8.5, 8.5],
+                    [6.5, 5.75],
+                ],
+                0.45,
+            );
+            shade(
+                &[[10.25, 8.5], [13.75, 8.5], [13.75, 20.5], [10.25, 20.5]],
+                0.15,
+            );
+            for y in [12.0, 15.0, 18.0] {
+                polyline(&[[10.25, y], [13.75, y - 1.0]]);
+            }
+        }
+        Icon::Weld => {
+            // Two plates at a right angle, the fillet bead in the corner.
+            shade(
+                &[[3.0, 15.0], [21.0, 15.0], [21.0, 19.5], [3.0, 19.5]],
+                0.15,
+            );
+            shade(
+                &[[10.0, 4.0], [14.0, 4.0], [14.0, 15.0], [10.0, 15.0]],
+                0.15,
+            );
+            shade(&[[14.0, 15.0], [14.0, 11.0], [18.0, 15.0]], 0.65);
+            shade(&[[10.0, 15.0], [10.0, 11.0], [6.0, 15.0]], 0.65);
+        }
+        Icon::Copy => {
+            shade(&[[9.0, 3.0], [20.0, 3.0], [20.0, 15.0], [9.0, 15.0]], 0.0);
+            shade(&[[4.0, 9.0], [15.0, 9.0], [15.0, 21.0], [4.0, 21.0]], 0.2);
+        }
+        Icon::Brace => {
+            // A member running diagonally between two gusset points.
+            shade(&[[3.5, 17.5], [6.5, 20.5], [20.5, 6.5], [17.5, 3.5]], 0.35);
+            painter.circle_filled(at([5.0, 19.0]), 2.0 * scale, stroke.color);
+            painter.circle_filled(at([19.0, 5.0]), 2.0 * scale, stroke.color);
+        }
+        Icon::Measure => {
+            // A ruler with ticks and the measured span over it.
+            shade(
+                &[[3.0, 11.0], [21.0, 11.0], [21.0, 17.0], [3.0, 17.0]],
+                0.15,
+            );
+            for (x, long) in [
+                (6.0, false),
+                (9.0, true),
+                (12.0, false),
+                (15.0, true),
+                (18.0, false),
+            ] {
+                polyline(&[[x, 11.0], [x, if long { 14.5 } else { 13.0 }]]);
+            }
+            polyline(&[[3.0, 6.0], [21.0, 6.0]]);
+            polyline(&[[3.0, 4.0], [3.0, 8.0]]);
+            polyline(&[[21.0, 4.0], [21.0, 8.0]]);
+        }
         Icon::Delete => {
             faces(DELETE);
             polyline(&[[9.0, 5.0], [9.0, 3.0], [15.0, 3.0], [15.0, 5.0]]);
@@ -889,6 +916,212 @@ pub fn paint_icon(painter: &Painter, rect: Rect, icon: Icon, line: Color32) {
             polyline(&[[3.0, 8.0], [21.0, 8.0]]);
             polyline(&[[7.0, 17.0], [17.0, 11.0]]);
         }
+        Icon::PlanView => {
+            // A slab in plan: a parallelogram seen from above, with the cut level across it.
+            polyline(&[
+                [3.0, 15.0],
+                [9.0, 9.0],
+                [21.0, 9.0],
+                [15.0, 15.0],
+                [3.0, 15.0],
+            ]);
+            polyline(&[[6.0, 19.0], [18.0, 19.0]]);
+            polyline(&[[12.0, 3.0], [12.0, 7.0]]);
+            polyline(&[[10.0, 5.0], [12.0, 7.0], [14.0, 5.0]]);
+        }
+        Icon::ElevationView => {
+            // A frame standing upright on a ground line, looked at from the side.
+            polyline(&[[6.0, 19.0], [6.0, 5.0], [18.0, 5.0], [18.0, 19.0]]);
+            polyline(&[[3.0, 19.0], [21.0, 19.0]]);
+            polyline(&[[6.0, 12.0], [18.0, 12.0]]);
+        }
+        Icon::Transparent => {
+            painter.add(egui::Shape::closed_line(
+                [
+                    [12.0, 3.0],
+                    [20.0, 7.5],
+                    [20.0, 16.5],
+                    [12.0, 21.0],
+                    [4.0, 16.5],
+                    [4.0, 7.5],
+                ]
+                .map(at)
+                .to_vec(),
+                stroke,
+            ));
+            polyline(&[[4.0, 7.5], [12.0, 12.0], [20.0, 7.5]]);
+            polyline(&[[12.0, 12.0], [12.0, 21.0]]);
+            // The hidden edges, seen through the faces.
+            painter.extend(egui::Shape::dashed_line(
+                &[at([4.0, 16.5]), at([12.0, 12.5]), at([20.0, 16.5])],
+                Stroke::new(stroke.width * 0.8, stroke.color),
+                2.0 * scale,
+                2.0 * scale,
+            ));
+            painter.extend(egui::Shape::dashed_line(
+                &[at([12.0, 3.0]), at([12.0, 12.5])],
+                Stroke::new(stroke.width * 0.8, stroke.color),
+                2.0 * scale,
+                2.0 * scale,
+            ));
+        }
+        Icon::GreyShaded => {
+            painter.add(egui::Shape::convex_polygon(
+                [
+                    [12.0, 3.0],
+                    [20.0, 7.5],
+                    [20.0, 16.5],
+                    [12.0, 21.0],
+                    [4.0, 16.5],
+                    [4.0, 7.5],
+                ]
+                .map(at)
+                .to_vec(),
+                stroke.color.gamma_multiply(0.3),
+                stroke,
+            ));
+            polyline(&[[4.0, 7.5], [12.0, 12.0], [20.0, 7.5]]);
+            polyline(&[[12.0, 12.0], [12.0, 21.0]]);
+        }
+        Icon::Shaded => {
+            let face = |points: &[[f32; 2]], tone: f32| {
+                painter.add(egui::Shape::convex_polygon(
+                    points.iter().map(|p| at(*p)).collect(),
+                    stroke.color.gamma_multiply(tone),
+                    stroke,
+                ));
+            };
+            face(&[[12.0, 3.0], [20.0, 7.5], [12.0, 12.0], [4.0, 7.5]], 0.15);
+            face(&[[4.0, 7.5], [12.0, 12.0], [12.0, 21.0], [4.0, 16.5]], 0.55);
+            face(
+                &[[12.0, 12.0], [20.0, 7.5], [20.0, 16.5], [12.0, 21.0]],
+                0.35,
+            );
+        }
+        Icon::SelectedOnly => {
+            painter.extend(egui::Shape::dashed_line(
+                &[
+                    [12.0, 3.0],
+                    [20.0, 7.5],
+                    [20.0, 16.5],
+                    [12.0, 21.0],
+                    [4.0, 16.5],
+                    [4.0, 7.5],
+                ]
+                .map(at)
+                .into_iter()
+                .chain([at([12.0, 3.0])])
+                .collect::<Vec<_>>(),
+                Stroke::new(stroke.width * 0.8, stroke.color),
+                2.0 * scale,
+                2.0 * scale,
+            ));
+            painter.add(egui::Shape::convex_polygon(
+                [
+                    [12.0, 8.5],
+                    [16.0, 10.75],
+                    [16.0, 15.25],
+                    [12.0, 17.5],
+                    [8.0, 15.25],
+                    [8.0, 10.75],
+                ]
+                .map(at)
+                .to_vec(),
+                stroke.color.gamma_multiply(0.6),
+                stroke,
+            ));
+        }
+        Icon::Palette => {
+            painter.add(egui::Shape::closed_line(
+                [
+                    [12.0, 3.5],
+                    [19.0, 6.5],
+                    [21.0, 12.5],
+                    [17.5, 18.5],
+                    [13.5, 17.0],
+                    [12.0, 20.5],
+                    [6.0, 19.0],
+                    [3.0, 12.5],
+                    [5.5, 6.5],
+                ]
+                .map(at)
+                .to_vec(),
+                stroke,
+            ));
+            for well in [[8.5, 10.0], [12.5, 7.5], [16.5, 10.5]] {
+                painter.circle_filled(at(well), 1.6 * scale, stroke.color);
+            }
+        }
+        Icon::CutPlane => {
+            painter.add(egui::Shape::closed_line(
+                [
+                    [12.0, 3.0],
+                    [20.0, 7.5],
+                    [20.0, 16.5],
+                    [12.0, 21.0],
+                    [4.0, 16.5],
+                    [4.0, 7.5],
+                ]
+                .map(at)
+                .to_vec(),
+                stroke,
+            ));
+            polyline(&[[4.0, 7.5], [12.0, 12.0], [20.0, 7.5]]);
+            polyline(&[[12.0, 12.0], [12.0, 21.0]]);
+            // The cutting plane, drawn across the box and past it.
+            painter.add(egui::Shape::convex_polygon(
+                [[1.5, 11.0], [12.0, 5.0], [22.5, 11.0], [12.0, 17.0]]
+                    .map(at)
+                    .to_vec(),
+                stroke.color.gamma_multiply(0.25),
+                Stroke::new(stroke.width, stroke.color),
+            ));
+        }
+        Icon::Beside => {
+            for (x0, x1) in [(3.0, 11.0), (13.0, 21.0)] {
+                polyline(&[[x0, 5.0], [x1, 5.0], [x1, 19.0], [x0, 19.0], [x0, 5.0]]);
+                polyline(&[[x0, 8.0], [x1, 8.0]]);
+            }
+        }
+        Icon::CloseOthers => {
+            polyline(&[[8.0, 3.0], [21.0, 3.0], [21.0, 15.0]]);
+            polyline(&[
+                [3.0, 7.0],
+                [17.0, 7.0],
+                [17.0, 21.0],
+                [3.0, 21.0],
+                [3.0, 7.0],
+            ]);
+            polyline(&[[7.0, 11.0], [13.0, 17.0]]);
+            polyline(&[[13.0, 11.0], [7.0, 17.0]]);
+        }
+        Icon::Rename => {
+            polyline(&[
+                [5.0, 19.0],
+                [5.5, 15.0],
+                [16.0, 4.5],
+                [19.5, 8.0],
+                [9.0, 18.5],
+                [5.0, 19.0],
+            ]);
+            polyline(&[[14.0, 6.5], [17.5, 10.0]]);
+        }
+        Icon::Filter => {
+            polyline(&[
+                [4.0, 5.0],
+                [20.0, 5.0],
+                [14.0, 12.5],
+                [14.0, 19.0],
+                [10.0, 17.0],
+                [10.0, 12.5],
+                [4.0, 5.0],
+            ]);
+        }
+        Icon::InclinedView => {
+            // A frame tilted off the vertical, standing on a ground line.
+            polyline(&[[5.0, 19.0], [10.0, 5.0], [20.0, 5.0], [15.0, 19.0]]);
+            polyline(&[[3.0, 19.0], [21.0, 19.0]]);
+        }
         Icon::Sheet => {
             polyline(&[
                 [5.0, 3.0],
@@ -984,9 +1217,32 @@ pub fn paint_icon(painter: &Painter, rect: Rect, icon: Icon, line: Color32) {
         }
         Icon::Check => polyline(&[[5.0, 12.5], [10.0, 17.5], [19.0, 7.0]]),
         Icon::Block => faces(BLOCK),
-        Icon::Plate => faces(PLATE),
-        Icon::Beam => faces(BEAM),
-        Icon::Column => faces(COLUMN),
+        Icon::Plate => {
+            shade(
+                &[[3.0, 12.0], [12.0, 7.5], [21.0, 12.0], [12.0, 16.5]],
+                0.15,
+            );
+            shade(&[[3.0, 12.0], [12.0, 16.5], [12.0, 19.0], [3.0, 14.5]], 0.6);
+            shade(
+                &[[12.0, 16.5], [21.0, 12.0], [21.0, 14.5], [12.0, 19.0]],
+                0.35,
+            );
+        }
+        Icon::Beam => {
+            // A horizontal member in isometric: lit top, mid front, dark end.
+            shade(&[[3.0, 10.0], [15.0, 4.0], [21.0, 7.0], [9.0, 13.0]], 0.15);
+            shade(&[[3.0, 10.0], [9.0, 13.0], [9.0, 17.0], [3.0, 14.0]], 0.6);
+            shade(&[[9.0, 13.0], [21.0, 7.0], [21.0, 11.0], [9.0, 17.0]], 0.35);
+        }
+        Icon::Column => {
+            // An upright member in isometric.
+            shade(&[[12.0, 2.5], [16.5, 4.75], [12.0, 7.0], [7.5, 4.75]], 0.15);
+            shade(&[[7.5, 4.75], [12.0, 7.0], [12.0, 21.5], [7.5, 19.25]], 0.6);
+            shade(
+                &[[12.0, 7.0], [16.5, 4.75], [16.5, 19.25], [12.0, 21.5]],
+                0.35,
+            );
+        }
         Icon::Folder => faces(FOLDER),
         Icon::Recent => {
             painter.circle(at([12.0, 12.0]), 9.0 * scale, Color32::TRANSPARENT, stroke);
@@ -1148,6 +1404,7 @@ mod tests {
 
     use super::*;
 
+    #[cfg(not(target_os = "macos"))]
     fn controls_frame(
         ctx: &egui::Context,
         maximize: bool,
@@ -1171,6 +1428,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(target_os = "macos"))]
     fn window_controls_have_equal_hit_areas_and_send_native_commands() {
         for theme in [Theme::Light, Theme::Dark] {
             for maximize in [false, true] {
@@ -1354,7 +1612,7 @@ mod tests {
 
     #[test]
     fn icon_faces_are_convex() {
-        for polygons in [BLOCK, PLATE, BEAM, COLUMN, FOLDER, BOLT, WELD, COPY, DELETE] {
+        for polygons in [BLOCK, FOLDER, DELETE] {
             for (points, _) in polygons {
                 let n = points.len();
                 let mut sign = 0.0f32;

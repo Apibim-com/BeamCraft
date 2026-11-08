@@ -6,7 +6,12 @@
 //! admission rule lives in `beamcraft_engine::views`. Temporary views are session state and are
 //! never written.
 
-use beamcraft_engine::views::{ModelView, Projection, ViewBook, ViewProvenance, WorkArea};
+use beamcraft_engine::filter::Operator;
+use beamcraft_engine::view_filter::{MAX_CONDITIONS, MAX_FILTERS, MAX_OVERRIDES};
+use beamcraft_engine::views::{
+    FilterCondition, FilterField, FilterMatch, FilterOverride, ModelView, Projection, ViewBook,
+    ViewFilter, ViewProvenance, WorkArea,
+};
 use beamcraft_engine::work_plane::WorkPlane;
 use beamcraft_engine::{ElementKind, KindFilter, RenderMode, Representation};
 use beamcraft_json::Json;
@@ -14,7 +19,9 @@ use beamcraft_model::command::CommandError;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::Uuid7;
 
-/// The format version this module writes.
+/// The format version this module writes. Version 2 added the W01 provenance stamp; the view
+/// filters and the views' filter overrides are optional keys of version 2, so files written
+/// before them still read.
 pub const VERSION: u64 = 2;
 /// Version 1 predates the W01 provenance stamp; its files still read, without provenance.
 const READ_VERSIONS: [u64; 2] = [1, VERSION];
@@ -173,6 +180,7 @@ pub fn view_to_json(view: &ModelView) -> Result<Json, CommandError> {
             },
         ),
         ("opacity", number(view.opacity, "views.opacity")?),
+        ("overrides", overrides_to_json(&view.overrides)?),
         ("representation", Json::text(view.representation.as_token())),
         (
             "colour_set",
@@ -189,6 +197,197 @@ pub fn view_to_json(view: &ModelView) -> Result<Json, CommandError> {
             },
         ),
     ]))
+}
+
+fn color_to_json(color: Option<[f64; 3]>, field: &'static str) -> Result<Json, CommandError> {
+    match color {
+        Some(color) => array(&color, field),
+        None => Ok(Json::Null),
+    }
+}
+
+/// A view's or preset's filter overrides as JSON, in order.
+pub fn overrides_to_json(overrides: &[FilterOverride]) -> Result<Json, CommandError> {
+    Ok(Json::Array(
+        overrides
+            .iter()
+            .map(|o| {
+                Ok(Json::object([
+                    ("filter", Json::text(&o.filter)),
+                    ("visible", Json::Bool(o.visible)),
+                    ("color", color_to_json(o.color, "views.override.color")?),
+                    (
+                        "transparency",
+                        number(o.transparency, "views.override.transparency")?,
+                    ),
+                ]))
+            })
+            .collect::<Result<_, CommandError>>()?,
+    ))
+}
+
+/// Reads a view's or preset's overrides; files written before them have none.
+pub fn overrides_from_json(json: &Json) -> Result<Vec<FilterOverride>, CommandError> {
+    let Some(list) = optional(json, "overrides") else {
+        return Ok(Vec::new());
+    };
+    let list = list.array().map_err(|_| unread("overrides"))?;
+    if list.len() > MAX_OVERRIDES {
+        return Err(CommandError::new(
+            ErrorCode::LimitExceeded,
+            "views.overrides",
+            "a view has at most 16 filter overrides",
+        ));
+    }
+    list.iter()
+        .map(|o| {
+            Ok(FilterOverride {
+                filter: o
+                    .get("filter")
+                    .and_then(Json::string)
+                    .map_err(|_| unread("overrides.filter"))?
+                    .to_owned(),
+                visible: o
+                    .get("visible")
+                    .and_then(Json::boolean)
+                    .map_err(|_| unread("overrides.visible"))?,
+                color: match optional(o, "color") {
+                    Some(_) => Some(numbers(o, "color")?),
+                    None => None,
+                },
+                transparency: o
+                    .get("transparency")
+                    .and_then(Json::float)
+                    .map_err(|_| unread("overrides.transparency"))?,
+            })
+        })
+        .collect()
+}
+
+/// One filter as JSON: its name, how its conditions combine and the rows.
+pub fn filter_to_json(filter: &ViewFilter) -> Json {
+    Json::object([
+        ("name", Json::text(&filter.name)),
+        ("match", Json::text(filter.matching.token())),
+        (
+            "conditions",
+            Json::Array(
+                filter
+                    .conditions
+                    .iter()
+                    .map(|c| {
+                        Json::object([
+                            ("field", Json::text(c.field.token())),
+                            ("op", Json::text(c.op.token())),
+                            ("value", Json::text(&c.value)),
+                        ])
+                    })
+                    .collect(),
+            ),
+        ),
+    ])
+}
+
+/// Reads one filter written by [`filter_to_json`].
+pub fn filter_from_json(json: &Json) -> Result<ViewFilter, CommandError> {
+    let text = |j: &Json, key: &'static str| {
+        j.get(key)
+            .and_then(Json::string)
+            .map(str::to_owned)
+            .map_err(|_| unread(key))
+    };
+    let rows = json
+        .get("conditions")
+        .and_then(Json::array)
+        .map_err(|_| unread("conditions"))?;
+    if rows.len() > MAX_CONDITIONS {
+        return Err(CommandError::new(
+            ErrorCode::LimitExceeded,
+            "views.filter.conditions",
+            "a filter has at most 16 conditions",
+        ));
+    }
+    let conditions = rows
+        .iter()
+        .map(|row| {
+            let op = text(row, "op")?;
+            Ok(FilterCondition::new(
+                FilterField::parse(&text(row, "field")?)?,
+                Operator::parse(&op).ok_or_else(|| unread("op"))?,
+                &text(row, "value")?,
+            ))
+        })
+        .collect::<Result<Vec<_>, CommandError>>()?;
+    let filter = ViewFilter {
+        name: text(json, "name")?,
+        matching: FilterMatch::parse(&text(json, "match")?)?,
+        conditions,
+    };
+    filter.validate()?;
+    Ok(filter)
+}
+
+/// the evaluator refuses one that does not fit the attribute's definition.
+pub fn filter_rule(filter: &ViewFilter) -> Json {
+    let comparisons = filter
+        .conditions
+        .iter()
+        .map(|c| {
+            let value = match &c.field {
+                FilterField::Class => c
+                    .value
+                    .parse::<i32>()
+                    .map_or_else(|_| Json::text(&c.value), |v| Json::Number(v.to_string())),
+                FilterField::Attribute(_) => attribute_literal(&c.value),
+                FilterField::Type | FilterField::Name => Json::text(&c.value),
+            };
+            let mut pairs = vec![
+                (
+                    "field",
+                    Json::text(match c.field {
+                        FilterField::Type => "type",
+                        FilterField::Name => "name",
+                        FilterField::Class => "class",
+                        FilterField::Attribute(_) => "attribute",
+                    }),
+                ),
+                ("op", Json::text(c.op.token())),
+                ("value", value),
+            ];
+            if let FilterField::Attribute(name) = &c.field {
+                pairs.push(("attribute", Json::text(name)));
+            }
+            Json::Object(pairs.into_iter().map(|(k, v)| (k.to_owned(), v)).collect())
+        })
+        .collect();
+    Json::object([(filter.matching.token(), Json::Array(comparisons))])
+}
+
+fn attribute_literal(value: &str) -> Json {
+    match value {
+        "true" => return Json::Bool(true),
+        "false" => return Json::Bool(false),
+        _ => {}
+    }
+    let plain = |text: &str| {
+        text.parse::<f64>()
+            .ok()
+            .filter(|v| v.is_finite())
+            .and_then(|v| Json::number(v).ok())
+    };
+    if let Some(number) = plain(value) {
+        return number;
+    }
+    if let Some((amount, unit)) = value.rsplit_once(' ')
+        && !unit.is_empty()
+        && unit
+            .chars()
+            .all(|c| c.is_alphabetic() || c == '/' || c == '²')
+        && let Some(number) = plain(amount.trim())
+    {
+        return Json::object([("value", number), ("unit", Json::text(unit))]);
+    }
+    Json::text(value)
 }
 
 /// Reads one view; every key is required, `depth_mm`, `work_area` and `color` may be null.
@@ -239,6 +438,7 @@ pub fn view_from_json(json: &Json) -> Result<ModelView, CommandError> {
         .get("opacity")
         .and_then(Json::float)
         .map_err(|_| unread("opacity"))?;
+    view.overrides = overrides_from_json(json)?;
     // The representation and the colour set postdate the provenance stamp, so files written
     // earlier read with the display defaults; a present key of another type still refuses.
     view.representation = match optional(json, "representation") {
@@ -273,6 +473,10 @@ pub fn book_to_json(book: &ViewBook) -> Result<Json, CommandError> {
             Json::Array(book.folders().map(Json::text).collect()),
         ),
         ("views", Json::Array(views)),
+        (
+            "filters",
+            Json::Array(book.filters().iter().map(filter_to_json).collect()),
+        ),
     ]))
 }
 
@@ -292,8 +496,14 @@ pub fn book_from_json(json: &Json) -> Result<ViewBook, CommandError> {
     }
     let list = |key: &'static str| json.get(key).and_then(Json::array).map_err(|_| unread(key));
     let (views, folders) = (list("views")?, list("folders")?);
+    // The filters postdate the provenance stamp: an absent list is none.
+    let filters: &[Json] = match optional(json, "filters") {
+        Some(_) => list("filters")?,
+        None => &[],
+    };
     if views.len() > beamcraft_engine::views::MAX_VIEWS
         || folders.len() > beamcraft_engine::views::MAX_FOLDERS
+        || filters.len() > MAX_FILTERS
     {
         return Err(CommandError::new(
             ErrorCode::LimitExceeded,
@@ -309,7 +519,11 @@ pub fn book_from_json(json: &Json) -> Result<ViewBook, CommandError> {
         .iter()
         .map(view_from_json)
         .collect::<Result<Vec<_>, _>>()?;
-    ViewBook::from_parts(views, folders)
+    let filters = filters
+        .iter()
+        .map(filter_from_json)
+        .collect::<Result<Vec<_>, _>>()?;
+    ViewBook::from_all(views, folders, filters)
 }
 
 #[cfg(test)]
@@ -361,6 +575,69 @@ mod tests {
             back.folders().collect::<Vec<_>>(),
             ["Empty", "Sections", "Sections/Main"]
         );
+    }
+
+    fn beams() -> ViewFilter {
+        let mut filter = ViewFilter::new(
+            "Beams",
+            vec![
+                FilterCondition::new(FilterField::Type, Operator::Eq, "beam"),
+                FilterCondition::new(FilterField::Class, Operator::Ge, "2"),
+                FilterCondition::new(
+                    FilterField::Attribute("Length".into()),
+                    Operator::Gt,
+                    "250 mm",
+                ),
+            ],
+        );
+        filter.matching = FilterMatch::Any;
+        filter
+    }
+
+    #[test]
+    fn filters_and_overrides_round_trip() {
+        let mut book = ViewBook::new();
+        book.save_filter(beams(), None).unwrap();
+        let mut plan = view(1, "Plan");
+        plan.overrides.push(FilterOverride {
+            filter: "Beams".into(),
+            visible: false,
+            color: Some([1.0, 0.5, 0.0]),
+            transparency: 0.25,
+        });
+        book.insert(plan.clone()).unwrap();
+        let back = book_from_json(&book_to_json(&book).unwrap()).unwrap();
+        assert_eq!(back, book);
+    }
+
+    #[test]
+    fn a_version_one_file_reads_without_filters() {
+        let mut v1 = view_to_json(&view(1, "A")).unwrap();
+        if let Json::Object(map) = &mut v1 {
+            map.remove("overrides");
+        }
+        let file = Json::object([
+            ("version", Json::uint(1)),
+            ("folders", Json::Array(vec![])),
+            ("views", Json::Array(vec![v1])),
+        ]);
+        let book = book_from_json(&file).unwrap();
+        assert_eq!(book.len(), 1);
+        assert!(book.filters().is_empty());
+    }
+
+    #[test]
+    fn a_filter_becomes_the_v14_rule() {
+        let rule = filter_rule(&beams());
+        let encoded =
+            String::from_utf8(rule.encode(&beamcraft_json::Limits::DEFAULT).unwrap()).unwrap();
+        assert_eq!(
+            encoded,
+            r#"{"any":[{"field":"type","op":"eq","value":"beam"},{"field":"class","op":"ge","value":2},{"attribute":"Length","field":"attribute","op":"gt","value":{"unit":"mm","value":250}}]}"#
+        );
+        assert_eq!(attribute_literal("true"), Json::Bool(true));
+        assert_eq!(attribute_literal("S355"), Json::text("S355"));
+        assert_eq!(attribute_literal("Shop 2"), Json::text("Shop 2"));
     }
 
     #[test]

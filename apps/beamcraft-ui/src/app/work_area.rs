@@ -11,9 +11,10 @@ use super::{
     viewport_sense, workbench,
 };
 use crate::edit::{ndc_of, ray_through};
-use crate::panes::{self, Edge};
+use crate::panes;
 use crate::theme;
 use beamcraft_engine::RenderMode;
+use beamcraft_model::id::Uuid7;
 use egui::{CornerRadius, Stroke, StrokeKind, pos2, vec2};
 use std::time::Instant;
 
@@ -30,58 +31,44 @@ pub(super) struct PaneDraw {
 /// How the Arrange commands lay the panes out.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum Arrange {
-    /// Cascade from the top-left corner.
-    Cascade,
-    /// A square-ish grid: four panes make 2 x 2.
+    /// Every view as a tab of one group, the active one shown.
+    Tabs,
+    /// One group per view in a square-ish grid: four make 2 x 2.
     Tile,
-    /// Strips stacked top to bottom.
+    /// One group per view, stacked top to bottom.
     TileHorizontal,
-    /// Columns side by side.
+    /// One group per view, side by side.
     TileVertical,
-    /// Maximize the active pane, or restore it.
+    /// Maximize the active group over the work area, or restore the layout.
     ToggleMaximize,
 }
 
-/// Maximizes `pane` over `area`, or restores the rect it had before.
-fn toggle_maximized(pane: &mut panes::ViewPane, area: egui::Rect) {
-    if pane.maximized {
-        pane.maximized = false;
-        let back = pane
-            .restore
-            .take()
-            .unwrap_or_else(|| panes::opening_rect(area, 0));
-        pane.rect = panes::clamp_into(area, back);
-    } else {
-        pane.restore = Some(pane.rect);
-        pane.maximized = true;
-        pane.rect = panes::maximized(area);
-    }
-}
+/// A view tab being dragged: the key of its pane.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) struct TabDrag(pub u64);
 
-/// Gives `pane` its arranged rect, out of the maximized state.
-fn place(pane: &mut panes::ViewPane, rect: egui::Rect) {
-    pane.rect = rect;
-    pane.placed = true;
-    pane.maximized = false;
-    pane.restore = None;
-}
-
-/// What one pane's window asked for this frame, applied after every pane is drawn.
-pub(super) struct PaneOutcome {
-    /// The pane.
-    key: u64,
-    /// Its drawn image, when the camera made a view.
+/// What one tab group asked for this frame, applied after every group is drawn.
+pub(super) struct GroupOutcome {
+    /// The image of the tab it shows, when the camera made a view.
     draw: Option<PaneDraw>,
-    /// The close button was clicked.
-    close: bool,
-    /// The maximize button was clicked or the title double-clicked.
+    /// A tab whose close glyph was clicked (or middle-clicked).
+    close: Option<u64>,
+    /// A tab that was clicked or whose body was pressed: it becomes the active pane.
+    focus: Option<u64>,
+    /// A tab was double-clicked: maximize or restore the group.
     toggle_max: bool,
-    /// How far the title bar was dragged.
-    moved: egui::Vec2,
-    /// The resize handle dragged and how far.
-    resized: Option<(Edge, egui::Vec2)>,
-    /// The title bar was clicked.
-    title_clicked: bool,
+    /// The tab of the active pane was clicked.
+    title_clicked: Option<u64>,
+}
+
+/// Width of one tab for `title`, between 96 and 200 points.
+fn tab_width(ui: &egui::Ui, title: &str) -> f32 {
+    let galley = ui.painter().layout_no_wrap(
+        title.to_owned(),
+        egui::FontId::proportional(12.0),
+        egui::Color32::WHITE,
+    );
+    (galley.size().x + 44.0).clamp(96.0, 200.0)
 }
 
 impl App {
@@ -150,70 +137,93 @@ impl App {
             && self.grid_line.click.is_none()
     }
 
-    /// Lays the panes out over `views.area`; a no-op while it is `None` (no work-area frame yet)
-    /// or no pane is open. ToggleMaximize acts on the active pane. Cascade keeps the z-order
-    /// bottom first, so the active pane ends up front-most; the tiles go to the active pane
-    /// first, then down the z-order. The z-order itself never changes, and every layout but
-    /// ToggleMaximize leaves no pane maximized.
+    /// The tab order the arrangements start from: the active pane first, then the groups' tabs
+    /// in layout order, then any pane the layout has not seen yet.
+    fn arrange_order(&self) -> Vec<u64> {
+        let dock = &self.views.dock;
+        let mut order: Vec<u64> = self
+            .views
+            .active_pane()
+            .map(|p| p.key)
+            .into_iter()
+            .collect();
+        for id in dock.order() {
+            if let Some(group) = dock.group(id) {
+                order.extend(
+                    group
+                        .tabs
+                        .iter()
+                        .filter(|k| !order.contains(k))
+                        .copied()
+                        .collect::<Vec<_>>(),
+                );
+            }
+        }
+        for pane in &self.views.panes {
+            if !order.contains(&pane.key) {
+                order.push(pane.key);
+            }
+        }
+        order.retain(|k| self.views.panes.iter().any(|p| p.key == *k));
+        order
+    }
+
+    /// Lays the panes out: every view as tabs of one group, one group per view in a grid, in
+    /// strips or in columns (the active view first), or the active group maximized and back.
+    /// The rects follow at once when the work area has been laid out before.
     pub(super) fn arrange(&mut self, how: Arrange) {
-        let Some(area) = self.views.area else {
-            return;
-        };
-        let count = self.views.panes.len();
-        let rects = match how {
+        let order = self.arrange_order();
+        let active = self.views.active_pane().map(|p| p.key);
+        let dock = &mut self.views.dock;
+        match how {
+            Arrange::Tabs => dock.arrange_tabs(&order, active),
+            Arrange::Tile => dock.arrange_tiles(&order, None, active),
+            Arrange::TileHorizontal => dock.arrange_tiles(&order, Some(false), active),
+            Arrange::TileVertical => dock.arrange_tiles(&order, Some(true), active),
             Arrange::ToggleMaximize => {
-                if let Some(pane) = self.views.active_pane_mut() {
-                    toggle_maximized(pane, area);
-                    pane.placed = true;
-                }
-                return;
+                dock.sync(&order, active);
+                dock.toggle_maximize();
             }
-            Arrange::Cascade => {
-                let rects = panes::cascade(area, count);
-                for (pane, rect) in self.views.panes.iter_mut().zip(rects) {
-                    place(pane, rect);
-                }
-                return;
-            }
-            Arrange::Tile => panes::tile_grid(area, count),
-            Arrange::TileHorizontal => panes::tile_horizontal(area, count),
-            Arrange::TileVertical => panes::tile_vertical(area, count),
-        };
-        for (pane, rect) in self.views.panes.iter_mut().rev().zip(rects) {
-            place(pane, rect);
+        }
+        if let Some(area) = self.views.area {
+            self.apply_layout(area);
         }
     }
 
-    /// The MDI work area: the panes bottom to top, each in its own child Ui (so egui hit-tests
-    /// them in z-order), then focus, window changes and the active pane's input. With no pane
-    /// open it offers to open the free 3D view.
+    /// Follows the panes in the tab layout and gives every pane the rect of its group: the tab
+    /// its group shows is `shown`, the others wait behind it.
+    pub(super) fn apply_layout(&mut self, area: egui::Rect) {
+        let keys: Vec<u64> = self.views.panes.iter().map(|p| p.key).collect();
+        let active = self.views.active_pane().map(|p| p.key);
+        self.views.dock.sync(&keys, active);
+        let layout = self.views.dock.layout(area);
+        let maximized = self.views.dock.maximized();
+        for pane in &mut self.views.panes {
+            let group = self.views.dock.group_of(pane.key);
+            let rect = group.and_then(|g| layout.iter().find(|(id, _)| *id == g).map(|(_, r)| *r));
+            pane.shown = rect.is_some() && self.views.dock.is_shown(pane.key);
+            pane.rect = rect.unwrap_or(area);
+            pane.placed = true;
+            pane.maximized = maximized.is_some() && maximized == group;
+        }
+    }
+
+    /// The tabbed work area: the dividers, then each tab group with its strip and the image of
+    /// the tab it shows, then focus, tab changes, drops and the active pane's input. With no
+    /// pane open it offers to open the default view.
     pub(super) fn work_area(&mut self, ui: &mut egui::Ui, zoom_in: bool, zoom_out: bool) {
         let area = ui.available_rect_before_wrap();
         self.views.area = Some(area);
         // Clicks between panes land here and do nothing.
         let _background = ui.interact(area, egui::Id::unique("work-area"), egui::Sense::click());
         if self.views.panes.is_empty() {
+            self.views.dock.sync(&[], None);
             self.empty_work_area(ui, area);
+            self.work_area_drops(ui, area);
             return;
         }
-        // Panes opened before any work-area frame (the window's first pane, tests) are placed
-        // now: the first one maximized, the others cascaded. Then every pane is kept inside.
-        for (index, pane) in self.views.panes.iter_mut().enumerate() {
-            if !pane.placed {
-                pane.rect = if index == 0 {
-                    area
-                } else {
-                    panes::opening_rect(area, index)
-                };
-                pane.maximized = index == 0;
-                pane.placed = true;
-            }
-            pane.rect = if pane.maximized {
-                area
-            } else {
-                panes::clamp_into(area, pane.rect)
-            };
-        }
+        self.apply_layout(area);
+        self.views.tabs_drawn.clear();
         let active = self.views.active_pane().map(|p| p.key);
         // A press counts only on the central panel's own layer: a press on a ribbon popup, an
         // inspector combo, Details, the publish dialog, the sheet editor or the command search
@@ -228,44 +238,62 @@ impl App {
             })
             .filter(|pos| ui.ctx().layer_id_at(*pos) == Some(layer))
             .and_then(|pos| panes::topmost_at(&self.views.panes, pos));
-        // Panes under the topmost maximized one are covered: they are not drawn this frame.
-        let covered = self
-            .views
-            .panes
-            .iter()
-            .rposition(|p| p.maximized)
-            .unwrap_or(0);
-        let order: Vec<u64> = self
-            .views
-            .panes
-            .iter()
-            .skip(covered)
-            .map(|p| p.key)
-            .collect();
+        // The dividers between groups resize them.
+        for divider in self.views.dock.dividers(area) {
+            let response = ui.interact(
+                divider.handle,
+                egui::Id::unique(("dock-divider", divider.path.clone())),
+                egui::Sense::drag(),
+            );
+            if response.hovered() || response.dragged() {
+                ui.ctx().set_cursor_icon(if divider.across {
+                    egui::CursorIcon::ResizeHorizontal
+                } else {
+                    egui::CursorIcon::ResizeVertical
+                });
+            }
+            if response.dragged_by(egui::PointerButton::Primary)
+                && let Some(pos) = response.interact_pointer_pos()
+            {
+                self.views
+                    .dock
+                    .drag_divider(&divider.path, divider.room, divider.across, pos);
+            }
+        }
         let mut outcomes = Vec::new();
-        for key in order {
-            let is_active = Some(key) == active;
-            let keys = is_active.then_some((zoom_in, zoom_out));
-            if let Some(outcome) = self.pane_window(ui, area, key, is_active, keys) {
+        for (group, rect) in self.views.dock.layout(area) {
+            if let Some(outcome) =
+                self.group_window(ui, area, group, rect, active, (zoom_in, zoom_out))
+            {
                 outcomes.push(outcome);
             }
         }
-        // 1. Window changes, by key.
+        // 1. Tab changes.
         let mut draws = Vec::new();
         let mut title_clicked = None;
+        let mut toggle_max = false;
+        let mut focus = None;
         for outcome in outcomes {
-            if outcome.close {
-                self.close_pane(outcome.key);
-                continue;
+            if let Some(key) = outcome.close {
+                self.close_pane(key);
             }
-            self.change_window(area, &outcome);
-            if outcome.title_clicked {
-                title_clicked = Some(outcome.key);
-            }
+            toggle_max |= outcome.toggle_max;
+            focus = focus.or(outcome.focus);
+            title_clicked = title_clicked.or(outcome.title_clicked);
             if let Some(draw) = outcome.draw {
                 draws.push(draw);
             }
         }
+        if let Some(key) = focus
+            && self.views.panes.iter().any(|p| p.key == key)
+        {
+            self.focus_pane(key);
+            self.views.dock.select(key);
+        }
+        if toggle_max {
+            self.views.dock.toggle_maximize();
+        }
+        self.work_area_drops(ui, area);
         // 2. Focus on the press; the click its release makes is remembered until then.
         if let Some(key) = pressed
             && Some(key) != active
@@ -315,181 +343,253 @@ impl App {
         }
     }
 
-    /// Applies a pane's maximize toggle, move or resize; a maximized pane neither moves nor
-    /// resizes.
-    fn change_window(&mut self, area: egui::Rect, outcome: &PaneOutcome) {
-        let Some(pane) = self.views.panes.iter_mut().find(|p| p.key == outcome.key) else {
+    /// Drops on the work area: a dragged view tab moves into a group or beside it, and a view
+    /// dragged from the project browser opens there. While something is dragged over the work
+    /// area the place it would go is shaded.
+    fn work_area_drops(&mut self, ui: &mut egui::Ui, area: egui::Rect) {
+        let ctx = ui.ctx().clone();
+        let tab = egui::DragAndDrop::payload::<TabDrag>(&ctx).map(|t| t.0);
+        let view = egui::DragAndDrop::payload::<Uuid7>(&ctx).map(|v| *v);
+        if tab.is_none() && view.is_none() {
+            return;
+        }
+        let Some(pos) = ctx.pointer_latest_pos().filter(|p| area.contains(*p)) else {
             return;
         };
-        if outcome.toggle_max {
-            toggle_maximized(pane, area);
+        let target = if self.views.panes.is_empty() {
+            None
+        } else {
+            self.views.dock.drop_at(area, pos)
+        };
+        let palette = theme::Palette::current(ui);
+        let preview = target.map_or(area, |(_, rect)| rect);
+        let painter = ctx.layer_painter(egui::LayerId::new(
+            egui::Order::Foreground,
+            egui::Id::unique("dock-drop"),
+        ));
+        painter.rect_filled(preview.shrink(2.0), 4, palette.link.gamma_multiply(0.18));
+        painter.rect_stroke(
+            preview.shrink(2.0),
+            4,
+            Stroke::new(2.0, palette.link),
+            StrokeKind::Inside,
+        );
+        if !ctx.input(|i| i.pointer.any_released()) {
             return;
         }
-        if pane.maximized {
-            return;
-        }
-        if outcome.moved != egui::Vec2::ZERO {
-            pane.rect = panes::moved(area, pane.rect, outcome.moved);
-        }
-        if let Some((edge, delta)) = outcome.resized {
-            pane.rect = panes::resized(area, pane.rect, edge, delta);
+        if let Some(key) = tab {
+            egui::DragAndDrop::clear_payload(&ctx);
+            if let Some((drop, _)) = target {
+                self.views.dock.insert(key, drop);
+                self.focus_pane(key);
+                self.views.dock.select(key);
+                self.apply_layout(area);
+            }
+        } else if let Some(id) = view {
+            egui::DragAndDrop::clear_payload(&ctx);
+            self.open_view_at(id, target.map(|(drop, _)| drop));
+            self.apply_layout(area);
         }
     }
 
-    /// One pane's window: the title bar, the image, the buttons and the resize handles, all in
-    /// a child Ui clipped to the pane and the work area. The widgets register body first and
-    /// handles last, so the handles win at the borders. `None` when the pane is gone.
-    fn pane_window(
-        &mut self,
-        ui: &mut egui::Ui,
-        area: egui::Rect,
-        key: u64,
-        active: bool,
-        keys: Option<(bool, bool)>,
-    ) -> Option<PaneOutcome> {
-        let (rect, title, maximized) = self
+    /// Opens view `id` where `drop` says: its open tab moves there, otherwise a new tab opens
+    /// there (`None`: in the active group).
+    pub(crate) fn open_view_at(&mut self, id: Uuid7, drop: Option<crate::dock::Drop>) {
+        let existing = self
             .views
             .panes
             .iter()
-            .find(|p| p.key == key)
-            .map(|p| (p.rect, p.title.clone(), p.maximized))?;
+            .rev()
+            .find(|p| p.view == Some(id))
+            .map(|p| p.key);
+        let key = match existing {
+            Some(key) => Some(key),
+            None => {
+                let before = self.views.panes.len();
+                self.open_pane(Some(id));
+                (self.views.panes.len() > before)
+                    .then(|| self.views.panes.last().map(|p| p.key))
+                    .flatten()
+            }
+        };
+        let Some(key) = key else {
+            return;
+        };
+        if let Some(drop) = drop {
+            self.views.dock.insert(key, drop);
+        }
+        self.focus_pane(key);
+        self.views.dock.select(key);
+    }
+
+    /// One tab group: its strip of tabs (click to show, drag to move, × or a middle click to
+    /// close, double-click to maximize) and the image of the tab it shows. `None` when the group
+    /// is gone.
+    fn group_window(
+        &mut self,
+        ui: &mut egui::Ui,
+        area: egui::Rect,
+        group: u64,
+        rect: egui::Rect,
+        active: Option<u64>,
+        zoom: (bool, bool),
+    ) -> Option<GroupOutcome> {
+        let (tabs, current) = self
+            .views
+            .dock
+            .group(group)
+            .map(|g| (g.tabs.clone(), g.current))?;
         let chrome = panes::chrome(rect);
-        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect).id_salt(("pane", key)));
+        let mut child = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(rect)
+                .id_salt(("tab-group", group)),
+        );
         child.set_clip_rect(rect.intersect(area).intersect(ui.clip_rect()));
         let palette = theme::Palette::current(ui);
-        let (stroke, title_fill) = if active {
-            (Stroke::new(2.0, palette.link), palette.select)
-        } else {
-            (Stroke::new(1.0, palette.rule), palette.head)
-        };
+        let holds_active = active.is_some_and(|a| tabs.contains(&a));
         let painter = child.painter().clone();
-        painter.rect_filled(
-            chrome.title,
-            CornerRadius {
-                nw: 4,
-                ne: 4,
-                sw: 0,
-                se: 0,
-            },
-            title_fill,
-        );
-        let body = child.interact(
-            chrome.body,
-            egui::Id::unique(("pane-body", key)),
-            viewport_sense(),
-        );
-        let draw = self.draw_pane(&mut child, key, chrome.body, body, keys);
-        let bar = child.interact(
-            chrome.title,
-            egui::Id::unique(("pane-title", key)),
-            egui::Sense::click_and_drag(),
-        );
-        let close = child.interact(
-            chrome.close,
-            egui::Id::unique(("pane-close", key)),
-            egui::Sense::click(),
-        );
-        let maximize = child.interact(
-            chrome.maximize,
-            egui::Id::unique(("pane-max", key)),
-            egui::Sense::click(),
-        );
-        let mut resized = None;
-        for (edge, handle, cursor) in [
-            (Edge::Left, chrome.left, egui::CursorIcon::ResizeHorizontal),
-            (
-                Edge::Right,
-                chrome.right,
-                egui::CursorIcon::ResizeHorizontal,
-            ),
-            (Edge::Top, chrome.top, egui::CursorIcon::ResizeVertical),
-            (
-                Edge::Bottom,
-                chrome.bottom,
-                egui::CursorIcon::ResizeVertical,
-            ),
-            (Edge::Corner, chrome.corner, egui::CursorIcon::ResizeNwSe),
-        ] {
-            let response = child.interact(
-                handle,
-                egui::Id::unique(("pane-edge", key, edge)),
-                egui::Sense::drag(),
+        painter.rect_filled(chrome.title, 0, palette.head);
+        let mut out = GroupOutcome {
+            draw: None,
+            close: None,
+            focus: None,
+            toggle_max: false,
+            title_clicked: None,
+        };
+        // The image first, so the tabs win where they meet it.
+        if let Some(key) = current {
+            let body = child.interact(
+                chrome.body,
+                egui::Id::unique(("pane-body", key)),
+                viewport_sense(),
             );
-            if maximized {
+            let keys = (Some(key) == active).then_some(zoom);
+            out.draw = self.draw_pane(&mut child, key, chrome.body, body, keys);
+        }
+        let mut x = chrome.title.min.x + 2.0;
+        for key in &tabs {
+            let Some(title) = self
+                .views
+                .panes
+                .iter()
+                .find(|p| p.key == *key)
+                .map(|p| p.title.clone())
+            else {
                 continue;
-            }
-            if response.hovered() || response.dragged() {
-                ui.ctx().set_cursor_icon(cursor);
-            }
-            if response.dragged_by(egui::PointerButton::Primary) {
-                resized = Some((edge, response.drag_delta()));
-            }
-        }
-        // The chrome is painted over the image.
-        for button in [&close, &maximize] {
-            if button.hovered() {
-                painter.rect_filled(button.rect, 0, palette.rule);
-            }
-        }
-        painter.rect_stroke(rect, 4, stroke, StrokeKind::Inside);
-        let text = painter.with_clip_rect(
-            egui::Rect::from_min_max(
-                chrome.title.min,
-                pos2(chrome.maximize.min.x, chrome.title.max.y),
-            )
-            .intersect(painter.clip_rect()),
-        );
-        text.text(
-            chrome.title.left_center() + vec2(8.0, 0.0),
-            egui::Align2::LEFT_CENTER,
-            title,
-            egui::FontId::proportional(12.0),
-            palette.text,
-        );
-        let line = Stroke::new(1.0, palette.text);
-        let c = chrome.close.center();
-        painter.line_segment([c + vec2(-4.0, -4.0), c + vec2(4.0, 4.0)], line);
-        painter.line_segment([c + vec2(-4.0, 4.0), c + vec2(4.0, -4.0)], line);
-        let m = chrome.maximize.center();
-        if maximized {
-            // Restore: two overlapping frames.
-            painter.rect_stroke(
-                egui::Rect::from_center_size(m + vec2(-1.5, 1.5), vec2(7.0, 7.0)),
-                0,
-                line,
-                StrokeKind::Middle,
+            };
+            let width = tab_width(&child, &title);
+            let tab = egui::Rect::from_min_size(
+                pos2(x, chrome.title.min.y + 2.0),
+                vec2(width, chrome.title.height() - 2.0),
             );
-            painter.line_segment([m + vec2(-2.0, -5.0), m + vec2(5.0, -5.0)], line);
-            painter.line_segment([m + vec2(5.0, -5.0), m + vec2(5.0, 2.0)], line);
-        } else {
-            painter.rect_stroke(
-                egui::Rect::from_center_size(m, vec2(9.0, 9.0)),
-                0,
-                line,
-                StrokeKind::Middle,
-            );
-        }
-        if !maximized {
-            // The corner grip: three short diagonals (egui's own grip is private).
-            let grip = Stroke::new(1.0, palette.muted);
-            let corner = rect.max - vec2(3.0, 3.0);
-            for step in [4.0, 7.0, 10.0] {
-                painter.line_segment([corner - vec2(step, 0.0), corner - vec2(0.0, step)], grip);
-            }
-        }
-        Some(PaneOutcome {
-            key,
-            draw,
-            close: close.clicked(),
-            toggle_max: maximize.clicked() || bar.double_clicked(),
-            moved: if !maximized && bar.dragged_by(egui::PointerButton::Primary) {
-                bar.drag_delta()
+            x += width + 2.0;
+            // The close glyph sits where the platform's tabs keep it: first on macOS, last
+            // elsewhere.
+            let close_x = if theme::TAB_CLOSE_LEADING {
+                tab.min.x + 12.0
             } else {
-                egui::Vec2::ZERO
-            },
-            resized,
-            title_clicked: bar.clicked(),
-        })
+                tab.max.x - 12.0
+            };
+            let close_rect =
+                egui::Rect::from_center_size(pos2(close_x, tab.center().y), vec2(16.0, 16.0));
+            let response = child.interact(
+                tab,
+                egui::Id::unique(("view-tab", *key)),
+                egui::Sense::click_and_drag(),
+            );
+            let close = child.interact(
+                close_rect,
+                egui::Id::unique(("view-tab-close", *key)),
+                egui::Sense::click(),
+            );
+            response.dnd_set_drag_payload(TabDrag(*key));
+            self.views.tabs_drawn.push((*key, tab, close_rect));
+            let shown = current == Some(*key);
+            let fill = if shown && holds_active {
+                palette.select
+            } else if shown {
+                palette.surface
+            } else if response.hovered() {
+                palette.rule
+            } else {
+                palette.head
+            };
+            painter.rect_filled(
+                tab,
+                CornerRadius {
+                    nw: 4,
+                    ne: 4,
+                    sw: 0,
+                    se: 0,
+                },
+                fill,
+            );
+            if shown {
+                let accent = if holds_active {
+                    palette.link
+                } else {
+                    palette.muted
+                };
+                painter.line_segment(
+                    [
+                        tab.left_top() + vec2(3.0, 0.5),
+                        tab.right_top() + vec2(-3.0, 0.5),
+                    ],
+                    Stroke::new(2.0, accent),
+                );
+            }
+            let (text_rect, text_inset) = if theme::TAB_CLOSE_LEADING {
+                (
+                    egui::Rect::from_min_max(pos2(close_rect.max.x + 2.0, tab.min.y), tab.max),
+                    24.0,
+                )
+            } else {
+                (
+                    egui::Rect::from_min_max(tab.min, pos2(close_rect.min.x - 2.0, tab.max.y)),
+                    8.0,
+                )
+            };
+            let text = painter.with_clip_rect(text_rect.intersect(painter.clip_rect()));
+            text.text(
+                tab.left_center() + vec2(text_inset, 0.0),
+                egui::Align2::LEFT_CENTER,
+                &title,
+                egui::FontId::proportional(12.0),
+                if shown { palette.text } else { palette.muted },
+            );
+            if close.hovered() {
+                painter.rect_filled(close_rect, 3, palette.rule);
+            }
+            // macOS tabs show their close glyph only under the pointer; elsewhere it stays.
+            let glyph = !theme::TAB_CLOSE_LEADING || response.hovered() || close.hovered();
+            if glyph {
+                let line = Stroke::new(1.0, palette.text);
+                let c = close_rect.center();
+                painter.line_segment([c + vec2(-3.5, -3.5), c + vec2(3.5, 3.5)], line);
+                painter.line_segment([c + vec2(-3.5, 3.5), c + vec2(3.5, -3.5)], line);
+            }
+            if close.clicked() || response.middle_clicked() {
+                out.close = Some(*key);
+            } else if response.double_clicked() {
+                out.toggle_max = true;
+            } else if response.clicked() {
+                if Some(*key) == active {
+                    out.title_clicked = Some(*key);
+                }
+                out.focus = Some(*key);
+            }
+            response.on_hover_text(&title);
+        }
+        let stroke = if holds_active {
+            Stroke::new(2.0, palette.link)
+        } else {
+            Stroke::new(1.0, palette.rule)
+        };
+        // The frame marks the view itself: it runs round the image, under the tab strip, so
+        // the tabs sit above the view as a CAD window's do.
+        painter.rect_stroke(chrome.body, 0, stroke, StrokeKind::Inside);
+        Some(out)
     }
 
     /// Draws pane `key` over `body` (points): resizes its target, navigates its camera from
@@ -520,7 +620,12 @@ impl App {
         // The loaded scene follows the active pane's hidden kinds; another pane whose view hides
         // other kinds draws its own filtered upload.
         let hidden = shown.map_or(beamcraft_engine::KindFilter::SHOW_ALL, |v| v.hidden_kinds);
-        let own_scene = hidden != self.views.shown;
+        // A view with filter overrides draws its own scene with their colours and hidden elements.
+        let view_overlay = shown
+            .and_then(|v| self.views.overlays.get(&v.id))
+            .map(|o| (o.key, std::sync::Arc::clone(&o.overlay)));
+        let overlay_key = view_overlay.as_ref().map_or(0, |(k, _)| *k);
+        let own_scene = hidden != self.views.shown || view_overlay.is_some();
         let scale = ui.ctx().pixels_per_point();
         let [width, height] = target_size([body.width(), body.height()], scale);
         let dark = ui.ctx().theme() == egui::Theme::Dark;
@@ -630,9 +735,12 @@ impl App {
                 let stale = pane
                     .filtered
                     .as_ref()
-                    .is_none_or(|(t, h, _)| *t != token || *h != hidden);
+                    .is_none_or(|(t, h, k, _)| *t != token || *h != hidden || *k != overlay_key);
                 if stale {
-                    let overlay = self.colour.as_ref().map(|(_, o)| std::sync::Arc::clone(o));
+                    let overlay = view_overlay
+                        .as_ref()
+                        .map(|(_, o)| std::sync::Arc::clone(o))
+                        .or_else(|| self.colour.as_ref().map(|(_, o)| std::sync::Arc::clone(o)));
                     let built = crate::scene::Scene::from_snapshot_showing(
                         &l.snapshot,
                         beamcraft_engine::Representation::Full,
@@ -649,13 +757,17 @@ impl App {
                         )
                     });
                     match built {
-                        Ok(uploaded) => pane.filtered = Some((token, hidden, uploaded)),
+                        Ok(uploaded) => {
+                            pane.filtered = Some((token, hidden, overlay_key, uploaded))
+                        }
                         Err(e) => self.error = Some(e.to_string()),
                     }
                 }
             }
             let uploaded = match &pane.filtered {
-                Some((_, h, uploaded)) if own_scene && *h == hidden => uploaded,
+                Some((_, h, k, uploaded)) if own_scene && *h == hidden && *k == overlay_key => {
+                    uploaded
+                }
                 _ => &l.uploaded,
             };
             // The display cut is uniform state: the scene and its snapshot never change.

@@ -185,7 +185,46 @@ const PROPERTY_OPTIONS: &[&str] = &[
     "--favorite",
     "--default",
     "--copy-from",
+    "--overrides",
 ];
+
+/// The overrides of `--overrides`: `none`, or `;`-separated `filter|show|r,g,b|transparency`.
+fn overrides(text: &str) -> Run<Vec<views::FilterOverride>> {
+    if text == "none" {
+        return Ok(Vec::new());
+    }
+    text.split(';')
+        .take(beamcraft_engine::view_filter::MAX_OVERRIDES.saturating_add(1))
+        .map(|spec| views::FilterOverride::parse_spec(spec).map_err(from_engine))
+        .collect()
+}
+
+/// The rows of `--conditions`: `none`, or `;`-separated `field op value`.
+fn conditions(text: &str) -> Run<Vec<views::FilterCondition>> {
+    if text == "none" {
+        return Ok(Vec::new());
+    }
+    text.split(';')
+        .take(beamcraft_engine::view_filter::MAX_CONDITIONS.saturating_add(1))
+        .map(|row| views::FilterCondition::parse_row(row).map_err(from_engine))
+        .collect()
+}
+
+/// The filters of a book as JSON.
+fn filters_reply(outcome: &str, book: &ViewBook) -> Run<Json> {
+    Ok(Json::object([
+        ("outcome", Json::text(outcome)),
+        (
+            "filters",
+            Json::Array(
+                book.filters()
+                    .iter()
+                    .map(views_json::filter_to_json)
+                    .collect(),
+            ),
+        ),
+    ]))
+}
 
 /// The options that build a preset; `define-preset` takes them.
 const PRESET_OPTIONS: &[&str] = &[
@@ -194,6 +233,7 @@ const PRESET_OPTIONS: &[&str] = &[
     "--representation",
     "--colour-set",
     "--grids",
+    "--overrides",
 ];
 
 /// Reads the preset file; a missing or empty file is an empty book when `allow_missing`. The
@@ -265,6 +305,9 @@ fn preset_from_options(options: &BTreeMap<&str, &str>) -> Run<ViewPreset> {
     if let Some(text) = get("--grids") {
         preset.grids_visible = flag(text)?;
     }
+    if let Some(text) = get("--overrides") {
+        preset.overrides = overrides(text)?;
+    }
     Ok(preset)
 }
 
@@ -295,6 +338,18 @@ fn run(args: &[OsString]) -> Run<Json> {
         "save-view" => &["--file", "--name", "--new-id", "--author", "--comment"],
         "update-view" => &["--file", "--view", "--name"],
         "remove-view" | "apply-view" => &["--file", "--store", "--view"],
+        "list-view-filters" => &["--file", "--store"],
+        "save-view-filter" => &[
+            "--file",
+            "--store",
+            "--name",
+            "--rename-from",
+            "--match",
+            "--conditions",
+        ],
+        "remove-view-filter" => &["--file", "--store", "--name"],
+        "rename-view-folder" => &["--file", "--store", "--from", "--to"],
+        "remove-view-folder" => &["--file", "--store", "--name"],
         "define-preset" | "remove-preset" => &["--file", "--name", "--store"],
         "list-presets" => &["--file", "--store"],
         "apply-preset" => &["--file", "--views-file", "--preset", "--view", "--store"],
@@ -324,6 +379,81 @@ fn run(args: &[OsString]) -> Run<Json> {
             .ok_or_else(|| invalid("--view is required"))?;
         book.find(selector).map(|v| v.id).ok_or_else(unknown)
     };
+    let name = || {
+        options
+            .get("--name")
+            .map(|n| n.trim())
+            .ok_or_else(|| invalid("--name is required"))
+    };
+    match *command {
+        "list-view-filters" => return filters_reply("view_filters", &load(file, true)?),
+        "save-view-filter" => {
+            let mut book = load(file, true)?;
+            let new_name = name()?;
+            // An existing filter is changed in place: the one named by --rename-from, or the
+            // one that already has this name.
+            let previous: Option<&str> = match options.get("--rename-from") {
+                Some(old) => Some(old),
+                None => book.filter(new_name).map(|_| new_name),
+            };
+            let mut filter = previous
+                .and_then(|p| book.filter(p))
+                .cloned()
+                .unwrap_or_else(|| views::ViewFilter::new(new_name, Vec::new()));
+            new_name.clone_into(&mut filter.name);
+            if let Some(text) = options.get("--match") {
+                filter.matching = views::FilterMatch::parse(text).map_err(from_engine)?;
+            }
+            if let Some(text) = options.get("--conditions") {
+                filter.conditions = conditions(text)?;
+            }
+            book.save_filter(filter, previous).map_err(from_engine)?;
+            store(file, &book)?;
+            return filters_reply("view_filter_saved", &book);
+        }
+        "rename-view-folder" | "remove-view-folder" => {
+            let mut book = load(file, false)?;
+            let moved = if *command == "rename-view-folder" {
+                let from = options
+                    .get("--from")
+                    .ok_or_else(|| invalid("--from is required"))?;
+                let to = options
+                    .get("--to")
+                    .ok_or_else(|| invalid("--to is required"))?;
+                book.rename_folder(from.trim(), to.trim())
+            } else {
+                book.dissolve_folder(name()?)
+            }
+            .map_err(from_engine)?;
+            store(file, &book)?;
+            return Ok(Json::object([
+                (
+                    "outcome",
+                    Json::text(if *command == "rename-view-folder" {
+                        "view_folder_renamed"
+                    } else {
+                        "view_folder_removed"
+                    }),
+                ),
+                ("views_moved", Json::uint(moved as u64)),
+                (
+                    "folders",
+                    Json::Array(book.folders().map(Json::text).collect()),
+                ),
+            ]));
+        }
+        "remove-view-filter" => {
+            let mut book = load(file, false)?;
+            let touched = book.remove_filter(name()?).map_err(from_engine)?;
+            store(file, &book)?;
+            let Json::Object(mut reply) = filters_reply("view_filter_removed", &book)? else {
+                return Err(invalid("the reply is not an object"));
+            };
+            reply.insert("views_changed".into(), Json::uint(touched as u64));
+            return Ok(Json::Object(reply));
+        }
+        _ => {}
+    }
     match *command {
         "list-views" => {
             let book = load(file, true)?;
@@ -834,6 +964,9 @@ fn apply_properties(
     if let Some(source) = get("--copy-from") {
         let source = book.find(source).ok_or_else(unknown)?;
         view.apply_display_properties(source);
+    }
+    if let Some(text) = get("--overrides") {
+        view.overrides = overrides(text)?;
     }
     if let Some(text) = get("--projection") {
         view.projection = Projection::parse(text).map_err(from_engine)?;

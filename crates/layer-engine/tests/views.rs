@@ -90,6 +90,7 @@ fn layer_of(views: &[SavedView]) -> views::ViewsLayer {
     views::ViewsLayer {
         views: views.to_vec(),
         empty_folders: Vec::new(),
+        filters: Vec::new(),
     }
 }
 
@@ -114,6 +115,10 @@ fn full_view(id_text: &str, name: &str) -> SavedView {
     view.opacity = 0.75;
     view.representation = "simplified".to_owned();
     view.colour_set = Some("Part classes".to_owned());
+    view.filter_overrides = vec![
+        "Beams|hide|-|0".to_owned(),
+        "Plates|show|1,0,0|0.5".to_owned(),
+    ];
     view.stamp = Some(
         ViewStamp::new(
             "  author  ",
@@ -276,6 +281,7 @@ fn empty_folders_survive_the_round_trip_sorted_and_unique() {
             "Review/East".to_owned(),
             "South".to_owned(),
         ],
+        filters: Vec::new(),
     };
     let bytes = views::bytes(&layer).unwrap();
     let read = views::read_layer(&prims_of(&bytes)).unwrap();
@@ -289,6 +295,7 @@ fn empty_folders_survive_the_round_trip_sorted_and_unique() {
     let same = views::bytes(&views::ViewsLayer {
         views: layer.views.clone(),
         empty_folders: vec!["Review/East".to_owned(), "South".to_owned()],
+        filters: Vec::new(),
     })
     .unwrap();
     assert_eq!(bytes, same);
@@ -307,13 +314,42 @@ fn empty_folders_survive_the_round_trip_sorted_and_unique() {
     let bad = views::ViewsLayer {
         views: Vec::new(),
         empty_folders: vec!["  spaced".to_owned()],
+        filters: Vec::new(),
     };
     assert!(views::bytes(&bad).is_err());
     let dot = views::ViewsLayer {
         views: Vec::new(),
         empty_folders: vec!["a/./b".to_owned()],
+        filters: Vec::new(),
     };
     assert!(views::bytes(&dot).is_err());
+}
+
+#[test]
+fn filters_survive_the_round_trip_in_order_and_are_bounded() {
+    let layer = views::ViewsLayer {
+        views: vec![full_view(ID_A, "Front")],
+        empty_folders: Vec::new(),
+        filters: vec![
+            "{\"name\":\"Plates\"}".to_owned(),
+            "{\"name\":\"Beams\"}".to_owned(),
+        ],
+    };
+    let read = views::read_layer(&prims_of(&views::bytes(&layer).unwrap())).unwrap();
+    assert_eq!(read.filters, layer.filters, "kept in order, not sorted");
+    assert_eq!(
+        read.views[0].filter_overrides,
+        layer.views[0].filter_overrides
+    );
+    let mut many = layer.clone();
+    many.filters = vec!["f".to_owned(); views::MAX_FILTERS + 1];
+    assert!(views::bytes(&many).is_err());
+    let mut control = layer.clone();
+    control.filters = vec!["a\nb".to_owned()];
+    assert!(views::bytes(&control).is_err());
+    let mut overrides = layer;
+    overrides.views[0].filter_overrides = vec!["o".to_owned(); views::MAX_OVERRIDES + 1];
+    assert!(views::bytes(&overrides).is_err());
 }
 
 #[test]

@@ -188,6 +188,20 @@ impl ElementKindOps for MemberPatch {
                 "a plate has no profile",
             ));
         }
+        if self.roll_rad.is_some() {
+            return Err(CommandError::new(
+                ErrorCode::UnsupportedProperty,
+                "roll_rad",
+                "a plate has no roll",
+            ));
+        }
+        if self.section_placement.is_some() {
+            return Err(CommandError::new(
+                ErrorCode::UnsupportedProperty,
+                "section_placement",
+                "a plate has no section position",
+            ));
+        }
         Ok(())
     }
 
@@ -218,7 +232,33 @@ impl ElementKindOps for MemberPatch {
             // the body would silently ignore.
             if points.len() > 2 {
                 member.roll_rad = None;
+                member.section_placement = None;
             }
+        }
+        // The roll and the section position are a straight member's: a polybeam's sweep has
+        // neither input, so naming them there is refused rather than stored and ignored.
+        let polybeam = member.axis_points_mm.len() > 2 || member.curved;
+        if let Some(roll) = self.roll_rad {
+            if polybeam {
+                return Err(CommandError::new(
+                    ErrorCode::UnsupportedProperty,
+                    "roll_rad",
+                    "a polybeam has no roll",
+                ));
+            }
+            member.roll_rad = (roll != 0.0).then_some(roll);
+        }
+        if let Some(placement) = self.section_placement {
+            if polybeam {
+                return Err(CommandError::new(
+                    ErrorCode::UnsupportedProperty,
+                    "section_placement",
+                    "a polybeam has no section position",
+                ));
+            }
+            // The centred default clears the opinion, so the member evaluates exactly as one
+            // that never had it.
+            member.section_placement = (!placement.is_default()).then_some(placement);
         }
         Ok(())
     }
@@ -363,6 +403,46 @@ mod tests {
             cuts: Vec::new(),
             bends: Vec::new(),
         }
+    }
+
+    #[test]
+    fn a_member_takes_a_new_roll_and_section_position_and_a_plate_refuses_them() {
+        use crate::model::command::{SectionDepthPosition, SectionPlacement, SectionPlanePosition};
+        let placement = SectionPlacement {
+            plane: SectionPlanePosition::Left,
+            plane_offset_mm: 10.0,
+            depth: SectionDepthPosition::Front,
+            depth_offset_mm: -5.0,
+            start_offset_mm: 20.0,
+            end_offset_mm: -30.0,
+        };
+        let position = ElementPatch {
+            member: MemberPatch {
+                roll_rad: Some(0.5),
+                section_placement: Some(placement),
+                ..MemberPatch::default()
+            },
+            ..ElementPatch::default()
+        };
+        let moved = patch_member(&member(), &position).unwrap();
+        assert_eq!(moved.roll_rad, Some(0.5));
+        assert_eq!(moved.section_placement, Some(placement));
+        // The centred default and a zero roll clear the opinions.
+        let back = ElementPatch {
+            member: MemberPatch {
+                roll_rad: Some(0.0),
+                section_placement: Some(SectionPlacement::default()),
+                ..MemberPatch::default()
+            },
+            ..ElementPatch::default()
+        };
+        let cleared = patch_member(&moved, &back).unwrap();
+        assert_eq!(cleared.roll_rad, None);
+        assert_eq!(cleared.section_placement, None);
+        assert_eq!(
+            position.member.refuse_on_plate().unwrap_err().code,
+            ErrorCode::UnsupportedProperty
+        );
     }
 
     #[test]

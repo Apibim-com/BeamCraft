@@ -76,10 +76,15 @@ pub fn preset_to_json(preset: &ViewPreset) -> Result<Json, CommandError> {
             colour_set_to_json(preset.colour_set.as_deref()),
         ),
         ("grids_visible", Json::Bool(preset.grids_visible)),
+        (
+            "overrides",
+            crate::views::overrides_to_json(&preset.overrides)?,
+        ),
     ]))
 }
 
-/// Reads one preset; every key is required, `depth_mm` and `colour_set` may be null.
+/// Reads one preset; every key is required except `overrides` (absent is none), and
+/// `depth_mm` and `colour_set` may be null.
 pub fn preset_from_json(json: &Json) -> Result<ViewPreset, CommandError> {
     let text = |key: &'static str| {
         json.get(key)
@@ -131,6 +136,7 @@ pub fn preset_from_json(json: &Json) -> Result<ViewPreset, CommandError> {
         .get("grids_visible")
         .and_then(Json::boolean)
         .map_err(|_| unread("grids_visible"))?;
+    preset.overrides = crate::views::overrides_from_json(json)?;
     preset.validate()?;
     Ok(preset)
 }
@@ -201,6 +207,7 @@ mod tests {
         p.representation = Representation::Simplified;
         p.colour_set = Some("Part classes".into());
         p.grids_visible = false;
+        p.overrides = vec![beamcraft_engine::views::FilterOverride::new("Beams")];
         p
     }
 

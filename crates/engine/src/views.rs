@@ -21,6 +21,11 @@ use beamcraft_model::grid::Grid;
 use beamcraft_model::id::Uuid7;
 use std::collections::BTreeSet;
 
+pub use crate::view_filter::{
+    FilterCondition, FilterField, FilterMatch, FilterOverride, ViewFilter,
+};
+use crate::view_filter::{MAX_FILTERS, validate_overrides};
+
 /// The axis-aligned model box a view works inside, in millimetres. One type serves the views and
 /// the cut plane: V15's [`crate::view_clipping::WorkArea`] is the admission and clipping source
 /// of truth.
@@ -253,6 +258,9 @@ pub struct ModelView {
     pub color: Option<[f64; 3]>,
     /// Display opacity in `0..=1`.
     pub opacity: f64,
+    /// The view's filter overrides, in order: the first one whose filter matches an element
+    /// decides how it is drawn. Each names a filter of the book.
+    pub overrides: Vec<FilterOverride>,
     /// Representation level (U12) the view loads for every shown part. View display state: it
     /// changes no snapshot token and no engineering read, which stay on the full body.
     pub representation: crate::Representation,
@@ -286,6 +294,7 @@ impl ModelView {
             rotation_rad: [0.0; 2],
             color: None,
             opacity: 1.0,
+            overrides: Vec::new(),
             representation: crate::Representation::Full,
             colour_set: None,
             provenance: None,
@@ -323,6 +332,7 @@ impl ModelView {
         self.rotation_rad = source.rotation_rad;
         self.color = source.color;
         self.opacity = source.opacity;
+        self.overrides.clone_from(&source.overrides);
         self.representation = source.representation;
         self.colour_set = source.colour_set.clone();
     }
@@ -393,6 +403,7 @@ impl ModelView {
             ));
         }
         WorkPlane::new(self.plane.origin(), self.plane.x(), self.plane.y())?;
+        validate_overrides(&self.overrides)?;
         if let Some(provenance) = &self.provenance {
             provenance.validate()?;
         }
@@ -469,6 +480,7 @@ impl ModelView {
 pub struct ViewBook {
     views: Vec<ModelView>,
     folders: BTreeSet<String>,
+    filters: Vec<ViewFilter>,
 }
 
 impl ViewBook {
@@ -482,14 +494,128 @@ impl ViewBook {
         views: Vec<ModelView>,
         folders: impl IntoIterator<Item = String>,
     ) -> Result<Self, CommandError> {
+        Self::from_all(views, folders, Vec::new())
+    }
+
+    /// Admits a whole book with its filters: the filters first, so the views' overrides can
+    /// name them.
+    pub fn from_all(
+        views: Vec<ModelView>,
+        folders: impl IntoIterator<Item = String>,
+        filters: Vec<ViewFilter>,
+    ) -> Result<Self, CommandError> {
         let mut book = Self::new();
         for folder in folders {
             book.create_folder_tree(&folder)?;
+        }
+        for filter in filters {
+            book.save_filter(filter, None)?;
         }
         for view in views {
             book.insert(view)?;
         }
         Ok(book)
+    }
+
+    /// The filters in book order.
+    pub fn filters(&self) -> &[ViewFilter] {
+        &self.filters
+    }
+
+    /// The filter named `name` (case-insensitively).
+    pub fn filter(&self, name: &str) -> Option<&ViewFilter> {
+        let wanted = name.trim().to_lowercase();
+        self.filters
+            .iter()
+            .find(|f| f.name.to_lowercase() == wanted)
+    }
+
+    fn check_overrides(&self, overrides: &[FilterOverride]) -> Result<(), CommandError> {
+        if overrides.iter().any(|o| self.filter(&o.filter).is_none()) {
+            return Err(not_found(
+                "views.overrides",
+                "an override names a filter the model does not have",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Adds `filter`, or replaces the filter named `previous` with it (a rename when the names
+    /// differ: every override that named the old filter follows). Refuses a name another filter
+    /// already has and the filter limit.
+    pub fn save_filter(
+        &mut self,
+        filter: ViewFilter,
+        previous: Option<&str>,
+    ) -> Result<(), CommandError> {
+        filter.validate()?;
+        let at = previous.and_then(|name| {
+            let wanted = name.trim().to_lowercase();
+            self.filters
+                .iter()
+                .position(|f| f.name.to_lowercase() == wanted)
+        });
+        if previous.is_some() && at.is_none() {
+            return Err(not_found("views.filter", "FILTER_UNKNOWN"));
+        }
+        let wanted = filter.name.to_lowercase();
+        if self
+            .filters
+            .iter()
+            .enumerate()
+            .any(|(i, f)| Some(i) != at && f.name.to_lowercase() == wanted)
+        {
+            return Err(CommandError::new(
+                ErrorCode::DuplicateId,
+                "views.filter.name",
+                "another filter already has this name",
+            ));
+        }
+        match at.and_then(|i| self.filters.get_mut(i)) {
+            Some(slot) => {
+                let old = std::mem::replace(slot, filter).name.to_lowercase();
+                let new = slot.name.clone();
+                let rename = |list: &mut Vec<FilterOverride>| {
+                    for o in list.iter_mut() {
+                        if o.filter.to_lowercase() == old {
+                            o.filter.clone_from(&new);
+                        }
+                    }
+                };
+                self.views.iter_mut().for_each(|v| rename(&mut v.overrides));
+            }
+            None => {
+                if self.filters.len() >= MAX_FILTERS {
+                    return Err(CommandError::new(
+                        ErrorCode::LimitExceeded,
+                        "views.filters",
+                        "the model already has the maximum number of view filters",
+                    ));
+                }
+                self.filters.push(filter);
+            }
+        }
+        Ok(())
+    }
+
+    /// Removes the filter named `name` and every override that names it, returning how many views lost an override.
+    pub fn remove_filter(&mut self, name: &str) -> Result<usize, CommandError> {
+        let wanted = name.trim().to_lowercase();
+        let at = self
+            .filters
+            .iter()
+            .position(|f| f.name.to_lowercase() == wanted)
+            .ok_or_else(|| not_found("views.filter", "FILTER_UNKNOWN"))?;
+        self.filters.remove(at);
+        let mut touched = 0usize;
+        for view in &mut self.views {
+            let before = view.overrides.len();
+            view.overrides.retain(|o| o.filter.to_lowercase() != wanted);
+            if view.overrides.len() != before {
+                touched = touched.saturating_add(1);
+            }
+        }
+        Ok(touched)
     }
 
     /// The views in book order.
@@ -556,6 +682,7 @@ impl ViewBook {
     /// created with its ancestors.
     pub fn insert(&mut self, view: ModelView) -> Result<(), CommandError> {
         view.validate()?;
+        self.check_overrides(&view.overrides)?;
         if self.get(&view.id).is_some() || self.name_taken(&view.name, None) {
             return Err(CommandError::new(
                 ErrorCode::DuplicateId,
@@ -592,6 +719,7 @@ impl ViewBook {
     /// view already has.
     pub fn update(&mut self, view: ModelView) -> Result<(), CommandError> {
         view.validate()?;
+        self.check_overrides(&view.overrides)?;
         if self.name_taken(&view.name, Some(&view.id)) {
             return Err(CommandError::new(
                 ErrorCode::DuplicateId,
@@ -705,6 +833,111 @@ impl ViewBook {
         }
         self.folders.retain(|f| !folder_within(f, folder));
         Ok(())
+    }
+
+    /// Renames the folder `from` to `to` (a full path, so a rename may also move it): every
+    /// subfolder and every view inside follows. Refuses the root, a missing folder, an invalid
+    /// target, a target that already exists and a move into the folder's own subtree.
+    pub fn rename_folder(&mut self, from: &str, to: &str) -> Result<usize, CommandError> {
+        if from.is_empty() || !self.folders.contains(from) {
+            return Err(not_found("views.folder", "the folder does not exist"));
+        }
+        if to.is_empty() {
+            return Err(invalid(
+                "views.folder",
+                "the root folder cannot be a target",
+            ));
+        }
+        validate_folder(to)?;
+        if to == from {
+            return Ok(0);
+        }
+        if folder_within(to, from) {
+            return Err(invalid("views.folder", "a folder cannot move into itself"));
+        }
+        if self.folders.contains(to) {
+            return Err(CommandError::new(
+                ErrorCode::DuplicateId,
+                "views.folder",
+                "a folder with that path already exists",
+            ));
+        }
+        let moved = |path: &str| -> String {
+            match path.strip_prefix(from) {
+                Some(rest) => format!("{to}{rest}"),
+                None => path.to_owned(),
+            }
+        };
+        for folder in self.folders.iter().filter(|f| folder_within(f, from)) {
+            validate_folder(&moved(folder))?;
+        }
+        let renamed: Vec<String> = self
+            .folders
+            .iter()
+            .filter(|f| folder_within(f, from))
+            .map(|f| moved(f))
+            .collect();
+        self.folders.retain(|f| !folder_within(f, from));
+        for folder in renamed {
+            self.create_folder_tree(&folder)?;
+        }
+        let mut views = 0usize;
+        for view in &mut self.views {
+            if folder_within(&view.folder, from) {
+                view.folder = moved(&view.folder);
+                views = views.saturating_add(1);
+            }
+        }
+        Ok(views)
+    }
+
+    /// Removes the folder `folder` and keeps what it held: its views and subfolders move up
+    /// into its parent. Returns how many views moved. Refuses the root and a missing folder;
+    /// a subfolder that would collide with one already in the parent is refused whole.
+    pub fn dissolve_folder(&mut self, folder: &str) -> Result<usize, CommandError> {
+        if folder.is_empty() || !self.folders.contains(folder) {
+            return Err(not_found("views.folder", "the folder does not exist"));
+        }
+        let parent = folder.rsplit_once('/').map_or("", |(p, _)| p);
+        let lifted = |path: &str| -> String {
+            let rest = path
+                .strip_prefix(folder)
+                .and_then(|r| r.strip_prefix('/'))
+                .unwrap_or("");
+            match (parent.is_empty(), rest.is_empty()) {
+                (_, true) => parent.to_owned(),
+                (true, false) => rest.to_owned(),
+                (false, false) => format!("{parent}/{rest}"),
+            }
+        };
+        let subfolders: Vec<String> = self
+            .folders
+            .iter()
+            .filter(|f| folder_within(f, folder) && f.as_str() != folder)
+            .map(|f| lifted(f))
+            .collect();
+        if subfolders
+            .iter()
+            .any(|f| self.folders.contains(f) && !folder_within(f, folder))
+        {
+            return Err(CommandError::new(
+                ErrorCode::DuplicateId,
+                "views.folder",
+                "a subfolder has the name of a folder beside it",
+            ));
+        }
+        self.folders.retain(|f| !folder_within(f, folder));
+        for sub in subfolders {
+            self.create_folder_tree(&sub)?;
+        }
+        let mut views = 0usize;
+        for view in &mut self.views {
+            if folder_within(&view.folder, folder) {
+                view.folder = lifted(&view.folder);
+                views = views.saturating_add(1);
+            }
+        }
+        Ok(views)
     }
 
     /// `base` when no view has that name, else `base (2)`, `base (3)` ... The names in `extra`
@@ -1175,6 +1408,26 @@ pub fn pick_visible(
     direction: [f64; 3],
     selection: SelectionFilter,
 ) -> Result<Option<Hit>, CommandError> {
+    pick_visible_except(
+        snapshot,
+        view,
+        origin,
+        direction,
+        selection,
+        &BTreeSet::new(),
+    )
+}
+
+/// [`pick_visible`] that also passes through the elements in `hidden`: the ones a view's
+/// filter overrides hide, which the window evaluates.
+pub fn pick_visible_except(
+    snapshot: &ViewSnapshot,
+    view: &ModelView,
+    origin: [f64; 3],
+    direction: [f64; 3],
+    selection: SelectionFilter,
+    hidden: &BTreeSet<ElementId>,
+) -> Result<Option<Hit>, CommandError> {
     use crate::query::feature::FeatureKind;
     use crate::query::pick::{MAX_HITS, PickQuery, RayPick, pick};
     view.validate()?;
@@ -1185,6 +1438,7 @@ pub fn pick_visible(
         .map_err(|e| CommandError::new(e.f04_code(), "views.pick", "the view pick failed"))?;
     if let Some(hit) = hits.hits.into_iter().find(|hit| {
         view.contains(hit.point_world_mm)
+            && !hidden.contains(&hit.element_id)
             && snapshot
                 .element(&hit.element_id)
                 .is_some_and(|e| view.shows_kind(e.kind))
@@ -1217,6 +1471,74 @@ mod tests {
 
     fn view(n: u64, name: &str) -> ModelView {
         ModelView::new(id(n), name, WorkPlane::default(), 5000.0)
+    }
+
+    fn beams() -> ViewFilter {
+        ViewFilter::new(
+            "Beams",
+            vec![FilterCondition::new(
+                FilterField::Type,
+                crate::filter::Operator::Eq,
+                "beam",
+            )],
+        )
+    }
+
+    #[test]
+    fn a_folder_renames_with_its_contents_and_dissolves_into_its_parent() {
+        let mut book = ViewBook::new();
+        let mut a = view(1, "A");
+        a.folder = "Plans/Level 1".into();
+        let mut b = view(2, "B");
+        b.folder = "Plans/Level 1/Details".into();
+        book.insert(a).unwrap();
+        book.insert(b).unwrap();
+        book.create_folder("Plans/Empty").unwrap();
+        // A rename carries the subfolders and the views.
+        assert_eq!(
+            book.rename_folder("Plans/Level 1", "Plans/Floor 1")
+                .unwrap(),
+            2
+        );
+        assert_eq!(book.get(&id(1)).unwrap().folder, "Plans/Floor 1");
+        assert_eq!(book.get(&id(2)).unwrap().folder, "Plans/Floor 1/Details");
+        assert!(!book.folders().any(|f| f.starts_with("Plans/Level 1")));
+        assert!(
+            book.rename_folder("Plans/Floor 1", "Plans/Empty").is_err(),
+            "taken"
+        );
+        assert!(
+            book.rename_folder("Plans", "Plans/Floor 1/Inner").is_err(),
+            "into itself"
+        );
+        assert!(book.rename_folder("Missing", "X").is_err());
+        // Dissolving keeps everything: the contents move up one level.
+        assert_eq!(book.dissolve_folder("Plans/Floor 1").unwrap(), 2);
+        assert_eq!(book.get(&id(1)).unwrap().folder, "Plans");
+        assert_eq!(book.get(&id(2)).unwrap().folder, "Plans/Details");
+        assert!(book.folders().any(|f| f == "Plans/Details"));
+        assert_eq!(book.len(), 2, "no view is lost");
+        assert_eq!(book.dissolve_folder("Plans").unwrap(), 2);
+        assert_eq!(book.get(&id(1)).unwrap().folder, "");
+        assert_eq!(book.get(&id(2)).unwrap().folder, "Details");
+    }
+
+    #[test]
+    fn overrides_name_filters_of_the_book_and_follow_a_rename() {
+        let mut book = ViewBook::new();
+        let mut plan = view(1, "Plan");
+        plan.overrides.push(FilterOverride::new("Beams"));
+        assert!(book.insert(plan.clone()).is_err(), "no such filter yet");
+        book.save_filter(beams(), None).unwrap();
+        assert!(book.save_filter(beams(), None).is_err(), "names are unique");
+        book.insert(plan.clone()).unwrap();
+        let mut renamed = beams();
+        renamed.name = "Girders".into();
+        book.save_filter(renamed, Some("beams")).unwrap();
+        assert_eq!(book.get(&id(1)).unwrap().overrides[0].filter, "Girders");
+        assert_eq!(book.remove_filter("Girders").unwrap(), 1);
+        assert!(book.get(&id(1)).unwrap().overrides.is_empty());
+        assert!(book.remove_filter("Girders").is_err());
     }
 
     fn grid_a() -> Grid {

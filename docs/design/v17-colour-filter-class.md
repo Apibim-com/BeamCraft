@@ -19,8 +19,9 @@ keeps no set of their own in `colour-sets.json`, the window applies the Catalogu
 its own when a model is first shown — no setup for a freshly opened store; an explicit Show
 or Hide in that window is a choice the default never overrides (a cleared set returns the
 uniform grey until the window opens the model again). A legend lists the applied set's rules
-with their colour swatch, field/operator/value line and transparency. Colours multiply the
-shaded base colour (also in wireframe, which shares the fragment entry); a rule's
+with their colour swatch, field/operator/value line and transparency. Colours replace the
+shaded base colour, keeping a little of the face shading so the shape reads (a white tint
+keeps the model colour exactly; also in wireframe, which shares the fragment entry); a rule's
 transparency scales the transparent mode's opacity. Grey mode stays neutral by design, and
 the selected-only draw and the ghost preview are never tinted.
 

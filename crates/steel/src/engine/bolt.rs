@@ -387,7 +387,7 @@ fn face_intervals(origin: &[f64; 3], axis: &[f64; 3], faces: &Faces) -> Vec<(f64
         }
         let s = [origin[0] - a[0], origin[1] - a[1], origin[2] - a[2]];
         let u = dot(s, plane) / det;
-        if u < -SLAB_PARALLEL || u > 1.0 + SLAB_PARALLEL {
+        if !(-SLAB_PARALLEL..=1.0 + SLAB_PARALLEL).contains(&u) {
             continue;
         }
         let v = dot(*axis, cross(s, e1)) / det;

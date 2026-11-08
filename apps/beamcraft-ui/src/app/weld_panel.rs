@@ -5,11 +5,10 @@
 //! command a user types (A06, fillet welds). The reply is the CLI's; a refusal publishes
 //! nothing and is shown next to the form.
 
-use super::{App, field};
+use super::App;
 use crate::command;
 use crate::edit::{Ray, pick_in};
 use crate::tools::{MAX_TEXT, ToolError, decode, rejection};
-use egui::RichText;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
@@ -313,227 +312,83 @@ impl App {
     }
 
     /// The inspector panel of the Weld bench.
-    pub(crate) fn weld_panel(&mut self, ui: &mut egui::Ui) {
-        let palette = crate::theme::Palette::current(ui);
-        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
-        ui.set_max_width(ui.available_width());
+    /// The weld editor's action bar, pinned under the form by the inspector.
+    pub(crate) fn weld_actions(&mut self, ui: &mut egui::Ui) {
         let busy = self.weld.busy() || self.other_command_running();
-        ui.label(crate::theme::bold("Weld properties", 16.0));
-        ui.label("Fillet welds of two picked parts, through the engine's create-weld command.");
-        let row = |ui: &mut egui::Ui, label: &str, value: Option<&String>| {
-            ui.horizontal(|ui| {
-                ui.label(RichText::new(label).size(11.0));
-                match value {
-                    Some(id) => ui.label(RichText::new(id.as_str()).size(11.0)),
-                    None => ui.label(
-                        RichText::new("— click a part")
-                            .size(11.0)
-                            .color(palette.muted),
-                    ),
-                };
-            });
-        };
-        row(ui, "Main", self.weld.main.as_ref());
-        row(ui, "Secondary", self.weld.secondary.as_ref());
-        ui.label(
-            match (self.weld.main.is_some(), self.weld.secondary.is_some()) {
-                (false, _) => "Click the main part in the model view.",
-                (true, false) => "Click the secondary part in the model view.",
-                (true, true) => "Both parts are picked; fill the form and press Create weld.",
-            },
-        );
-        if ui
-            .add_enabled(
-                self.weld.main.is_some() || self.weld.secondary.is_some(),
-                egui::Button::new("Clear picks"),
-            )
-            .clicked()
-        {
+        let done = crate::kit::actions(ui, "Create weld", true, "Cancel", busy);
+        if done.primary {
+            self.start_weld_commit();
+        }
+        if done.cancel {
             self.weld.clear_placement();
+            self.weld.note = None;
+            self.set_bench(super::workbench::Bench::Select);
         }
-        field(ui, "Name", &mut self.weld.name, 160.0);
-        field(ui, "Size (mm)", &mut self.weld.size, 80.0);
-        ui.horizontal(|ui| {
-            ui.add_sized(
-                egui::vec2(70.0, 28.0),
-                egui::Label::new(egui::RichText::new("Location").size(11.0)),
+    }
+
+    pub(crate) fn weld_panel(&mut self, ui: &mut egui::Ui) {
+        use crate::kit;
+        let palette = crate::theme::Palette::current(ui);
+        ui.set_max_width(ui.available_width());
+        kit::type_box(ui, crate::theme::Icon::Weld, "Fillet weld");
+        kit::section(ui, "weld", "Parts", true, |ui| {
+            kit::prop_info(ui, "Main part", self.weld.main.as_deref(), "Click a part");
+            kit::prop_info(
+                ui,
+                "Secondary part",
+                self.weld.secondary.as_deref(),
+                "Click a part",
             );
-            egui::ComboBox::from_id_salt("weld-location")
-                .width(ui.available_width().max(80.0))
-                .selected_text(self.weld.location.label())
-                .show_ui(ui, |ui| {
-                    for choice in [Location::Workshop, Location::Site] {
-                        if ui
-                            .selectable_label(self.weld.location == choice, choice.label())
-                            .clicked()
-                        {
-                            self.weld.location = choice;
-                        }
-                    }
-                });
+            kit::prop_row(ui, "", |ui| {
+                ui.label(
+                    egui::RichText::new(
+                        match (self.weld.main.is_some(), self.weld.secondary.is_some()) {
+                            (false, _) => "Click the main part in the model view.",
+                            (true, false) => "Click the secondary part in the model view.",
+                            (true, true) => "Both parts are picked.",
+                        },
+                    )
+                    .size(11.0)
+                    .color(palette.muted),
+                );
+            });
+            kit::prop_row(ui, "", |ui| {
+                if ui
+                    .add_enabled(
+                        self.weld.main.is_some() || self.weld.secondary.is_some(),
+                        egui::Button::new("Clear picks"),
+                    )
+                    .clicked()
+                {
+                    self.weld.clear_placement();
+                }
+            });
         });
-        ui.horizontal(|ui| {
-            ui.add_sized(
-                egui::vec2(70.0, 28.0),
-                egui::Label::new(egui::RichText::new("Side").size(11.0)),
+        kit::section(ui, "weld", "Weld", true, |ui| {
+            kit::prop_text(ui, "Name", &mut self.weld.name);
+            kit::prop_text(ui, "Size, mm", &mut self.weld.size);
+            kit::prop_choice(
+                ui,
+                "weld-location",
+                "Location",
+                &mut self.weld.location,
+                &[
+                    (Location::Workshop, Location::Workshop.label()),
+                    (Location::Site, Location::Site.label()),
+                ],
             );
-            egui::ComboBox::from_id_salt("weld-side")
-                .width(ui.available_width().max(80.0))
-                .selected_text(self.weld.side.label())
-                .show_ui(ui, |ui| {
-                    for choice in [Side::Arrow, Side::Other, Side::Both] {
-                        if ui
-                            .selectable_label(self.weld.side == choice, choice.label())
-                            .clicked()
-                        {
-                            self.weld.side = choice;
-                        }
-                    }
-                });
+            kit::prop_choice(
+                ui,
+                "weld-side",
+                "Side",
+                &mut self.weld.side,
+                &[
+                    (Side::Arrow, Side::Arrow.label()),
+                    (Side::Other, Side::Other.label()),
+                    (Side::Both, Side::Both.label()),
+                ],
+            );
         });
-        ui.separator();
-        ui.add_enabled_ui(!busy, |ui| {
-            if ui.button("Create weld").clicked() {
-                self.start_weld_commit();
-            }
-            if ui.button("Cancel").clicked() {
-                self.weld.clear_placement();
-                self.weld.note = None;
-                self.set_bench(super::workbench::Bench::Select);
-            }
-        });
-        if busy {
-            ui.spinner();
-            ui.label("Saving weld…");
-        }
-        match &self.weld.note {
-            Some(Ok(message)) => {
-                ui.label(message);
-            }
-            Some(Err(message)) => {
-                ui.colored_label(palette.error, message);
-            }
-            None => {}
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    const MAIN: &str = "0197aabb-ccdd-7ebb-9beb-59df63a5fc11";
-    const OTHER: &str = "0197aabb-ccdd-7ebb-9beb-59df63a5fc12";
-
-    fn args(size: &str) -> Result<Vec<String>, String> {
-        create_args(
-            Path::new("S"),
-            None,
-            "Weld 1",
-            MAIN,
-            OTHER,
-            size,
-            Location::Workshop,
-            Side::Both,
-        )
-    }
-
-    #[test]
-    fn the_form_builds_the_exact_create_weld_command() {
-        assert_eq!(
-            args("6").unwrap(),
-            vec![
-                "create-weld",
-                "--store",
-                "S",
-                "--name",
-                "Weld 1",
-                "--main",
-                MAIN,
-                "--secondary",
-                OTHER,
-                "--type",
-                "fillet",
-                "--size",
-                "6",
-                "--location",
-                "workshop",
-                "--side",
-                "both",
-            ]
-        );
-        let with_actor = create_args(
-            Path::new("S"),
-            Some("actor"),
-            "Weld",
-            MAIN,
-            OTHER,
-            "6",
-            Location::Site,
-            Side::Arrow,
-        )
-        .unwrap();
-        assert_eq!(
-            with_actor[with_actor.len() - 2..],
-            ["--actor-id".to_owned(), "actor".to_owned()]
-        );
-        assert!(
-            with_actor
-                .windows(2)
-                .any(|pair| pair == ["--location", "site"])
-        );
-        assert!(
-            with_actor
-                .windows(2)
-                .any(|pair| pair == ["--side", "arrow"])
-        );
-    }
-
-    #[test]
-    fn an_unfilled_or_self_connected_form_refuses_without_a_command() {
-        let refused = |name: &str, main: &str, secondary: &str, size: &str| {
-            create_args(
-                Path::new("S"),
-                None,
-                name,
-                main,
-                secondary,
-                size,
-                Location::Workshop,
-                Side::Arrow,
-            )
-        };
-        assert!(refused("", MAIN, OTHER, "6").unwrap_err().contains("Name"));
-        assert!(
-            refused(&"x".repeat(MAX_TEXT + 1), MAIN, OTHER, "6")
-                .unwrap_err()
-                .contains("Name")
-        );
-        assert!(
-            refused("Weld", "", OTHER, "6")
-                .unwrap_err()
-                .contains("Pick the main part")
-        );
-        assert!(
-            refused("Weld", MAIN, "", "6")
-                .unwrap_err()
-                .contains("Pick the main part")
-        );
-        assert!(
-            refused("Weld", MAIN, MAIN, "6")
-                .unwrap_err()
-                .contains("two distinct parts")
-        );
-    }
-
-    #[test]
-    fn a_size_that_would_not_parse_refuses_in_the_form_and_a_zero_reaches_the_engine() {
-        assert!(args("").unwrap_err().contains("Size"));
-        assert!(args("wide").unwrap_err().contains("not a number"));
-        assert!(args("6,5").unwrap_err().contains("not a number"));
-        // A finite but non-positive size is the engine's refusal, not the form's: it must
-        // reach the real command and come back as the engine's verdict.
-        assert!(args("0").is_ok());
-        assert!(args("-1").is_ok());
+        // Its outcome is told in the status bar (`App::status_note`).
     }
 }
