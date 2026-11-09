@@ -1459,7 +1459,7 @@ write.
 ```text
 screenshot-view --store ROOT --out FILE [--width U32] [--height U32] [--samples 1|4] [--yaw RAD]
     [--pitch RAD] [--projection perspective|ortho] [--zoom F32] [--pan X,Y] [--colour-set TEXT]
-    [--background light|dark]
+    [--background light|dark] [--grids true|false]
 ```
 
 ## bom
@@ -1479,7 +1479,32 @@ export-bom --store ROOT --out FILE [--summary FILE]
 write.
 
 ```text
-schedule-export --store ROOT --template FILE --out FILE [--summary FILE] [--html FILE]
+schedule-export --store ROOT --out FILE [--template FILE] [--schedule NAME] [--summary FILE]
+    [--html FILE]
+```
+
+### schedule-define
+
+write.
+
+```text
+schedule-define --store ROOT --name NAME --template FILE
+```
+
+### schedule-undefine
+
+write.
+
+```text
+schedule-undefine --store ROOT --name NAME
+```
+
+### schedules
+
+read.
+
+```text
+schedules --store ROOT
 ```
 
 ## drawing
