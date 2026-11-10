@@ -4,6 +4,16 @@ Decisions that shape the plan, newest first. Each names its date and, where one 
 document that records it in detail. A later decision overrides an earlier one where they differ.
 Open questions are at the end.
 
+## 2026-11-10
+
+- **D08 closes with CUPS-only printer submission.** Owner decision ("закрыть с границами"):
+  the printer half of D08 is the native print service submission (CUPS `lp`), which covers
+  macOS and Linux desktops; a platform without a submission backend refuses
+  `BACKEND_UNAVAILABLE` until one exists, so the Windows submission backend and a native
+  print dialog are documented follow-ups (the Windows page itself is already the exact
+  1:1 PDF). The same decision moves the broader-drawing follow-up #333 out of the M4
+  milestone, so the epic #464 stays open while that work is tracked.
+
 ## 2026-11-09
 
 - **Gates K10 and K11 are passed.** Owner decision: the tools-and-views scope (T01 to T04,

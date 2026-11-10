@@ -9,6 +9,10 @@
 //! because a rescaled print would misstate every drawn size against its model-millimetre
 //! label. The rendered page goes through the shared PDF writer, so fonts and symbols stay
 //! BeamCraft's own stroke geometry.
+//!
+//! The page submits to the printer through CUPS `lp`, the native print service of macOS
+//! and Linux desktops: the PDF travels on stdin, so a submission leaves no temporary file.
+//! Any other platform refuses `BackendUnavailable` until a submission backend exists there.
 
 use super::Drawing;
 use super::pdf::{self, PagePath};
@@ -83,6 +87,167 @@ pub fn export(
         dash_mm: dash_array(layer.line_type),
     }));
     pdf::write_page(width_mm, height_mm, &paths, origin, &spec.name, &keywords)
+}
+
+/// One printer submission request for an exact rendered page: the PDF bytes, the job name
+/// the queue shows, and the target queue (`None` is the system default).
+pub struct PrintJob {
+    /// The exact rendered page, in the shared PDF writer's byte form.
+    pub pdf: Vec<u8>,
+    /// The name the queue shows for this job; control characters are trimmed and the
+    /// length is bounded at submission time.
+    pub name: String,
+    /// The target queue's name, or `None` for the system default printer.
+    pub printer: Option<String>,
+}
+
+/// Longest queue name the submission admits, in bytes.
+pub const PRINTER_NAME_MAX_BYTES: usize = 127;
+
+/// Longest job name the submission admits, in bytes.
+pub const JOB_NAME_MAX_BYTES: usize = 200;
+
+/// What one submission produced: the queue's own request line.
+#[derive(Debug)]
+pub struct Submission {
+    /// The request line `lp` printed for the accepted job.
+    pub request: String,
+}
+
+/// Trims ASCII control characters and bounds `value` to `cap` bytes without splitting a
+/// character; an empty remainder refuses.
+fn bounded_text(value: &str, cap: usize, empty: &'static str) -> Result<String, CommandError> {
+    let mut owned: String = value.chars().filter(|c| !c.is_ascii_control()).collect();
+    while owned.len() > cap {
+        owned.pop();
+    }
+    if owned.is_empty() {
+        return Err(CommandError::new(
+            ErrorCode::InvalidArgument,
+            "drawing_print",
+            empty,
+        ));
+    }
+    Ok(owned)
+}
+
+/// The exact `lp` invocation for `job`: one argument per entry, no shell. The queue name is
+/// stripped of control characters and bounded first, then must not start with `-` (it would
+/// read as an option), so the validated name is exactly the submitted one and stays within
+/// [`PRINTER_NAME_MAX_BYTES`]; the job name is bounded to [`JOB_NAME_MAX_BYTES`]. Both names
+/// keep no ASCII control characters.
+pub fn lp_arguments(job: &PrintJob) -> Result<Vec<String>, CommandError> {
+    let mut args = vec![String::from("lp")];
+    if let Some(printer) = &job.printer {
+        let name = bounded_text(
+            printer,
+            PRINTER_NAME_MAX_BYTES,
+            "the printer queue name is empty",
+        )?;
+        if name.starts_with('-') {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "drawing_print",
+                "a printer queue name may not start with '-'",
+            ));
+        }
+        args.push(String::from("-d"));
+        args.push(name);
+    }
+    args.push(String::from("-J"));
+    args.push(bounded_text(
+        &job.name,
+        JOB_NAME_MAX_BYTES,
+        "the print job name is empty",
+    )?);
+    Ok(args)
+}
+
+/// Submits the rendered page through CUPS `lp`: the PDF travels on stdin. A missing `lp`
+/// or a rejecting queue is `BackendUnavailable`, never a panic, and nothing is written to
+/// the filesystem.
+#[cfg(unix)]
+pub fn submit(job: &PrintJob) -> Result<Submission, CommandError> {
+    submit_using("lp", job)
+}
+
+/// Submits through an explicit print program; `submit` is this with the platform's `lp`.
+/// The seam exists so a test can drive a real submission end to end without touching the
+/// environment the other tests share.
+#[cfg(unix)]
+fn submit_using(program: &str, job: &PrintJob) -> Result<Submission, CommandError> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    let args = lp_arguments(job)?;
+    let Some((_command, rest)) = args.split_first() else {
+        return Err(CommandError::new(
+            ErrorCode::BackendUnavailable,
+            "drawing_print",
+            "the print invocation is empty",
+        ));
+    };
+    let mut child = Command::new(program)
+        .args(rest)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|_| {
+            CommandError::new(
+                ErrorCode::BackendUnavailable,
+                "drawing_print",
+                "the lp print command is not available",
+            )
+        })?;
+    let Some(mut stdin) = child.stdin.take() else {
+        return Err(CommandError::new(
+            ErrorCode::BackendUnavailable,
+            "drawing_print",
+            "the print command closed its input",
+        ));
+    };
+    if stdin.write_all(&job.pdf).is_err() {
+        // The service may exit before reading the page; reap it either way so no zombie
+        // is left behind.
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(CommandError::new(
+            ErrorCode::BackendUnavailable,
+            "drawing_print",
+            "the print command refused the page bytes",
+        ));
+    }
+    drop(stdin);
+    let output = child.wait_with_output().map_err(|_| {
+        CommandError::new(
+            ErrorCode::BackendUnavailable,
+            "drawing_print",
+            "the print command could not be waited on",
+        )
+    })?;
+    if !output.status.success() {
+        return Err(CommandError::new(
+            ErrorCode::BackendUnavailable,
+            "drawing_print",
+            "the print command rejected the job",
+        ));
+    }
+    Ok(Submission {
+        request: String::from_utf8_lossy(&output.stdout)
+            .trim_end()
+            .to_owned(),
+    })
+}
+
+/// Any platform without a submission backend refuses honestly until one exists.
+#[cfg(not(unix))]
+pub fn submit(_job: &PrintJob) -> Result<Submission, CommandError> {
+    Err(CommandError::new(
+        ErrorCode::BackendUnavailable,
+        "drawing_print",
+        "printer submission has no backend on this platform yet",
+    ))
 }
 
 #[cfg(test)]
@@ -223,6 +388,133 @@ mod tests {
                 .unwrap_err()
                 .code,
             ErrorCode::InvalidArgument
+        );
+    }
+
+    #[test]
+    fn the_lp_invocation_is_plain_argv_with_bounded_clean_names() {
+        let long: String = "m".repeat(500);
+        let named = PrintJob {
+            pdf: Vec::new(),
+            name: format!("sheet\u{c}feed {long}"),
+            printer: Some(String::from("shop-laser")),
+        };
+        let name = bounded_text(&named.name, JOB_NAME_MAX_BYTES, "empty").unwrap();
+        assert!(!name.contains('\u{c}'));
+        assert!(name.len() <= JOB_NAME_MAX_BYTES);
+        assert_eq!(
+            lp_arguments(&named).unwrap(),
+            vec![
+                String::from("lp"),
+                String::from("-d"),
+                String::from("shop-laser"),
+                String::from("-J"),
+                name,
+            ]
+        );
+        let default_queue = PrintJob {
+            pdf: Vec::new(),
+            name: String::from("Member drawing"),
+            printer: None,
+        };
+        assert_eq!(
+            lp_arguments(&default_queue).unwrap(),
+            vec![
+                String::from("lp"),
+                String::from("-J"),
+                String::from("Member drawing"),
+            ]
+        );
+        for bad in ["-evil", "\u{7}", "", "\u{1}-x"] {
+            let job = PrintJob {
+                pdf: Vec::new(),
+                name: String::from("x"),
+                printer: Some(String::from(bad)),
+            };
+            assert_eq!(
+                lp_arguments(&job).unwrap_err().code,
+                ErrorCode::InvalidArgument,
+                "{bad:?}"
+            );
+        }
+        let empty_name = PrintJob {
+            pdf: Vec::new(),
+            name: String::from("\u{1}"),
+            printer: None,
+        };
+        assert_eq!(
+            lp_arguments(&empty_name).unwrap_err().code,
+            ErrorCode::InvalidArgument
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_rejecting_queue_reports_the_backend_and_submits_nothing() {
+        let job = PrintJob {
+            pdf: b"%PDF-1.4\n".to_vec(),
+            name: String::from("beamcraft print test"),
+            printer: Some(String::from("beamcraft-no-such-queue")),
+        };
+        assert_eq!(
+            submit(&job).unwrap_err().code,
+            ErrorCode::BackendUnavailable
+        );
+    }
+
+    #[cfg(not(unix))]
+    #[test]
+    fn a_platform_without_a_backend_refuses_the_submission() {
+        let job = PrintJob {
+            pdf: Vec::new(),
+            name: String::from("x"),
+            printer: None,
+        };
+        assert_eq!(
+            submit(&job).unwrap_err().code,
+            ErrorCode::BackendUnavailable
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_successful_submission_hands_the_page_over_and_reports_the_request_line() {
+        #![allow(clippy::unwrap_used)]
+        use std::os::unix::fs::PermissionsExt;
+
+        // A stub print service: it records the argv it received, reads the page from stdin
+        // into a file and answers with a queue request line. `submit_using` drives it
+        // directly, so the test never touches the shared PATH.
+        let dir = std::env::temp_dir().join(format!("beamcraft-stub-lp-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let program = dir.join("lp");
+        let recorded_args = dir.join("args");
+        let page = dir.join("page.pdf");
+        std::fs::write(
+            &program,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\ncat > '{}'\necho 'request id is beamcraft-stub-1 (1 file(s))'\n",
+                recorded_args.display(),
+                page.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let job = PrintJob {
+            pdf: b"%PDF-1.4\nstub page".to_vec(),
+            name: String::from("stub drawing"),
+            printer: Some(String::from("shop-laser")),
+        };
+        let submitted = submit_using(program.to_str().unwrap(), &job).unwrap();
+        assert_eq!(
+            submitted.request,
+            "request id is beamcraft-stub-1 (1 file(s))"
+        );
+        assert_eq!(std::fs::read(&page).unwrap(), b"%PDF-1.4\nstub page");
+        let argv = std::fs::read_to_string(&recorded_args).unwrap();
+        assert_eq!(
+            argv, "-d\nshop-laser\n-J\nstub drawing\n",
+            "the invocation reaches the service as plain arguments"
         );
     }
 }
