@@ -8,6 +8,7 @@ use crate::camera::View;
 use crate::stats::Stats;
 use crate::tools::{FormError, LevelChoice, ToolError, decode, push_actor, rejection};
 use crate::{command, theme};
+use beamcraft_json::Json;
 use beamcraft_model::id::ElementId;
 use beamcraft_model::level::{level_elevations, level_names};
 use std::path::Path;
@@ -28,6 +29,9 @@ pub struct LevelForm {
     pub name: String,
     /// The elevation in millimetres, as typed.
     pub elevation: String,
+    /// A new elevation carries the beams and columns on the level with it
+    /// (`--move-elements true`).
+    pub move_elements: bool,
 }
 
 /// The text of the new-levels form: what `create-levels` takes.
@@ -89,6 +93,7 @@ impl LevelForm {
         Self {
             name: level.name.clone(),
             elevation: level.elevation_mm.to_string(),
+            move_elements: true,
         }
     }
 
@@ -142,6 +147,9 @@ impl LevelForm {
         }
         if elevation != level.elevation_mm {
             args.extend(["--elevation".into(), elevation.to_string()]);
+            if self.move_elements {
+                args.extend(["--move-elements".into(), "true".into()]);
+            }
         }
         push_actor(&mut args, actor);
         Ok(args)
@@ -166,8 +174,9 @@ pub fn prepare_delete(
     Ok(args)
 }
 
-/// Reads a command's reply; a level still in use gets a message that says what to do.
-pub fn parse_reply(exit: Option<i32>, bytes: &[u8]) -> Result<(), ToolError> {
+/// Reads a command's reply: the number of beams and columns that followed the level. A level
+/// still in use gets a message that says what to do.
+pub fn parse_reply(exit: Option<i32>, bytes: &[u8]) -> Result<usize, ToolError> {
     let reply = decode(bytes)?;
     match rejection(&reply, exit) {
         Some(mut error) => {
@@ -177,12 +186,15 @@ pub fn parse_reply(exit: Option<i32>, bytes: &[u8]) -> Result<(), ToolError> {
             }
             Err(error)
         }
-        None => Ok(()),
+        None => Ok(reply
+            .get("moved_elements")
+            .and_then(Json::array)
+            .map_or(0, <[Json]>::len)),
     }
 }
 
-/// Runs one prepared level command.
-pub fn commit(cli: &Path, args: &[String], stats: &Stats) -> Result<(), ToolError> {
+/// Runs one prepared level command; the result counts the beams and columns that followed.
+pub fn commit(cli: &Path, args: &[String], stats: &Stats) -> Result<usize, ToolError> {
     let out = command::run(cli, args, command::DEADLINE, stats)?;
     parse_reply(out.code, &out.stdout)
 }
@@ -393,6 +405,7 @@ mod tests {
         LevelForm {
             name: name.into(),
             elevation: elevation.into(),
+            move_elements: false,
         }
     }
 
@@ -505,6 +518,27 @@ mod tests {
         assert!(!form("L1", "3000.0").differs(&level()));
         assert!(form("L2", "3000").differs(&level()));
         assert!(form("L1", "x").differs(&level()));
+        // A moved elevation carries the members on the level when the box is ticked; a rename
+        // alone moves nothing and sends no flag.
+        let mut moving = form("L2", "3300");
+        moving.move_elements = true;
+        let args = moving.prepare_update(&level(), store, None).unwrap();
+        assert!(args.windows(2).any(|p| p == ["--move-elements", "true"]));
+        let renamed = LevelForm {
+            elevation: "3000".into(),
+            ..moving
+        };
+        let args = renamed.prepare_update(&level(), store, None).unwrap();
+        assert!(!args.iter().any(|a| a == "--move-elements"));
+        assert!(LevelForm::of(&level()).move_elements, "on by default");
+        assert_eq!(
+            parse_reply(
+                Some(0),
+                br#"{"outcome":"level_updated","moved_elements":["a","b"]}"#
+            )
+            .unwrap(),
+            2
+        );
     }
 
     #[test]

@@ -105,7 +105,7 @@ impl Fixture {
             .collect()
     }
 
-    fn commit(&self, args: &[String]) -> Result<(), beamcraft_ui::tools::ToolError> {
+    fn commit(&self, args: &[String]) -> Result<usize, beamcraft_ui::tools::ToolError> {
         levels::commit(&self.cli, args, &Stats::default())
     }
 }
@@ -120,6 +120,7 @@ fn form(name: &str, elevation: &str) -> LevelForm {
     LevelForm {
         name: name.into(),
         elevation: elevation.into(),
+        move_elements: false,
     }
 }
 
@@ -209,4 +210,66 @@ fn a_spaced_batch_of_levels_is_one_revision_and_one_undo_unit() {
     assert!(f.levels().is_empty(), "one undo removes the whole batch");
     f.history("redo-workspace");
     assert_eq!(f.levels().len(), 8);
+}
+
+#[test]
+fn a_column_on_a_moved_level_follows_it_and_one_undo_restores_both() {
+    let f = Fixture::new();
+    let store = f.workspace.clone();
+    let store_text = store.to_str().unwrap();
+    let profile = f.ok(&[
+        "define-profile",
+        "--store",
+        store_text,
+        "--width",
+        "200",
+        "--height",
+        "200",
+    ]);
+    let digest = profile
+        .get("definition")
+        .unwrap()
+        .get("digest")
+        .unwrap()
+        .string()
+        .unwrap()
+        .to_owned();
+    f.ok(&[
+        "create-member",
+        "--store",
+        store_text,
+        "--kind",
+        "column",
+        "--start",
+        "0,0,0",
+        "--end",
+        "0,0,3000",
+        "--profile-digest",
+        &digest,
+    ]);
+    let top = || {
+        let inspected = f.ok(&["inspect-elements", "--store", store_text]);
+        let member = &inspected.get("members").unwrap().array().unwrap()[0];
+        let axis = member.get("axis_points_mm").unwrap().array().unwrap();
+        axis[1].array().unwrap()[2].float().unwrap()
+    };
+    let batch = NewLevelsForm {
+        elevations: "3000".into(),
+        names: String::new(),
+    };
+    f.commit(&batch.prepare(&store, Some(ACTOR)).unwrap())
+        .unwrap();
+    let level = f.levels().remove(0);
+    let mut moved = LevelForm::of(&level);
+    moved.elevation = "3600".into();
+    let followed = f
+        .commit(&moved.prepare_update(&level, &store, Some(ACTOR)).unwrap())
+        .unwrap();
+    assert_eq!(followed, 1);
+    assert_eq!(top(), 3600.0);
+    assert_eq!(f.levels()[0].elevation_mm, 3600.0);
+
+    f.history("undo-workspace");
+    assert_eq!(top(), 3000.0, "one undo restores the column");
+    assert_eq!(f.levels()[0].elevation_mm, 3000.0, "and the level");
 }

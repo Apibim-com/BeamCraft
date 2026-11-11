@@ -707,6 +707,94 @@ fn levels_are_generated_from_a_spacing_expression_in_one_revision() {
 }
 
 #[test]
+fn moving_a_level_carries_the_beams_and_columns_on_it_in_one_revision() {
+    let f = Fixture::new();
+    f.level(STOREY, "Level 1", "3000");
+    let profile = text(
+        at(
+            &f.ok("define-profile", &["--width", "200", "--height", "200"]),
+            &["definition"],
+        ),
+        "digest",
+    );
+    let member = |start: &str, end: &str, extra: &[&str]| {
+        let mut args = vec!["--start", start, "--end", end, "--profile-digest", &profile];
+        args.extend_from_slice(extra);
+        text(at(&f.ok("create-member", &args), &["member"]), "element_id")
+    };
+    let column = member("0,0,0", "0,0,3000", &["--kind", "column"]);
+    // Placed 1000 up: its local top at 2000 is the level in the world.
+    let raised = member(
+        "5000,0,0",
+        "5000,0,2000",
+        &["--kind", "column", "--translation", "0,0,1000"],
+    );
+    let beam = member("0,0,3000", "5000,0,3000", &[]);
+    let below = member("0,0,1500", "5000,0,1500", &[]);
+    let axis = |id: &str| -> Vec<Vec<f64>> {
+        list(element(&f.inspect(), "members", id), "axis_points_mm")
+            .iter()
+            .map(|p| {
+                p.array()
+                    .unwrap()
+                    .iter()
+                    .map(|v| v.float().unwrap())
+                    .collect()
+            })
+            .collect()
+    };
+    let head = f.head();
+    let op = "019a7bf0-0000-7000-8000-00000000b301";
+    let args = [
+        "--id",
+        STOREY,
+        "--elevation",
+        "3500",
+        "--move-elements",
+        "true",
+        "--op-id",
+        op,
+    ];
+    let moved = f.ok("update-level", &args);
+    let mut expected = vec![column.clone(), raised.clone(), beam.clone()];
+    expected.sort();
+    assert_eq!(strings(&moved, "moved_elements"), expected);
+    assert_eq!(axis(&column), [vec![0.0, 0.0, 0.0], vec![0.0, 0.0, 3500.0]]);
+    assert_eq!(
+        axis(&raised),
+        [vec![5000.0, 0.0, 0.0], vec![5000.0, 0.0, 2500.0]]
+    );
+    assert_eq!(
+        axis(&beam),
+        [vec![0.0, 0.0, 3500.0], vec![5000.0, 0.0, 3500.0]]
+    );
+    assert_eq!(
+        axis(&below),
+        [vec![0.0, 0.0, 1500.0], vec![5000.0, 0.0, 1500.0]]
+    );
+    // One revision, and the same operation replays it.
+    let after = f.head();
+    assert_ne!(after, head);
+    assert_eq!(
+        text(&f.ok("update-level", &args), "outcome"),
+        "level_updated_replayed"
+    );
+    assert_eq!(f.head(), after);
+
+    // Without the flag the members stay where they are.
+    let still = f.ok("update-level", &["--id", STOREY, "--elevation", "4000"]);
+    assert!(strings(&still, "moved_elements").is_empty());
+    assert_eq!(axis(&column), [vec![0.0, 0.0, 0.0], vec![0.0, 0.0, 3500.0]]);
+    assert_eq!(
+        f.rejected(
+            "update-level",
+            &["--id", STOREY, "--elevation", "1", "--move-elements", "yes"]
+        ),
+        "INVALID_ARGUMENT"
+    );
+}
+
+#[test]
 fn replay_reuse_delete_and_copy_follow_the_level_records() {
     let f = Fixture::new();
     let plate = f.plate();

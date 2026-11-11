@@ -1428,6 +1428,7 @@ pub const COMMANDS: &[Command] = &[
             req("--id", "UUID"),
             opt("--name", "TEXT"),
             opt("--elevation", "MM"),
+            opt("--move-elements", "true|false"),
         ],
     ),
     entry(

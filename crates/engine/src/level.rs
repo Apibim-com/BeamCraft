@@ -306,6 +306,7 @@ mod tests {
             target_id,
             name: name.map(str::to_owned),
             elevation_mm,
+            move_elements: false,
         };
         let moved = m.update(&update(id(1), Some("L1"), Some(500.0))).unwrap();
         assert_eq!(moved.name, None);

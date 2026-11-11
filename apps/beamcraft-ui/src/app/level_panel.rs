@@ -32,7 +32,7 @@ impl Gesture {
     }
 }
 
-type Job = Receiver<Result<(), ToolError>>;
+type Job = Receiver<Result<usize, ToolError>>;
 
 /// The state of the levels bench.
 #[derive(Default)]
@@ -91,7 +91,7 @@ impl App {
             ui.label("No levels yet. Enter their elevations below.");
         }
         // The form below keeps its height; a new batch adds its preview.
-        let footer = if selected.is_some() { 200.0 } else { 330.0 };
+        let footer = if selected.is_some() { 230.0 } else { 330.0 };
         let mut picked = None;
         egui::ScrollArea::vertical()
             .id_salt("level-list")
@@ -133,6 +133,14 @@ impl App {
                         .char_limit(64),
                 );
             });
+            ui.checkbox(
+                &mut self.level_panel.form.move_elements,
+                "Beams and columns on the level follow it",
+            )
+            .on_hover_text(
+                "Axis ends of straight beams and columns at the old elevation move to the new \
+                 one in the same undo step.",
+            );
             if ui.button("Delete level").clicked() {
                 let prepared =
                     levels::prepare_delete(level, &self.source.store, self.source.actor.as_deref());
@@ -265,14 +273,19 @@ impl App {
         };
         self.level_panel.job = None;
         match result {
-            Ok(()) => {
+            Ok(moved) => {
                 if gesture == Gesture::Create {
                     self.level_panel.batch = NewLevelsForm::default();
                 }
                 if gesture != Gesture::Update {
                     self.level_panel.clear();
                 }
-                self.level_panel.note = Some(Ok(gesture.done().to_owned()));
+                let note = match moved {
+                    0 => gesture.done().to_owned(),
+                    1 => format!("{} One beam or column followed it.", gesture.done()),
+                    n => format!("{} {n} beams and columns followed it.", gesture.done()),
+                };
+                self.level_panel.note = Some(Ok(note));
                 self.reload();
                 self.refresh_status();
             }

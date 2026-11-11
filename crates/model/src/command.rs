@@ -370,7 +370,7 @@ fn check_level_elevation(elevation_mm: f64) -> Result<(), CommandError> {
 }
 
 /// D2 `UpdateLevel`: a new name, a new elevation or both for an existing level. The elevation
-/// moves no element: a level has no geometric effect.
+/// moves no element unless `move_elements` asks for it: a level itself has no geometric effect.
 #[derive(Debug, Clone, PartialEq)]
 pub struct UpdateLevel {
     /// The level to change.
@@ -379,6 +379,10 @@ pub struct UpdateLevel {
     pub name: Option<String>,
     /// The new elevation in millimetres, when it changes; the bounds of `CreateLevel` apply.
     pub elevation_mm: Option<f64>,
+    /// With a new elevation, the axis ends of straight beams and columns that lie at the old
+    /// elevation move to the new one in the same revision. The elements are matched by where
+    /// they are, not by a stored binding.
+    pub move_elements: bool,
 }
 
 impl UpdateLevel {
@@ -422,6 +426,10 @@ impl UpdateLevel {
                 )
                 .with_rule("DV-ATTR-003")
             })?);
+        }
+        // Appended only when set: a request without it keeps the fingerprint it always had.
+        if self.move_elements {
+            bytes.extend_from_slice(b"\0move-elements");
         }
         Sha256::digest(&bytes).map_err(|_| {
             CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")

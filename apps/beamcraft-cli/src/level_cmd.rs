@@ -55,7 +55,13 @@ fn run(args: &[OsString]) -> Run<Json> {
     let own: &[&str] = match *command {
         "create-level" => &["--store", "--name", "--elevation", "--new-id"],
         "create-levels" => &["--store", "--elevations", "--names"],
-        "update-level" => &["--store", "--id", "--name", "--elevation"],
+        "update-level" => &[
+            "--store",
+            "--id",
+            "--name",
+            "--elevation",
+            "--move-elements",
+        ],
         "levels" => &["--store"],
         _ => return Err(invalid("unknown command")),
     };
@@ -114,6 +120,11 @@ fn run(args: &[OsString]) -> Run<Json> {
             target_id,
             name: given("--name").map(str::to_owned),
             elevation_mm: given("--elevation").map(elevation).transpose()?,
+            move_elements: match given("--move-elements") {
+                None | Some("false") => false,
+                Some("true") => true,
+                Some(_) => return Err(invalid("--move-elements is true or false")),
+            },
         };
         let change = update_level(&store, &context, &update, &mut NoFault)?;
         return change_json(target_id, context.op_id, &change, "level_updated");
@@ -218,6 +229,16 @@ fn change_json(subject: ElementId, op_id: OpId, change: &LevelChange, accepted: 
             Json::Array(change.changed_layers.iter().map(Json::text).collect()),
         ),
         ("levels", views_json(&change.levels)?),
+        (
+            "moved_elements",
+            Json::Array(
+                change
+                    .moved
+                    .iter()
+                    .map(|id| Json::text(id.to_string()))
+                    .collect(),
+            ),
+        ),
         ("revision", revision_json(&change.revision)),
         ("footprint", footprint_json(change.footprint.as_ref())),
     ]))

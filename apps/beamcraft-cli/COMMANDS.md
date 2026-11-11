@@ -783,8 +783,9 @@ create-levels --store ROOT --elevations EXPR [--names TEXT] [--op-id UUID] [--re
 write.
 
 ```text
-update-level --store ROOT --id UUID [--name TEXT] [--elevation MM] [--op-id UUID]
-    [--revision-id UUID] [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
+update-level --store ROOT --id UUID [--name TEXT] [--elevation MM] [--move-elements true|false]
+    [--op-id UUID] [--revision-id UUID] [--actor-id UUID] [--project-id UUID]
+    [--workspace-id UUID]
 ```
 
 ### levels

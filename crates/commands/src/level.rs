@@ -82,6 +82,9 @@ pub struct LevelChange {
     pub changed_layers: Vec<String>,
     /// The levels of the resulting head.
     pub levels: Vec<LevelView>,
+    /// The beams and columns an `update-level --move-elements` carried to the new elevation, in
+    /// identity order; empty for any other call and for a replay.
+    pub moved: Vec<ElementId>,
 }
 
 /// The kinds, levels and level records of a pinned set of prims. Elements of foreign or unknown
@@ -275,6 +278,7 @@ pub fn create_level(
                 footprint: None,
                 changed_layers: Vec::new(),
                 levels: views(&model),
+                moved: Vec::new(),
             });
         }
         PriorOp::Accepted { .. } => {
@@ -340,6 +344,7 @@ pub fn create_level(
         footprint: Some(creation.footprint),
         changed_layers,
         levels: levels(store)?,
+        moved: Vec::new(),
     })
 }
 
@@ -379,6 +384,7 @@ pub fn create_levels(
             footprint: None,
             changed_layers: Vec::new(),
             levels: views(&model),
+            moved: Vec::new(),
         });
     }
     let (creation, created) = model.create_all(command)?;
@@ -452,6 +458,7 @@ pub fn create_levels(
         footprint: Some(creation.footprint),
         changed_layers,
         levels: levels(store)?,
+        moved: Vec::new(),
     })
 }
 
@@ -490,6 +497,7 @@ pub fn update_level(
             footprint: None,
             changed_layers: Vec::new(),
             levels: views(&model),
+            moved: Vec::new(),
         });
     }
     // A pinned coordination level is foreign bytes: no authority of this store reaches it.
@@ -502,6 +510,27 @@ pub fn update_level(
         .into());
     }
     let update = model.update(command)?;
+    // The beams and columns on the level follow a new elevation in the same revision, read from
+    // the same pinned base.
+    let follow = match (
+        command.move_elements,
+        update.elevation_mm,
+        model.level(&command.target_id),
+    ) {
+        (true, Some(to_mm), Some(record)) => {
+            crate::level_follow::follow_level(&base_request, &control, record.elevation_mm, to_mm)?
+        }
+        _ => crate::level_follow::Follow::default(),
+    };
+    if !follow.moved.is_empty() && !crate::scope::is_classic(store)? {
+        return Err(CommandError::new(
+            ErrorCode::UnsupportedProperty,
+            "move_elements",
+            "elements follow a level only in a store without section scopes",
+        )
+        .into());
+    }
+    let footprint = update.footprint.union(follow.footprint)?;
     let before: BTreeMap<String, _> = base
         .assets
         .iter()
@@ -520,7 +549,7 @@ pub fn update_level(
     let index = author.element_index(&opened.context, &control)?;
     let id = beamcraft_layer_engine::index::ElementId::parse(&command.target_id.to_string())?;
     author.authorize_write(&index, &id, &control)?;
-    let mut changes = Vec::with_capacity(2);
+    let mut changes = Vec::with_capacity(2usize.saturating_add(follow.changes.len()));
     if let Some(name) = &update.name {
         changes.push(Change::Label {
             id: command.target_id.to_string(),
@@ -533,6 +562,7 @@ pub fn update_level(
             elevation_mm,
         });
     }
+    changes.extend(follow.changes);
     let prepared = author.prepare(
         Prepare {
             context: opened.context.clone(),
@@ -544,12 +574,12 @@ pub fn update_level(
         },
         &control,
     )?;
-    check_footprint(&prepared, &update.footprint)?;
+    check_footprint(&prepared, &footprint)?;
     let changed_layers = changed_layers(&prepared, &before);
     let committed = publish_revision(
         store,
         &PublishRequest {
-            footprint: &update.footprint,
+            footprint: &footprint,
             fingerprint,
             prepared: &prepared,
             schema,
@@ -568,8 +598,9 @@ pub fn update_level(
     Ok(LevelChange {
         replayed: false,
         revision: summarize(&committed.info),
-        footprint: Some(update.footprint),
+        footprint: Some(footprint),
         changed_layers,
         levels: levels(store)?,
+        moved: follow.moved,
     })
 }

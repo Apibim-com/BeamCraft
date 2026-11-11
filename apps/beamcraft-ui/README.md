@@ -76,9 +76,12 @@ beamcraft-ui --store ROOT --perf-run PLAN [--samples 1|4] [--cli PATH]
   (`-1000 1000 6*3500`: the first elevation, then spacings) and optional comma-separated names;
   the rest of the names continue from the last one, or from `Level 1`, skipping names in use. A
   preview lists what Create makes, and the whole batch is one `create-levels`. A selected level is
-  renamed, re-elevated or deleted through `update-level` and `delete-element`. Every gesture is one
-  revision and one undo unit. A new elevation moves no element, and a level that elements use
-  cannot be deleted. Level plans pick their level from the same list.
+  renamed, re-elevated or deleted through `update-level` and `delete-element`. With "Beams and
+  columns on the level follow it" ticked (the default), a new elevation also moves the axis ends
+  of straight beams and columns that lie at the old elevation (`--move-elements true`): a column
+  placed up to the level stretches, a beam on it moves. They are matched by position, not by a
+  stored binding (H01.2, #820). Every gesture is one revision and one undo unit. A level that
+  elements use cannot be deleted. Level plans pick their level from the same list.
 - Manage > Rectangular grid restores regular-grid creation in the inspector: U/V coordinate
   expressions, labels, optional line limits, XY origin and rotation. Create invokes the existing
   CLI; Cancel does not write. The pinned snapshot includes grid axes for display and framing.
