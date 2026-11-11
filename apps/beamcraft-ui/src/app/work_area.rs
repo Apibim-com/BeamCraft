@@ -855,6 +855,7 @@ impl App {
                     response.rect,
                     &view,
                     l.summary.origin_mm[2],
+                    self.grid_scene.bounds(&l.summary),
                     &self.tools.definitions.levels,
                     self.level_panel.selected_id(),
                 );

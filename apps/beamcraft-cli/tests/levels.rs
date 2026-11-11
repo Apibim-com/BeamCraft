@@ -621,6 +621,92 @@ fn a_level_is_renamed_and_re_elevated_without_moving_its_elements() {
 }
 
 #[test]
+fn levels_are_generated_from_a_spacing_expression_in_one_revision() {
+    let f = Fixture::new();
+    f.level(STOREY, "Level 1", "3000");
+    let head = f.head();
+    let op = "019a7bf0-0000-7000-8000-00000000b201";
+    let args = [
+        "--elevations",
+        "-1000 1000 3*3500",
+        "--names",
+        "B1, Level 0",
+        "--op-id",
+        op,
+    ];
+    let created = f.ok("create-levels", &args);
+    assert_eq!(text(&created, "outcome"), "levels_created");
+    assert_eq!(strings(&created, "changed_layers"), ["authored.usda"]);
+    let ids = strings(&created, "element_ids");
+    assert_eq!(ids.len(), 5);
+    let listed = f.levels();
+    let named: Vec<(String, Json)> = ids
+        .iter()
+        .map(|id| {
+            let level = level(&listed, id);
+            (
+                text(level, "name").to_owned(),
+                level.get("elevation_mm").unwrap().clone(),
+            )
+        })
+        .collect();
+    let expected = [
+        ("B1", -1000.0),
+        ("Level 0", 0.0),
+        // "Level 1" is in use, so the names continue past it.
+        ("Level 2", 3500.0),
+        ("Level 3", 7000.0),
+        ("Level 4", 10500.0),
+    ];
+    assert_eq!(
+        named,
+        expected
+            .iter()
+            .map(|(n, e)| ((*n).to_owned(), Json::number(*e).unwrap()))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(listed.len(), 6);
+
+    // The whole batch is one revision, and the same operation replays it.
+    let after = f.head();
+    assert_ne!(after, head);
+    let replayed = f.ok("create-levels", &args);
+    assert_eq!(text(&replayed, "outcome"), "levels_created_replayed");
+    assert_eq!(f.head(), after);
+    assert_eq!(
+        f.rejected("create-levels", &["--elevations", "0", "--op-id", op]),
+        "OP_ID_REUSE"
+    );
+
+    // Without names the levels are named from "Level 1", skipping the names in use.
+    let unnamed = f.ok("create-levels", &["--elevations", "30000 3000"]);
+    let ids = strings(&unnamed, "element_ids");
+    let listed = f.levels();
+    assert_eq!(
+        ids.iter()
+            .map(|id| text(level(&listed, id), "name").to_owned())
+            .collect::<Vec<_>>(),
+        ["Level 5", "Level 6"]
+    );
+
+    // Refusals write nothing.
+    let head = f.head();
+    for (extra, code) in [
+        (vec![], "INVALID_ARGUMENT"),
+        (vec!["--elevations", ""], "INVALID_ARGUMENT"),
+        (vec!["--elevations", "-1000 0 6*3500"], "INVALID_ARGUMENT"),
+        (vec!["--elevations", "0 201*1000"], "LIMIT_EXCEEDED"),
+        (
+            vec!["--elevations", "0 3000", "--names", "A\u{7}"],
+            "INVALID_ARGUMENT",
+        ),
+    ] {
+        assert_eq!(f.rejected("create-levels", &extra), code, "{extra:?}");
+        assert_eq!(f.head(), head, "{extra:?}");
+    }
+}
+
+#[test]
 fn replay_reuse_delete_and_copy_follow_the_level_records() {
     let f = Fixture::new();
     let plate = f.plate();

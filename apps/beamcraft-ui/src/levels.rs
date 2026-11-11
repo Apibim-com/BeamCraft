@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! The levels form: it prepares `create-level`, `update-level` and `delete-element` as the same
+//! The levels form: it prepares `create-levels`, `update-level` and `delete-element` as the same
 //! commands the CLI runs. One gesture is one command, hence one revision and one undo unit.
 
 use crate::camera::View;
@@ -9,6 +9,7 @@ use crate::stats::Stats;
 use crate::tools::{FormError, LevelChoice, ToolError, decode, push_actor, rejection};
 use crate::{command, theme};
 use beamcraft_model::id::ElementId;
+use beamcraft_model::level::{level_elevations, level_names};
 use std::path::Path;
 
 /// The longest name a section caption shows, in characters.
@@ -17,6 +18,8 @@ const MAX_CAPTION_CHARS: usize = 32;
 const CAPTION_HEIGHT: f32 = 20.0;
 /// The distance of a level's mark from the pane's right edge, in points.
 const MARK_INSET: f32 = 16.0;
+/// How far a level's line runs past the model and the grids on either side, in points.
+const LINE_OVERHANG: f32 = 40.0;
 
 /// The text of the level form.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -25,6 +28,46 @@ pub struct LevelForm {
     pub name: String,
     /// The elevation in millimetres, as typed.
     pub elevation: String,
+}
+
+/// The text of the new-levels form: what `create-levels` takes.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct NewLevelsForm {
+    /// The elevations: the first one, then spacings, `N*D` for N equal spacings (millimetres).
+    pub elevations: String,
+    /// Names separated by commas; the rest are generated. Empty generates every name.
+    pub names: String,
+}
+
+impl NewLevelsForm {
+    /// The levels the form creates in a model holding `existing`, lowest first, named as the
+    /// engine names them.
+    pub fn preview(&self, existing: &[LevelChoice]) -> Result<Vec<(String, f64)>, FormError> {
+        let elevations = level_elevations(&self.elevations)
+            .map_err(|error| form_error("Elevations", error.message))?;
+        let used = existing.iter().map(|level| level.name.clone()).collect();
+        let names = level_names(&self.names, elevations.len(), &used)
+            .map_err(|error| form_error("Names", error.message))?;
+        Ok(names.into_iter().zip(elevations).collect())
+    }
+
+    /// The arguments of `create-levels`.
+    pub fn prepare(&self, store: &Path, actor: Option<&str>) -> Result<Vec<String>, FormError> {
+        self.preview(&[])?;
+        let mut args = vec![
+            "create-levels".to_owned(),
+            "--store".into(),
+            store_text(store)?.into(),
+            "--elevations".into(),
+            self.elevations.trim().to_owned(),
+        ];
+        let names = self.names.trim();
+        if !names.is_empty() {
+            args.extend(["--names".into(), names.to_owned()]);
+        }
+        push_actor(&mut args, actor);
+        Ok(args)
+    }
 }
 
 fn form_error(field: &'static str, message: &str) -> FormError {
@@ -67,25 +110,6 @@ impl LevelForm {
             .ok()
             .filter(|value| value.is_finite())
             .ok_or_else(|| form_error("Elevation", "Enter a finite number using a decimal point."))
-    }
-
-    /// The arguments of `create-level`.
-    pub fn prepare_create(
-        &self,
-        store: &Path,
-        actor: Option<&str>,
-    ) -> Result<Vec<String>, FormError> {
-        let mut args = vec![
-            "create-level".to_owned(),
-            "--store".into(),
-            store_text(store)?.into(),
-            "--name".into(),
-            self.name()?.into(),
-            "--elevation".into(),
-            self.elevation()?.to_string(),
-        ];
-        push_actor(&mut args, actor);
-        Ok(args)
     }
 
     /// Whether the form differs from `level`, as the values it would send.
@@ -192,6 +216,40 @@ pub fn section_row(view: &View, rect: egui::Rect, origin_z: f64, elevation_mm: f
     (row.is_finite() && rect.y_range().contains(row)).then_some(row)
 }
 
+/// The span of a level's line across `rect`, in screen points: the model and the grids as the view
+/// sees them (`extent`, scene coordinates), with an overhang on either side; the middle half of
+/// the pane when there is nothing to measure. `None` when the span misses the pane.
+pub fn section_span(
+    view: &View,
+    rect: egui::Rect,
+    extent: Option<([f32; 3], [f32; 3])>,
+) -> Option<(f32, f32)> {
+    let to_screen = |x: f32| rect.left() + (x + 1.0) * rect.width() / 2.0;
+    let mut measured = (f32::INFINITY, f32::NEG_INFINITY);
+    if let Some(([lx, ly, lz], [hx, hy, hz])) = extent {
+        for x in [lx, hx] {
+            for y in [ly, hy] {
+                for z in [lz, hz] {
+                    let [sx, ..] = view.project([x, y, z]);
+                    let sx = to_screen(sx);
+                    measured = (measured.0.min(sx), measured.1.max(sx));
+                }
+            }
+        }
+    }
+    let (left, right) = if measured.0.is_finite() && measured.1.is_finite() {
+        (measured.0 - LINE_OVERHANG, measured.1 + LINE_OVERHANG)
+    } else {
+        (
+            rect.left() + rect.width() / 4.0,
+            rect.right() - rect.width() / 4.0,
+        )
+    };
+    let left = left.max(rect.left());
+    let right = right.min(rect.right() - MARK_INSET);
+    (left < right).then_some((left, right))
+}
+
 /// The caption of a level's line: its name, cut to fit, and its elevation.
 fn caption(level: &LevelChoice) -> String {
     let name: String = level.name.chars().take(MAX_CAPTION_CHARS).collect();
@@ -203,18 +261,23 @@ fn caption(level: &LevelChoice) -> String {
     format!("{name}{cut}  {:+} mm", level.elevation_mm)
 }
 
-/// Paints the levels seen edge-on: a dashed line across the pane and, at its right end, a mark
-/// with the name and elevation. Levels too close to caption keep their lines.
+/// Paints the levels seen edge-on: a dashed line over the model and the grids (`extent`, scene
+/// coordinates) and, at its right end, a mark with the name and elevation. Levels too close to
+/// caption keep their lines.
 pub fn paint_sections(
     ui: &egui::Ui,
     rect: egui::Rect,
     view: &View,
     origin_z: f64,
+    extent: Option<([f32; 3], [f32; 3])>,
     levels: &[LevelChoice],
     selected: Option<&str>,
 ) {
     let painter = ui.painter_at(rect);
     let palette = theme::Palette::current(ui);
+    let Some((left, right)) = section_span(view, rect, extent) else {
+        return;
+    };
     let mut last_caption = f32::NEG_INFINITY;
     for level in sorted(levels) {
         let Some(row) = section_row(view, rect, origin_z, level.elevation_mm) else {
@@ -228,12 +291,12 @@ pub fn paint_sections(
         };
         let stroke = egui::Stroke::new(if active { 2.0 } else { 1.0 }, color);
         painter.extend(egui::Shape::dashed_line(
-            &[egui::pos2(rect.left(), row), egui::pos2(rect.right(), row)],
+            &[egui::pos2(left, row), egui::pos2(right, row)],
             stroke,
             10.0,
             5.0,
         ));
-        let tip = egui::pos2(rect.right() - MARK_INSET, row);
+        let tip = egui::pos2(right, row);
         painter.add(egui::Shape::convex_polygon(
             vec![
                 tip,
@@ -254,7 +317,7 @@ pub fn paint_sections(
         );
         let size = galley.size();
         let corner = egui::pos2(
-            (rect.right() - MARK_INSET - 10.0 - size.x).max(rect.left() + 2.0),
+            (right - 10.0 - size.x).max(rect.left() + 2.0),
             row - size.y - 3.0,
         );
         painter.rect_filled(
@@ -334,39 +397,93 @@ mod tests {
     }
 
     #[test]
-    fn create_requires_a_name_and_a_finite_elevation() {
+    fn new_levels_are_previewed_as_the_engine_names_them_and_sent_as_typed() {
         let store = Path::new("model");
-        let args = form(" Roof ", "-250.5")
-            .prepare_create(store, None)
-            .unwrap();
+        let batch = NewLevelsForm {
+            elevations: " -1000 1000 2*3500 ".into(),
+            names: " B1 ".into(),
+        };
+        let mut existing = level();
+        existing.name = "B2".into();
         assert_eq!(
-            args,
+            batch.preview(&[existing]).unwrap(),
             [
-                "create-level",
-                "--store",
-                "model",
-                "--name",
-                "Roof",
-                "--elevation",
-                "-250.5"
+                ("B1".to_owned(), -1000.0),
+                ("B3".to_owned(), 0.0),
+                ("B4".to_owned(), 3500.0),
+                ("B5".to_owned(), 7000.0)
             ]
         );
         assert_eq!(
-            form("", "0").prepare_create(store, None).unwrap_err().field,
-            "Name"
+            batch.prepare(store, None).unwrap(),
+            [
+                "create-levels",
+                "--store",
+                "model",
+                "--elevations",
+                "-1000 1000 2*3500",
+                "--names",
+                "B1"
+            ]
         );
-        for bad in ["", "abc", "NaN", "inf", "1,5"] {
-            assert_eq!(
-                form("L", bad)
-                    .prepare_create(store, None)
-                    .unwrap_err()
-                    .field,
-                "Elevation",
-                "{bad}"
-            );
+        let generated = NewLevelsForm {
+            elevations: "0".into(),
+            names: "  ".into(),
+        };
+        assert_eq!(
+            generated.prepare(store, None).unwrap(),
+            ["create-levels", "--store", "model", "--elevations", "0"]
+        );
+        for (elevations, names, field) in [
+            ("", "", "Elevations"),
+            ("-1000 0 6*3500", "", "Elevations"),
+            ("0 3000", "A\u{7}", "Names"),
+        ] {
+            let form = NewLevelsForm {
+                elevations: elevations.into(),
+                names: names.into(),
+            };
+            assert_eq!(form.prepare(store, None).unwrap_err().field, field);
         }
     }
 
+    #[test]
+    fn a_level_line_spans_the_model_and_the_grids_not_the_pane() {
+        let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(1000.0, 500.0));
+        let view = Camera::aligned_to(
+            WorkPlane::parallel("xz", 0.0).unwrap(),
+            [0.0; 3],
+            1000.0,
+            2000.0,
+        )
+        .unwrap()
+        .view(2.0)
+        .unwrap();
+        let (left, right) = section_span(
+            &view,
+            rect,
+            Some(([-100.0, -50.0, 0.0], [100.0, 50.0, 300.0])),
+        )
+        .unwrap();
+        assert!(
+            left > rect.left() && right < rect.right(),
+            "{left}..{right}"
+        );
+        let [a, ..] = view.project([-100.0, 0.0, 0.0]);
+        let [b, ..] = view.project([100.0, 0.0, 0.0]);
+        let width = (b - a).abs() * rect.width() / 2.0;
+        assert!(
+            ((right - left) - (width + 2.0 * LINE_OVERHANG)).abs() < 0.5,
+            "{left}..{right} for {width}"
+        );
+        // Nothing to measure: the middle half of the pane.
+        assert_eq!(section_span(&view, rect, None), Some((250.0, 750.0)));
+        // A model far off the pane has no line on it.
+        assert_eq!(
+            section_span(&view, rect, Some(([1e6, 0.0, 0.0], [1.1e6, 0.0, 0.0]))),
+            None
+        );
+    }
     #[test]
     fn update_names_only_what_changed() {
         let store = Path::new("model");

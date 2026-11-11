@@ -22,6 +22,7 @@ use crate::footprint::Footprint;
 use beamcraft_model::command::{CommandError, CreateLevel, UpdateLevel};
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::ElementId;
+use beamcraft_model::level::CreateLevels;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// The kind of an element that can be assigned to a level.
@@ -153,6 +154,23 @@ impl Levels {
         Ok(Creation {
             footprint: Footprint::for_create(command.new_id, None)?,
         })
+    }
+
+    /// Decides the creation of several levels in one operation: the request is expanded against
+    /// the names the levels of this model use, and each level is decided as [`Levels::create`]
+    /// would. Returns the footprint, their union, and the levels to create. Errors leave nothing
+    /// applied.
+    pub fn create_all(
+        &self,
+        command: &CreateLevels,
+    ) -> Result<(Creation, Vec<CreateLevel>), CommandError> {
+        let used = self.levels.values().map(|r| r.name.clone()).collect();
+        let levels = command.levels(&used)?;
+        let mut footprint = Footprint::default();
+        for level in &levels {
+            footprint = footprint.union(self.create(level)?.footprint)?;
+        }
+        Ok((Creation { footprint }, levels))
     }
 
     /// Decides a level update: the arguments are admitted, the target must be a level
@@ -341,6 +359,35 @@ mod tests {
         assert_eq!(
             m.create(&create(3, 2e9)).unwrap_err().code,
             ErrorCode::LimitExceeded
+        );
+    }
+
+    #[test]
+    fn several_levels_are_decided_together_and_one_taken_identity_refuses_all() {
+        let m = model();
+        let all = CreateLevels {
+            new_ids: vec![id(3), id(4)],
+            elevations: "0 3000".into(),
+            names: String::new(),
+        };
+        let (created, levels) = m.create_all(&all).unwrap();
+        let union = Footprint::for_create(id(3), None)
+            .unwrap()
+            .union(Footprint::for_create(id(4), None).unwrap())
+            .unwrap();
+        assert_eq!(created.footprint, union);
+        // The model's levels are "L1" and "L2"; generated names start from "Level 1".
+        assert_eq!(
+            levels.iter().map(|l| l.name.as_str()).collect::<Vec<_>>(),
+            ["Level 1", "Level 2"]
+        );
+        let taken = CreateLevels {
+            new_ids: vec![id(3), id(1)],
+            ..all
+        };
+        assert_eq!(
+            m.create_all(&taken).unwrap_err().code,
+            ErrorCode::DuplicateId
         );
     }
 

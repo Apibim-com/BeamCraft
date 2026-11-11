@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! The levels bench: the levels of the displayed revision, and one form that creates a level or
-//! edits the selected one through the engine commands. The list is the pinned `definitions`
-//! reply, so it follows every revision, undo and redo included.
+//! The levels bench: the levels of the displayed revision, a form that creates several levels
+//! from one spacing expression, and one that edits the selected level, through the engine
+//! commands. The list is the pinned `definitions` reply, so it follows every revision, undo and
+//! redo included.
 
 use super::App;
-use crate::levels::{self, LevelForm};
+use crate::levels::{self, LevelForm, NewLevelsForm};
 use crate::theme;
 use crate::tools::{FormError, LevelChoice, ToolError};
 use egui::Ui;
@@ -24,7 +25,7 @@ enum Gesture {
 impl Gesture {
     const fn done(self) -> &'static str {
         match self {
-            Self::Create => "Level created.",
+            Self::Create => "Levels created.",
             Self::Update => "Level updated.",
             Self::Delete => "Level deleted.",
         }
@@ -37,7 +38,9 @@ type Job = Receiver<Result<(), ToolError>>;
 #[derive(Default)]
 pub(super) struct LevelPanel {
     form: LevelForm,
-    /// The identity of the level being edited; a new level otherwise.
+    /// The new levels, shown when no level is selected.
+    batch: NewLevelsForm,
+    /// The identity of the level being edited; new levels otherwise.
     selected: Option<String>,
     job: Option<(Gesture, Job)>,
     pub(super) note: Option<Result<String, String>>,
@@ -85,10 +88,10 @@ impl App {
         crate::kit::type_box(ui, theme::Icon::Table, "Levels");
         let all = self.tools.definitions.levels.clone();
         if all.is_empty() {
-            ui.label("No levels yet. Enter a name and an elevation below.");
+            ui.label("No levels yet. Enter their elevations below.");
         }
-        // The form below keeps its height; a selected level adds the Delete button.
-        let footer = if selected.is_some() { 240.0 } else { 200.0 };
+        // The form below keeps its height; a new batch adds its preview.
+        let footer = if selected.is_some() { 200.0 } else { 330.0 };
         let mut picked = None;
         egui::ScrollArea::vertical()
             .id_salt("level-list")
@@ -97,10 +100,7 @@ impl App {
             .show(ui, |ui| {
                 for level in levels::sorted(&all) {
                     let chosen = selected.as_ref().is_some_and(|s| s.id == level.id);
-                    let row = format!(
-                        "{}   {:+} mm   {} el.",
-                        level.name, level.elevation_mm, level.elements
-                    );
+                    let row = format!("{}   {:+} mm", level.name, level.elevation_mm);
                     if ui.selectable_label(chosen, row).clicked() {
                         picked = Some(level.clone());
                     }
@@ -110,6 +110,14 @@ impl App {
             self.level_panel.select(&level);
         }
         ui.separator();
+        match &selected {
+            Some(level) => self.level_edit_form(ui, level, busy),
+            None => self.new_levels_form(ui, &all, busy),
+        }
+    }
+
+    /// The form of the selected level: its name and elevation, and Delete.
+    fn level_edit_form(&mut self, ui: &mut Ui, level: &LevelChoice, busy: bool) {
         ui.add_enabled_ui(!busy, |ui| {
             crate::kit::prop_row(ui, "Name", |ui| {
                 ui.add(
@@ -125,60 +133,94 @@ impl App {
                         .char_limit(64),
                 );
             });
-            ui.small("A new elevation moves no element.");
-            if let Some(level) = &selected
-                && ui.button("Delete level").clicked()
-            {
+            if ui.button("Delete level").clicked() {
                 let prepared =
                     levels::prepare_delete(level, &self.source.store, self.source.actor.as_deref());
                 self.start_level(Gesture::Delete, prepared);
             }
         });
-        let selected = self.selected_level();
-        let enabled = selected
-            .as_ref()
-            .is_none_or(|level| self.level_panel.form.differs(level));
-        let done = crate::kit::actions(
-            ui,
-            if selected.is_some() {
-                "Apply changes"
-            } else {
-                "Create level"
-            },
-            enabled,
-            if selected.is_some() {
-                "New level"
-            } else {
-                "Close"
-            },
-            busy,
-        );
+        let enabled = self.level_panel.form.differs(level);
+        let done = crate::kit::actions(ui, "Apply changes", enabled, "New level", busy);
         if done.primary {
-            let store = self.source.store.clone();
-            let actor = self.source.actor.clone();
-            let form = &self.level_panel.form;
-            let (gesture, prepared) = match &selected {
-                Some(level) => (
-                    Gesture::Update,
-                    form.prepare_update(level, &store, actor.as_deref()),
-                ),
-                None => (
-                    Gesture::Create,
-                    form.prepare_create(&store, actor.as_deref()),
-                ),
-            };
-            self.start_level(gesture, prepared);
+            let prepared = self.level_panel.form.prepare_update(
+                level,
+                &self.source.store,
+                self.source.actor.as_deref(),
+            );
+            self.start_level(Gesture::Update, prepared);
         }
         if done.cancel {
             self.level_panel.note = None;
-            if selected.is_some() {
-                self.level_panel.clear();
-            } else {
-                self.set_bench(super::workbench::Bench::Select);
-            }
+            self.level_panel.clear();
         }
     }
 
+    /// The form of new levels: the elevations as a spacing expression, the names, and a preview
+    /// of what Create makes.
+    fn new_levels_form(&mut self, ui: &mut Ui, existing: &[LevelChoice], busy: bool) {
+        ui.add_enabled_ui(!busy, |ui| {
+            crate::kit::prop_row(ui, "Elevations (mm)", |ui| {
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.level_panel.batch.elevations)
+                        .hint_text("0 4*3000")
+                        .char_limit(4096),
+                );
+            });
+            ui.small("The first elevation, then spacings: -1000 1000 6*3500.");
+            crate::kit::prop_row(ui, "Names", |ui| {
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.level_panel.batch.names)
+                        .hint_text("Generated: Level 1, Level 2, …")
+                        .char_limit(4096),
+                );
+            });
+            ui.small("Names separated by commas; the rest continue from the last one.");
+        });
+        let preview = if self.level_panel.batch.elevations.trim().is_empty() {
+            None
+        } else {
+            Some(self.level_panel.batch.preview(existing))
+        };
+        match &preview {
+            Some(Ok(rows)) => {
+                ui.label(format!(
+                    "{} new level{}:",
+                    rows.len(),
+                    if rows.len() == 1 { "" } else { "s" }
+                ));
+                egui::ScrollArea::vertical()
+                    .id_salt("level-preview")
+                    .max_height(110.0)
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| {
+                        for (name, elevation_mm) in rows.iter().rev() {
+                            ui.small(format!("{name}   {elevation_mm:+} mm"));
+                        }
+                    });
+            }
+            Some(Err(error)) => {
+                ui.colored_label(ui.visuals().error_fg_color, error.to_string());
+            }
+            None => {}
+        }
+        let enabled = matches!(preview, Some(Ok(_)));
+        let label = match &preview {
+            Some(Ok(rows)) if rows.len() > 1 => "Create levels",
+            _ => "Create level",
+        };
+        let done = crate::kit::actions(ui, label, enabled, "Close", busy);
+        if done.primary {
+            let prepared = self
+                .level_panel
+                .batch
+                .prepare(&self.source.store, self.source.actor.as_deref());
+            self.start_level(Gesture::Create, prepared);
+        }
+        if done.cancel {
+            self.level_panel.note = None;
+            self.set_bench(super::workbench::Bench::Select);
+        }
+    }
     fn start_level(&mut self, gesture: Gesture, prepared: Result<Vec<String>, FormError>) {
         if self.other_command_running() {
             return;
@@ -224,6 +266,9 @@ impl App {
         self.level_panel.job = None;
         match result {
             Ok(()) => {
+                if gesture == Gesture::Create {
+                    self.level_panel.batch = NewLevelsForm::default();
+                }
                 if gesture != Gesture::Update {
                     self.level_panel.clear();
                 }

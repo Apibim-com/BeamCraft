@@ -66,13 +66,17 @@ beamcraft-ui --store ROOT --perf-run PLAN [--samples 1|4] [--cli PATH]
   page. Ctrl+K searches supported commands in a native dialog.
   Existing create/edit/property/publish commands still use the same CLI paths. Ribbon tools that
   do not exist yet stay disabled, with a "Not available yet" tooltip.
-- An orthographic elevation or section shows every level on the pane as a dashed line with its
-  name and elevation at the right end; the view's grid switch shows and hides them with the grids.
-- Manage > Levels lists the model's levels from the highest down, with their elevations and the
-  number of assigned elements. The form creates a level, or edits the selected one, through
-  `create-level`, `update-level` and `delete-element`: one gesture is one revision and one undo
-  unit. A new elevation moves no element, and a level that elements use cannot be deleted. Level
-  plans pick their level from the same list.
+- An orthographic elevation or section shows every level as a dashed line over the model and the
+  grids, running a little past them on both sides, with its name and elevation at the right end;
+  the view's grid switch shows and hides them with the grids.
+- Manage > Levels lists the model's levels from the highest down, with their elevations. With no
+  level selected, the form creates levels from a spacing expression read like a grid family's
+  (`-1000 1000 6*3500`: the first elevation, then spacings) and optional comma-separated names;
+  the rest of the names continue from the last one, or from `Level 1`, skipping names in use. A
+  preview lists what Create makes, and the whole batch is one `create-levels`. A selected level is
+  renamed, re-elevated or deleted through `update-level` and `delete-element`. Every gesture is one
+  revision and one undo unit. A new elevation moves no element, and a level that elements use
+  cannot be deleted. Level plans pick their level from the same list.
 - Manage > Rectangular grid restores regular-grid creation in the inspector: U/V coordinate
   expressions, labels, optional line limits, XY origin and rotation. Create invokes the existing
   CLI; Cancel does not write. The pinned snapshot includes grid axes for display and framing.

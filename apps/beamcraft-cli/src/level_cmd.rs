@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! D2 headless commands: `create-level`, `update-level` and `levels`. They call the engine API through
-//! `beamcraft_commands::level` and print one JSON object with the same error shape and exit codes as
-//! the plate commands. Assigning an element to a level is `update-element --level`.
+//! D2 headless commands: `create-level`, `create-levels`, `update-level` and `levels`. They call the
+//! engine API through `beamcraft_commands::level` and print one JSON object with the same error
+//! shape and exit codes as the plate commands. Assigning an element to a level is
+//! `update-element --level`.
 
 use crate::command_context::{self, CONTEXT_OPTIONS};
 use crate::plate_cmd::{check_project_option, footprint_json, id_error, num, revision_json};
 use beamcraft_commands::level::{
-    LevelChange, LevelContext, LevelView, create_level, levels, update_level,
+    LevelChange, LevelContext, LevelView, create_level, create_levels, levels, update_level,
 };
 use beamcraft_host::{
     ids::IdSource,
@@ -19,6 +20,7 @@ use beamcraft_json::Json;
 use beamcraft_model::command::{CreateLevel, UpdateLevel};
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId};
+use beamcraft_model::level::{CreateLevels, level_elevations};
 use session::Refusal;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -52,6 +54,7 @@ fn run(args: &[OsString]) -> Run<Json> {
         .ok_or_else(|| invalid("missing command"))?;
     let own: &[&str] = match *command {
         "create-level" => &["--store", "--name", "--elevation", "--new-id"],
+        "create-levels" => &["--store", "--elevations", "--names"],
         "update-level" => &["--store", "--id", "--name", "--elevation"],
         "levels" => &["--store"],
         _ => return Err(invalid("unknown command")),
@@ -115,6 +118,20 @@ fn run(args: &[OsString]) -> Run<Json> {
         let change = update_level(&store, &context, &update, &mut NoFault)?;
         return change_json(target_id, context.op_id, &change, "level_updated");
     }
+    if *command == "create-levels" {
+        let elevations =
+            given("--elevations").ok_or_else(|| invalid("--elevations is required"))?;
+        let count = level_elevations(elevations)?.len();
+        let batch = CreateLevels {
+            new_ids: (0..count)
+                .map(|_| Ok(ElementId::from_uuid(fresh()?)))
+                .collect::<Run<_>>()?,
+            elevations: elevations.to_owned(),
+            names: given("--names").unwrap_or_default().to_owned(),
+        };
+        let change = create_levels(&store, &context, &batch, &mut NoFault)?;
+        return batch_json(&batch, context.op_id, &change);
+    }
     let new_id = match given("--new-id") {
         Some(text) => ElementId::parse(text).map_err(id_error)?,
         None => ElementId::from_uuid(fresh()?),
@@ -155,6 +172,35 @@ pub(crate) fn views_json(views: &[LevelView]) -> Run<Json> {
             })
             .collect::<Run<Vec<_>>>()?,
     ))
+}
+
+/// The reply of `create-levels`: the created identities in the order of the elevations; a replay
+/// created nothing in this call, so it lists none (the head's `levels` hold the first call's).
+fn batch_json(batch: &CreateLevels, op_id: OpId, change: &LevelChange) -> Run<Json> {
+    let (outcome, created) = if change.replayed {
+        ("levels_created_replayed", Vec::new())
+    } else {
+        (
+            "levels_created",
+            batch
+                .new_ids
+                .iter()
+                .map(|id| Json::text(id.to_string()))
+                .collect(),
+        )
+    };
+    Ok(Json::object([
+        ("outcome", Json::text(outcome)),
+        ("op_id", Json::text(op_id.to_string())),
+        ("element_ids", Json::Array(created)),
+        (
+            "changed_layers",
+            Json::Array(change.changed_layers.iter().map(Json::text).collect()),
+        ),
+        ("levels", views_json(&change.levels)?),
+        ("revision", revision_json(&change.revision)),
+        ("footprint", footprint_json(change.footprint.as_ref())),
+    ]))
 }
 
 fn change_json(subject: ElementId, op_id: OpId, change: &LevelChange, accepted: &str) -> Run<Json> {

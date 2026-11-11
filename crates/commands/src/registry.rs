@@ -1408,6 +1408,18 @@ pub const COMMANDS: &[Command] = &[
     entry(
         Route::Level,
         "level",
+        "create-levels",
+        Access::Write,
+        Ids::Common,
+        &[
+            req("--store", "ROOT"),
+            req("--elevations", "EXPR"),
+            opt("--names", "TEXT"),
+        ],
+    ),
+    entry(
+        Route::Level,
+        "level",
         "update-level",
         Access::Write,
         Ids::Common,
