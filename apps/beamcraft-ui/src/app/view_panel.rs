@@ -168,12 +168,13 @@ fn browser_row(ui: &mut egui::Ui, row: BrowserRow<'_>) -> egui::Response {
             egui::StrokeKind::Inside,
         );
     }
-    // An open view carries an accent bar at its left edge, the way an open tab is marked.
+    // An open view carries an accent bar at its left edge, the way an open tab is marked, and a
+    // bold accent name, so it stands apart from a selection, which is only a fill.
     if row.open {
         painter.rect_filled(
             egui::Rect::from_min_size(
-                rect.left_top() + egui::vec2(0.0, 4.0),
-                egui::vec2(2.0, rect.height() - 8.0),
+                rect.left_top() + egui::vec2(0.0, 3.0),
+                egui::vec2(3.0, rect.height() - 6.0),
             ),
             1,
             palette.link,
@@ -209,10 +210,17 @@ fn browser_row(ui: &mut egui::Ui, row: BrowserRow<'_>) -> egui::Response {
     if row.temporary {
         mark(theme::Icon::Recent, palette.muted);
     }
-    let colour = if row.temporary && !row.selected {
+    let colour = if row.open {
+        palette.link
+    } else if row.temporary && !row.selected {
         palette.muted
     } else {
         palette.text
+    };
+    let family = if row.open {
+        theme::bold_family()
+    } else {
+        egui::FontFamily::Proportional
     };
     painter
         .with_clip_rect(egui::Rect::from_min_max(
@@ -223,7 +231,7 @@ fn browser_row(ui: &mut egui::Ui, row: BrowserRow<'_>) -> egui::Response {
             egui::pos2(rect.left() + 28.0, rect.center().y),
             egui::Align2::LEFT_CENTER,
             row.name,
-            egui::FontId::proportional(12.0),
+            egui::FontId::new(12.0, family),
             colour,
         );
     let mut hint = row.name.to_owned();
