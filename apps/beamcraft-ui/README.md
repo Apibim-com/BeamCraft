@@ -42,7 +42,9 @@ beamcraft-ui --store ROOT --perf-run PLAN [--samples 1|4] [--cli PATH]
   moving the viewpoint with the pointer.
 - Live refresh: the window watches the store's committed revisions and reloads by itself when
   another process (the CLI, an agent) commits to the store it shows; `R` stays for a manual
-  reload. A reload whose framing changed fits the camera, so new content comes into view.
+  reload. The view is framed once, on the first scene with something in it; after that a
+  reload (an inserted column, an undo, another process's commit) keeps the camera where the
+  user left it, and Fit model frames the whole model on request.
 - Native interface (egui/wgpu, entirely Rust, no HTML, JavaScript or WebView): cool neutral
   surfaces, one-point separators, compact Inter controls and cyan actions/selection replace the
   old cream panels, heavy outlines, decorative grids and hard shadows. The model library has a

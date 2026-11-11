@@ -611,23 +611,6 @@ fn target_size(size: [f32; 2], scale: f32) -> [u32; 2] {
     ]
 }
 
-/// True when the camera should follow the framing of a reloaded scene: nothing was framed yet,
-/// or the bounds or the viewport changed. An unchanged scene keeps the user's view, so a Commit
-/// or `R` that altered no bounds does not jump back to the whole model.
-fn needs_refit(
-    framed: Option<([f32; 3], f32, f32)>,
-    target: [f32; 3],
-    extent: f32,
-    aspect: f32,
-) -> bool {
-    match framed {
-        Some((old_target, old_extent, old_aspect)) => {
-            old_target != target || old_extent != extent || old_aspect != aspect
-        }
-        None => true,
-    }
-}
-
 /// How often the window checks the store for revisions another process has committed.
 const WATCH_INTERVAL: Duration = Duration::from_millis(500);
 
@@ -1181,25 +1164,27 @@ impl App {
         });
         match result {
             // The snapshot on screen again: nothing to build, upload or draw, unless the
-            // viewport changed since it was framed.
+            // default view still waits for its first framing.
             Ok(None) => {
                 self.apply_grids(grids);
+                let content = self.loaded.as_ref().is_some_and(|l| l.summary.elements > 0)
+                    || !self.grid_scene.lines.is_empty();
                 if let Some((target, extent)) =
                     self.loaded.as_ref().map(|l| self.grid_framing(&l.summary))
                 {
                     let aspect = self.aspect();
-                    // An active model view keeps its own camera (V12); the default view fits
-                    // the model like a free camera.
+                    // An active model view keeps its own camera (V12); the default view is
+                    // framed once, then stays where the user left it.
                     let default = self.default_view_id();
                     match self
                         .views
                         .active_pane_mut()
                         .filter(|p| p.view.is_none() || p.view == default)
                     {
-                        Some(pane) if needs_refit(pane.framed, target, extent, aspect) => {
+                        Some(pane) if pane.framed.is_none() => {
                             match pane.camera.fit(target, extent, aspect) {
                                 Ok(()) => {
-                                    pane.framed = Some((target, extent, aspect));
+                                    pane.framed = content.then_some((target, extent, aspect));
                                     self.error = None;
                                 }
                                 Err(e) => self.error = Some(e.to_string()),
@@ -1221,17 +1206,20 @@ impl App {
                 };
                 let aspect = self.aspect();
                 let default = self.default_view_id();
-                // A scene the camera cannot frame keeps the previous scene and shows why. An
-                // unchanged framing keeps the user's camera.
+                // The default view is framed when it shows its first scene with something in
+                // it; after that a new revision (an inserted column, an undo) keeps the user's
+                // camera, carried to the new display origin in `show`. A scene the camera cannot
+                // frame keeps the previous scene and shows why.
+                let content = loaded.summary.elements > 0 || !next_grids.lines.is_empty();
                 let fitted = match self
                     .views
                     .active_pane_mut()
                     .filter(|p| p.view.is_none() || p.view == default)
                 {
-                    Some(pane) if needs_refit(pane.framed, target, extent, aspect) => Some(
+                    Some(pane) if pane.framed.is_none() => Some(
                         pane.camera
                             .fit(target, extent, aspect)
-                            .map(|()| pane.framed = Some((target, extent, aspect))),
+                            .map(|()| pane.framed = content.then_some((target, extent, aspect))),
                     ),
                     _ => None,
                 };
@@ -1239,7 +1227,7 @@ impl App {
                     Some(Err(e)) => self.error = Some(e.to_string()),
                     Some(Ok(())) | None => {
                         self.grid_scene = next_grids;
-                        self.show(loaded);
+                        self.show(loaded, fitted.is_some());
                     }
                 }
             }
@@ -1291,12 +1279,13 @@ impl App {
     }
     /// Puts a refreshed scene on screen. Its image is drawn again either way (the window draws
     /// every frame): a scene whose bounds did not change (an edit inside them, a rename, an undo)
-    /// can still differ from the last image.
-    fn show(&mut self, loaded: Loaded) {
+    /// can still differ from the last image. `fitted` says the active default view was framed
+    /// on this scene just now.
+    fn show(&mut self, loaded: Loaded, fitted: bool) {
         note_loaded(&self.stats, &loaded);
-        // A new scene may centre on another origin: the cameras of the views keep their framing
-        // in model space (V12). Only the active free pane does not follow: the reload refits it
-        // against its own aspect.
+        // A new scene may centre on another origin: every camera keeps its framing in model
+        // space (V12), so the model does not move on screen. Only an active default view framed
+        // on this scene already stands in its coordinates.
         let previous = self.loaded.as_ref().map(|l| l.summary.origin_mm);
         let next = loaded.summary.origin_mm;
         let default = self.default_view_id();
@@ -1304,7 +1293,7 @@ impl App {
             let active = self.views.active_pane().map(|p| p.key);
             for pane in &mut self.views.panes {
                 let free = pane.view.is_none() || pane.view == default;
-                if !free || Some(pane.key) != active {
+                if !(fitted && free && Some(pane.key) == active) {
                     pane.camera.rebase(previous, next);
                 }
                 if let Some((camera, _, _)) = &mut pane.spatial {
@@ -3136,8 +3125,7 @@ impl eframe::App for App {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::{
-        App, Preset, Source, WATCH_INTERVAL, load_icon, needs_refit, revisions_token, spawn_watch,
-        target_size,
+        App, Preset, Source, WATCH_INTERVAL, load_icon, revisions_token, spawn_watch, target_size,
     };
 
     #[test]
@@ -6822,6 +6810,8 @@ pub(crate) mod tests {
     fn a_rejected_grid_framing_keeps_the_old_scene_and_its_guides_together() {
         let Some(mut app) = headless() else { return };
         deliver(&mut app, refreshed(2));
+        // Only a default view still waiting for its first framing fits a new scene.
+        app.views.active_pane_mut().unwrap().framed = None;
         let token = app.loaded.as_ref().unwrap().snapshot.token().clone();
         let old_guides = app.grid_scene.clone();
         let mut next = refreshed(3);
@@ -7132,19 +7122,35 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn an_unchanged_framing_keeps_the_camera() {
-        let framing = ([10.0, 20.0, 30.0], 500.0, 1.6);
-        assert!(needs_refit(None, framing.0, framing.1, framing.2));
-        assert!(!needs_refit(Some(framing), framing.0, framing.1, framing.2));
-        // New bounds or a new viewport aspect follow.
-        assert!(needs_refit(
-            Some(framing),
-            [0.0, 20.0, 30.0],
-            framing.1,
-            framing.2
-        ));
-        assert!(needs_refit(Some(framing), framing.0, 600.0, framing.2));
-        assert!(needs_refit(Some(framing), framing.0, framing.1, 1.0));
+    fn a_new_revision_keeps_the_camera_where_the_user_left_it() {
+        let Some(mut app) = headless() else { return };
+        deliver(&mut app, refreshed(2));
+        let world_eye = |app: &App| {
+            let [ox, oy, oz] = app.loaded.as_ref().unwrap().summary.origin_mm;
+            let [x, y, z, _] = app
+                .views
+                .active_pane()
+                .unwrap()
+                .camera
+                .view(1.6)
+                .unwrap()
+                .eye;
+            [f64::from(x) + ox, f64::from(y) + oy, f64::from(z) + oz]
+        };
+        let origin = app.loaded.as_ref().unwrap().summary.origin_mm;
+        let framed = app.views.active_pane().unwrap().framed;
+        let before = world_eye(&app);
+        // More plates, as after inserting an element: other bounds, another display origin.
+        deliver(&mut app, refreshed(6));
+        assert_ne!(app.loaded.as_ref().unwrap().summary.origin_mm, origin);
+        assert_eq!(app.views.active_pane().unwrap().framed, framed, "no refit");
+        let after = world_eye(&app);
+        for (a, b) in before.iter().zip(after) {
+            assert!(
+                (a - b).abs() < 0.5,
+                "the camera moved: {before:?} -> {after:?}"
+            );
+        }
     }
 
     /// A development build finds the application icon in the source tree; the coded fallback is
