@@ -1423,9 +1423,11 @@ impl App {
             }
             Ok(Some(Selected { id, info, details })) => {
                 // A picked part shows its own properties. Only a new view's form stays open:
-                // its picks and name are not recoverable.
-                if self.bench == workbench::Bench::View
-                    && self.views.subject != crate::views::Subject::NewView
+                // its picks and name are not recoverable. The levels list is closed like the
+                // view panel: nothing on it is lost.
+                if self.bench == workbench::Bench::Levels
+                    || self.bench == workbench::Bench::View
+                        && self.views.subject != crate::views::Subject::NewView
                 {
                     self.set_bench(workbench::Bench::Select);
                 }
@@ -4033,6 +4035,77 @@ pub(crate) mod tests {
             repeat: false,
             modifiers: egui::Modifiers::NONE,
         }]
+    }
+
+    #[test]
+    fn the_levels_list_closes_on_esc_and_on_a_picked_element() {
+        use super::workbench::Bench;
+        let Some(mut app) = headless() else { return };
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        app.text = true;
+        app.set_bench(Bench::Levels);
+        app_frame(&mut app, &ctx, vec![]);
+        app_frame(&mut app, &ctx, escape());
+        assert!(app.bench == Bench::Select, "Esc leaves the levels list");
+        // A clicked list row keeps the keyboard focus; Esc still leaves.
+        app.tools.definitions.levels = vec![crate::tools::LevelChoice {
+            id: "01990000-0000-7000-8000-000000000c02".into(),
+            name: "Level 1".into(),
+            elevation_mm: 3000.0,
+            elements: 0,
+        }];
+        app.set_bench(Bench::Levels);
+        let labels = app_frame(&mut app, &ctx, vec![]);
+        let row = labels
+            .iter()
+            .find(|(l, _)| l.starts_with("Level 1"))
+            .unwrap()
+            .1;
+        app_frame(&mut app, &ctx, click(row));
+        assert_eq!(
+            app.level_panel.selected_id(),
+            Some("01990000-0000-7000-8000-000000000c02")
+        );
+        app_frame(&mut app, &ctx, escape());
+        assert!(
+            app.bench == Bench::Select,
+            "Esc leaves it from a clicked row"
+        );
+        // From a text field: the first Esc leaves the field, the next one the list.
+        app.set_bench(Bench::Levels);
+        let labels = app_frame(&mut app, &ctx, vec![]);
+        let row = labels
+            .iter()
+            .find(|(l, _)| l.starts_with("Level 1"))
+            .unwrap()
+            .1;
+        app_frame(&mut app, &ctx, click(row));
+        let labels = app_frame(&mut app, &ctx, vec![]);
+        let field = labels.iter().find(|(l, _)| l == "3000").unwrap().1;
+        app_frame(&mut app, &ctx, click(field));
+        app_frame(&mut app, &ctx, vec![]);
+        assert!(ctx.text_edit_focused(), "the elevation field has the focus");
+        app_frame(&mut app, &ctx, escape());
+        app_frame(&mut app, &ctx, vec![]);
+        app_frame(&mut app, &ctx, escape());
+        assert!(
+            app.bench == Bench::Select,
+            "Esc leaves it from a text field"
+        );
+
+        // A click on a column shows the column's properties, not the levels.
+        app.set_bench(Bench::Levels);
+        let (tx, rx) = std::sync::mpsc::channel();
+        tx.send(Ok(Some(crate::command::Selected {
+            id: "01990000-0000-7000-8000-000000000c01".into(),
+            info: Err(ToolError::local("NOT_FOUND", "no store in this test")),
+            details: Err(ToolError::local("NOT_FOUND", "no store in this test")),
+        })))
+        .unwrap();
+        app.begin_select(rx);
+        app.poll_select();
+        assert!(app.bench == Bench::Select, "a picked element leaves it");
     }
 
     #[test]
