@@ -19,9 +19,21 @@ use image::GenericImageView;
 use std::path::Path;
 use std::process::Command;
 
-/// The background bands of the renderer's clear colour, as the pixel tests use them.
+/// The background bands of the renderer's clear colour, as the pixel tests use them: the dark
+/// clear colour quantized, with the same one-step tolerance the other pixel tests use (issue
+/// 562 item 36 moved it from rgb(5, 8, 13) to rgb(23, 33, 43)).
 fn is_background([r, g, b, a]: [u8; 4]) -> bool {
-    (4..=6).contains(&r) && (7..=9).contains(&g) && (12..=14).contains(&b) && a == 255
+    let [dr, dg, db] = [
+        beamcraft_ui::render::DARK_BACKGROUND.r,
+        beamcraft_ui::render::DARK_BACKGROUND.g,
+        beamcraft_ui::render::DARK_BACKGROUND.b,
+    ]
+    .map(|c| (c * 255.0).round() as u8);
+    let near = |channel: u8, expected: u8| {
+        i16::from(channel) - i16::from(expected) <= 1
+            && i16::from(expected) - i16::from(channel) <= 1
+    };
+    near(r, dr) && near(g, dg) && near(b, db) && a == 255
 }
 
 /// Runs the CLI next to this package's binary; fails the test on a nonzero exit.
@@ -697,4 +709,108 @@ fn screenshot_view_draws_and_fits_the_project_grids() {
         "INVALID_ARGUMENT",
     );
     assert!(!bad.exists());
+}
+
+#[test]
+fn screenshot_view_relays_the_cli_refusal_of_another_layer_mapping() {
+    // Issue 555 finding 6: a store pinned to another layer mapping is refused by the CLI's
+    // export with UNSUPPORTED_VERSION; the window relays it and `screenshot-view` re-issues
+    // the same code and the original message instead of INVALID_ARGUMENT.
+    use beamcraft_host::revision::{
+        ExpectedBase, LayerEntry, NoFault, RevisionDraft, RevisionStore, Uuid7,
+    };
+    let Some(cli) = support::cli(Path::new(env!("CARGO_BIN_EXE_beamcraft-ui"))) else {
+        panic!("the beamcraft CLI is required next to the beamcraft-ui binary");
+    };
+    let root = Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join("screenshot-tests")
+        .join(format!("schema-{}", support::boot_nonce()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let store = root.to_str().unwrap();
+    run_expect_success(
+        &cli,
+        &[
+            "create-plate",
+            "--store",
+            store,
+            "--width",
+            "100",
+            "--length",
+            "100",
+            "--thickness",
+            "10",
+        ],
+    );
+    // Re-commit the head with every schema pin replaced, as a store of another build arrives.
+    let opened = run_expect_success(&cli, &["open-revision", "--store", store]);
+    let opened = beamcraft_json::decode(&opened, &beamcraft_json::Limits::DEFAULT).unwrap();
+    let build = opened
+        .get("schema")
+        .unwrap()
+        .get("build_digest")
+        .unwrap()
+        .string()
+        .unwrap()
+        .to_owned();
+    let other = "b".repeat(64);
+    let revisions = RevisionStore::new(beamcraft_host::storage::BlobStore::new(&root).unwrap());
+    let head = revisions.open().unwrap();
+    let content = head.manifest().content();
+    let mut ids = beamcraft_host::ids::IdSource::system();
+    let mut entries = Vec::new();
+    for entry in content.entries() {
+        let text = String::from_utf8(head.layer_bytes(entry.name()).unwrap())
+            .unwrap()
+            .replace(&build, &other);
+        revisions.blobs().publish(text.as_bytes()).unwrap();
+        entries.push(LayerEntry::from_bytes(entry.name(), entry.role(), text.as_bytes()).unwrap());
+    }
+    let draft = RevisionDraft {
+        project: content.project().clone(),
+        workspace: content.workspace().clone(),
+        revision: Uuid7::parse(&ids.next_id().unwrap().to_string()).unwrap(),
+        op: Uuid7::parse(&ids.next_id().unwrap().to_string()).unwrap(),
+        workspace_generation: content.workspace_generation() + 1,
+        schema: content.schema(),
+        root_layer: content.root_layer().to_owned(),
+        entries,
+    };
+    revisions
+        .commit_with(
+            &draft,
+            &ExpectedBase::Revision(head.info().revision().clone()),
+            None,
+            &mut NoFault,
+        )
+        .unwrap();
+    let out = root.join("refused.png");
+    let output = Command::new(&cli)
+        .args([
+            "screenshot-view",
+            "--store",
+            store,
+            "--out",
+            out.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    let body = String::from_utf8_lossy(&output.stdout).into_owned();
+    assert_eq!(output.status.code(), Some(2), "{body}");
+    let reply = beamcraft_json::decode(&output.stdout, &beamcraft_json::Limits::DEFAULT).unwrap();
+    assert_eq!(
+        reply.get("code").unwrap().string().unwrap(),
+        "UNSUPPORTED_VERSION",
+        "{body}"
+    );
+    assert!(
+        reply
+            .get("message")
+            .unwrap()
+            .string()
+            .unwrap()
+            .contains("layer schema digest mismatch"),
+        "{body}"
+    );
+    assert!(!out.exists());
 }

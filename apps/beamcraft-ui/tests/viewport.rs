@@ -21,7 +21,7 @@ use beamcraft_model::digest::Sha256;
 use beamcraft_ui::camera::{Camera, View};
 use beamcraft_ui::colour_sets::WHITE;
 use beamcraft_ui::cut_plane::ClipGpu;
-use beamcraft_ui::render::{Gpu, Renderer, Uploaded, wait};
+use beamcraft_ui::render::{DARK_BACKGROUND, Gpu, Renderer, Uploaded, wait};
 use beamcraft_ui::scene::{Scene, SelectedDraw, instance_bytes};
 use beamcraft_ui::stats::Stats;
 use beamcraft_ui::tools::{ToolKind, Tools};
@@ -84,7 +84,15 @@ fn render_view(gpu: &Gpu, scene: &Scene, view: View) -> ([u8; 4], [u8; 4], usize
 }
 
 fn is_background([r, g, b, a]: [u8; 4]) -> bool {
-    (4..=6).contains(&r) && (7..=9).contains(&g) && (12..=14).contains(&b) && a == 255
+    // The dark clear colour, quantized with the same one-step tolerance the screenshot
+    // pixel tests use (issue 562 item 36 moved it from rgb(5, 8, 13) to rgb(23, 33, 43)).
+    let [dr, dg, db] = [DARK_BACKGROUND.r, DARK_BACKGROUND.g, DARK_BACKGROUND.b]
+        .map(|c| (c * 255.0).round() as u8);
+    let near = |channel: u8, expected: u8| {
+        i16::from(channel) - i16::from(expected) <= 1
+            && i16::from(expected) - i16::from(channel) <= 1
+    };
+    near(r, dr) && near(g, dg) && near(b, db) && a == 255
 }
 
 /// A pixel of the model: the logo's cream and grey-teal, lit, never darker than its unlit side
@@ -424,10 +432,19 @@ fn an_attached_reference_is_uploaded_and_renders_visible_pixels() {
     assert_eq!(scene.max, [1000.0; 3]);
     assert_eq!(scene.meshes[0].vertex_count, 36);
     // Placement relative to the scene origin is zero, the orientation is the identity and no
-    // overlay colours a reference: the neutral tint.
-    let identity_instance =
-        instance_bytes([0.0; 3], [0.0, 0.0, 0.0, 1.0], [0.0; 3], [0.0; 3], WHITE).unwrap();
-    assert_eq!(scene.meshes[0].instances, identity_instance);
+    // overlay colours a reference: the neutral tint. The instance also carries the element's
+    // bounds box for the face-on cut (issue 584 item 4); those words belong to the element, not
+    // the placement, so the placement words compare on their own.
+    let identity_instance = instance_bytes(
+        [0.0; 3],
+        [0.0, 0.0, 0.0, 1.0],
+        [0.0; 3],
+        [0.0; 3],
+        WHITE,
+        None,
+    )
+    .unwrap();
+    assert_eq!(scene.meshes[0].instances[..48], identity_instance[..48]);
     assert_eq!(
         Scene::from_snapshot(&snapshot, Representation::Simplified).unwrap(),
         scene,
@@ -696,14 +713,16 @@ fn a_bolt_group_shows_its_fasteners_in_the_viewport() {
     // Two plates share one mesh; the group adds its merged fastener mesh.
     assert_eq!(scene.elements, 3);
     assert_eq!(scene.counts(), (2, 3));
-    // The stack of the two 40 mm fasteners reaches z = 53 over the plates' z = 20: only the
+    // The stack of the two 50 mm fasteners spans z = −8.5..41.5 over the plates' z = 0..20:
+    // the washer and head hang below the bearing plane, the shank's tip tops out at 41.5
+    // with the nut stack hanging downward from it (seated over the far plate), so only the
     // group's geometry reaches that high, at the bearing points x = 100 and 250. The scene
     // bounds are relative to the model origin, the centre of the union.
-    assert_eq!(scene.origin_mm, [500.0, 250.0, 26.5]);
-    assert_eq!(scene.min, [-500.0, -250.0, -26.5]);
-    assert_eq!(scene.max, [500.0, 250.0, 26.5]);
+    assert_eq!(scene.origin_mm, [500.0, 250.0, 16.5]);
+    assert_eq!(scene.min, [-500.0, -250.0, -25.0]);
+    assert_eq!(scene.max, [500.0, 250.0, 25.0]);
     let size = [0, 1, 2].map(|a| scene.max[a] - scene.min[a]);
-    assert!((size[2] - 53.0).abs() < 1e-6, "{size:?}");
+    assert!((size[2] - 50.0).abs() < 1e-6, "{size:?}");
     let gpu = gpu();
     let (corner, _, lit) = render(&gpu, &scene);
     assert!(is_background(corner), "background {corner:?}");
@@ -799,7 +818,8 @@ fn a_din_bolt_group_on_the_knee_brace_joint_shows_the_full_stack_in_the_viewport
     );
     // The row runs along `x` with the bearing plane on the gusset's near face (`y = -12`),
     // so the stack drives through the plate: the library M20 dimensions put the head tip
-    // 3.5 mm past the far face and the nut stack 102 mm past it. The length is fixed at a
+    // 15.5 mm past the near face and the nut stack 83.5 mm past the far one. The length is
+    // fixed at a
     // standard 90 mm, so the pin reads the stack, not the box-conservative grip of defect B.
     let library = concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -847,28 +867,22 @@ fn a_din_bolt_group_on_the_knee_brace_joint_shows_the_full_stack_in_the_viewport
     assert_eq!(scene.elements, 3);
     // The merged stack of both fasteners, by hand from the library definition (head across
     // flats 30, head height 12.5, nut height 18, washer 37/21/3, shank 20, length 90): the
-    // stack from each bearing runs washer 0..3, head 3..15.5, shank 3..93, nut 93..111,
-    // washer nut 111..114 along the plane normal. The bearings sit at x = 525 and 625 on
-    // y = -12, so the mesh spans x 506.5..643.5 (the washer's 37 mm is the widest part),
-    // y -12..102 and z 1581.5..1618.5.
+    // stack from each bearing runs washer −3..0, head −15.5..−3, shank −15.5..74.5 with the
+    // tip at 74.5, and the nut stack hanging downward from it: nut 53.5..71.5, washer nut
+    // 50.5..53.5 along the plane normal, with the head assembly on the outside of the joint.
+    // The bearings sit at x = 525 and 625 on y = -12, so the mesh spans x 506.5..643.5 (the
+    // washer's 37 mm is the widest part), y -27.5..62.5 and z 1581.5..1618.5.
     let id = beamcraft_engine::ElementId::parse(group).unwrap();
     let element = snapshot.element(&id).unwrap();
     assert_eq!(element.kind, beamcraft_engine::ElementKind::Connection);
     let bounds = snapshot.element_bounds(&id).unwrap();
-    let want = [[506.5, -12.0, 1581.5], [643.5, 102.0, 1618.5]];
+    let want = [[506.5, -27.5, 1581.5], [643.5, 62.5, 1618.5]];
     for (got, should) in bounds.min.iter().zip(want[0]) {
         assert!((got - should).abs() <= 1e-6, "min {got} != {should}");
     }
     for (got, should) in bounds.max.iter().zip(want[1]) {
         assert!((got - should).abs() <= 1e-6, "max {got} != {should}");
     }
-    // The head reaches past the plate's far face: washer 3 + head 12.5 from the bearing on
-    // `y = -12` puts the head tip at `y = 3.5`, and the nut stack tops out 102 mm past it —
-    // geometry a shank-only mesh (to `y = 81`) cannot produce.
-    assert!(
-        bounds.max[1] - 81.0 > 1.0,
-        "the nut stack must pass the shank end"
-    );
     let gpu = gpu();
     let (corner, _, lit) = render(&gpu, &scene);
     assert!(is_background(corner), "background {corner:?}");
@@ -1063,6 +1077,309 @@ fn the_default_catalogue_set_colours_the_element_classes_in_the_viewport() {
         panic!("a cleared set returns the uniform grey picture");
     }
     let _ = std::fs::remove_dir_all(&root);
+}
+
+/// A body cut through face-on still shows its section (issue 569 item 1): the kept half's
+/// back face draws as the opened inside and the plane crossing draws the section outline,
+/// instead of the whole body vanishing in a straight-through view.
+#[test]
+fn a_body_cut_through_face_on_still_shows_its_section() {
+    let pin = ViewPin::new(Sha256::digest(b"cut-face-on").unwrap(), 1);
+    let snapshot =
+        ViewSnapshot::build(pin, plate_scene(1, false).unwrap(), &Limits::default()).unwrap();
+    let scene = Scene::from_snapshot(&snapshot, Representation::Full).unwrap();
+    let gpu = gpu();
+    let stats = Stats::default();
+    let (target, extent) = scene.framing();
+    let mut camera = Camera::new(target, extent, 1.0).unwrap();
+    // Straight top view, orthographic: the picture runs perpendicular to the cut.
+    camera
+        .navigate(
+            [0.0 - -0.8, std::f32::consts::FRAC_PI_2 - 0.85],
+            [0.0, 0.0],
+            0.0,
+        )
+        .unwrap();
+    camera.set_projection(true);
+    let view = camera.view(1.0).unwrap();
+    let uploaded = Uploaded::new(&gpu.device, &gpu.queue, &scene, &stats).unwrap();
+    let renderer = Renderer::new(&gpu.adapter, &gpu.device, 96, 96, &stats).unwrap();
+    let lit = |clip: &ClipGpu| {
+        let index = renderer.draw(
+            &gpu.device,
+            &gpu.queue,
+            &uploaded,
+            view,
+            &stats,
+            RenderMode::Shaded,
+            clip,
+        );
+        wait(&gpu.device, index).unwrap();
+        let (pixels, _) = renderer.readback(&gpu.device, &gpu.queue).unwrap();
+        pixels
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .filter(|p| is_lit(**p))
+            .count()
+    };
+    assert!(lit(&ClipGpu::none()) > 0, "the uncut body draws face-on");
+    // The cut keeps the lower half: the top face is discarded, the bottom face faces away.
+    let bounds = scene.summary();
+    let mid = bounds.origin_mm[2] + 5.0;
+    let cut = Clipping {
+        planes: vec![ClipPlane::new([0.0, 0.0, mid], [0.0, 0.0, -1.0]).unwrap()],
+        area: None,
+    };
+    let seen = lit(&ClipGpu::of(&cut, bounds.origin_mm));
+    assert!(seen > 0, "a face-on cut body keeps its section visible");
+}
+
+/// Issue 584 item 4: looking straight along a depth slab's normal, a body both of whose end
+/// faces the slab clips used to draw nothing at all — the walls are edge-on and rasterize no
+/// fragments, so neither the crossing outline nor a dimmed inside remained. The face-on cap
+/// paints the section ink there instead.
+#[test]
+fn a_face_on_depth_slab_shows_the_cut_body_as_a_section() {
+    let pin = ViewPin::new(Sha256::digest(b"cut-slab-face-on").unwrap(), 1);
+    let snapshot =
+        ViewSnapshot::build(pin, plate_scene(1, false).unwrap(), &Limits::default()).unwrap();
+    let scene = Scene::from_snapshot(&snapshot, Representation::Full).unwrap();
+    let gpu = gpu();
+    let stats = Stats::default();
+    let (target, extent) = scene.framing();
+    let mut camera = Camera::new(target, extent, 1.0).unwrap();
+    // Straight top view, orthographic: the eye runs along the slab's plane normals.
+    camera
+        .navigate(
+            [0.0 - -0.8, std::f32::consts::FRAC_PI_2 - 0.85],
+            [0.0, 0.0],
+            0.0,
+        )
+        .unwrap();
+    camera.set_projection(true);
+    let view = camera.view(1.0).unwrap();
+    let uploaded = Uploaded::new(&gpu.device, &gpu.queue, &scene, &stats).unwrap();
+    let renderer = Renderer::new(&gpu.adapter, &gpu.device, 96, 96, &stats).unwrap();
+    // Tight rows: the readback pads each row to 256 bytes, and the pad words would otherwise
+    // count as drawn pixels.
+    let tight = |clip: &ClipGpu| {
+        let index = renderer.draw(
+            &gpu.device,
+            &gpu.queue,
+            &uploaded,
+            view,
+            &stats,
+            RenderMode::Shaded,
+            clip,
+        );
+        wait(&gpu.device, index).unwrap();
+        let (pixels, row) = renderer.readback(&gpu.device, &gpu.queue).unwrap();
+        let stride = row as usize;
+        let mut out = Vec::with_capacity(96 * 96 * 4);
+        for y in 0..96 {
+            let start = y * stride;
+            out.extend_from_slice(&pixels[start..start + 96 * 4]);
+        }
+        out
+    };
+    // The 6 mm plate spans z 0..6; the slab [2, 4] clips both end faces away and keeps only
+    // wall material.
+    let bounds = scene.summary();
+    let slab = Clipping {
+        planes: vec![
+            ClipPlane::new([0.0, 0.0, bounds.origin_mm[2] + 1.0], [0.0, 0.0, -1.0]).unwrap(),
+            ClipPlane::new([0.0, 0.0, bounds.origin_mm[2] - 1.0], [0.0, 0.0, 1.0]).unwrap(),
+        ],
+        area: None,
+    };
+    // The section ink, CUT_OUTLINE sRGB bytes (0, 180, 216) within MSAA blending.
+    let cap_ink = |p: &[u8; 4]| {
+        p[0] <= 8 && (p[1] as i16 - 180).abs() <= 4 && (p[2] as i16 - 216).abs() <= 4 && p[3] == 255
+    };
+    let ink = |pixels: &[u8]| {
+        pixels
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .filter(|p| cap_ink(p))
+            .count()
+    };
+    let drawn = ink(&tight(&ClipGpu::of(&slab, bounds.origin_mm)));
+    // The control: the same straight-through view without a cut draws the body, whose face-on
+    // silhouette is the section's own footprint.
+    let uncut = tight(&ClipGpu::none());
+    let whole = uncut
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .filter(|p| !is_background(**p))
+        .count();
+    assert!(whole > 0, "the uncut body draws face-on");
+    // Before the cap the straight-through slab picture kept only sliver fragments and crossing
+    // specks, under a fifth of the silhouette's area in ink; the cap fills most of it, the rest
+    // being MSAA-blended edges. Resolution moves both counts together, so the test pins the
+    // filled section, not a pixel threshold.
+    assert!(
+        drawn > 10 && drawn * 5 > whole,
+        "a face-on slab draws the body's filled section: {drawn} ink pixels against {whole} body pixels"
+    );
+}
+
+/// The review bound on the face-on cap (issue 584 item 4): a body lying entirely beyond the
+/// face-on plane must stay invisible — the cut hides it, and clamping its geometry onto the
+/// plane would paint it as a filled section it has no right to. Only a body the plane cuts
+/// through takes the cap, which the straddling control keeps proving.
+#[test]
+fn a_body_entirely_beyond_a_face_on_plane_stays_invisible() {
+    let pin = ViewPin::new(Sha256::digest(b"cut-beyond-face-on").unwrap(), 1);
+    let snapshot =
+        ViewSnapshot::build(pin, plate_scene(1, false).unwrap(), &Limits::default()).unwrap();
+    let scene = Scene::from_snapshot(&snapshot, Representation::Full).unwrap();
+    let gpu = gpu();
+    let stats = Stats::default();
+    let (target, extent) = scene.framing();
+    let mut camera = Camera::new(target, extent, 1.0).unwrap();
+    // Straight top view, orthographic, along the cut planes' normals.
+    camera
+        .navigate(
+            [0.0 - -0.8, std::f32::consts::FRAC_PI_2 - 0.85],
+            [0.0, 0.0],
+            0.0,
+        )
+        .unwrap();
+    camera.set_projection(true);
+    let view = camera.view(1.0).unwrap();
+    let uploaded = Uploaded::new(&gpu.device, &gpu.queue, &scene, &stats).unwrap();
+    let renderer = Renderer::new(&gpu.adapter, &gpu.device, 96, 96, &stats).unwrap();
+    // Tight rows: the readback pads each row to 256 bytes, and the pad words would otherwise
+    // count as drawn pixels.
+    let body = |clip: &ClipGpu| {
+        let index = renderer.draw(
+            &gpu.device,
+            &gpu.queue,
+            &uploaded,
+            view,
+            &stats,
+            RenderMode::Shaded,
+            clip,
+        );
+        wait(&gpu.device, index).unwrap();
+        let (pixels, row) = renderer.readback(&gpu.device, &gpu.queue).unwrap();
+        let stride = row as usize;
+        let mut count = 0usize;
+        for y in 0..96 {
+            let start = y * stride;
+            count += pixels[start..start + 96 * 4]
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .filter(|p| !is_background(**p))
+                .count();
+        }
+        count
+    };
+    let bounds = scene.summary();
+    // The 0..6 plate lies entirely beyond a cut that keeps z ≤ -10: nothing may draw.
+    let below = Clipping {
+        planes: vec![ClipPlane::new([0.0, 0.0, -10.0], [0.0, 0.0, -1.0]).unwrap()],
+        area: None,
+    };
+    assert_eq!(
+        body(&ClipGpu::of(&below, bounds.origin_mm)),
+        0,
+        "a body entirely beyond the face-on plane stays invisible"
+    );
+    // The control: a cut through the body keeps its section cap.
+    let through = Clipping {
+        planes: vec![ClipPlane::new([0.0, 0.0, 3.0], [0.0, 0.0, -1.0]).unwrap()],
+        area: None,
+    };
+    assert!(
+        body(&ClipGpu::of(&through, bounds.origin_mm)) > 0,
+        "the cut-through body keeps its section"
+    );
+}
+
+/// The review bound on the straddle interval (issue 584 item 4): dotting the bounds box's two
+/// corners is the exact interval only for single-sign normals. A mixed-sign Point-mode normal
+/// can put both corner dots on the kept side while the box truly straddles — here the plane
+/// `(1, -2, 0)/sqrt(5)` through `(25.298, 0, 0)` has both corners at `d > 0` and its exact
+/// interval straddling — and the corner-dot gate silently dropped the cut body's cap.
+#[test]
+fn a_mixed_sign_normal_straddle_keeps_the_face_on_cap() {
+    let pin = ViewPin::new(Sha256::digest(b"cut-mixed-sign-face-on").unwrap(), 1);
+    let snapshot =
+        ViewSnapshot::build(pin, plate_scene(1, false).unwrap(), &Limits::default()).unwrap();
+    let scene = Scene::from_snapshot(&snapshot, Representation::Full).unwrap();
+    let gpu = gpu();
+    let stats = Stats::default();
+    let (target, extent) = scene.framing();
+    let mut camera = Camera::new(target, extent, 1.0).unwrap();
+    // Straight along the plane's own normal: back = (cos yaw, sin yaw, 0), so yaw -atan(2)
+    // runs the eye along `(1, -2, 0)` and the face-on gate opens.
+    camera
+        .navigate([-1.107149 - -0.8, 0.0 - 0.85], [0.0, 0.0], 0.0)
+        .unwrap();
+    camera.set_projection(true);
+    let view = camera.view(1.0).unwrap();
+    let uploaded = Uploaded::new(&gpu.device, &gpu.queue, &scene, &stats).unwrap();
+    let renderer = Renderer::new(&gpu.adapter, &gpu.device, 96, 96, &stats).unwrap();
+    // Tight rows (the readback pads each row to 256 bytes), split into section-ink pixels and
+    // the rest of the drawn body.
+    let picture = |clip: &ClipGpu| {
+        let index = renderer.draw(
+            &gpu.device,
+            &gpu.queue,
+            &uploaded,
+            view,
+            &stats,
+            RenderMode::Shaded,
+            clip,
+        );
+        wait(&gpu.device, index).unwrap();
+        let (pixels, row) = renderer.readback(&gpu.device, &gpu.queue).unwrap();
+        let stride = row as usize;
+        let mut ink = 0usize;
+        let mut body = 0usize;
+        for y in 0..96 {
+            let start = y * stride;
+            for p in pixels[start..start + 96 * 4].as_chunks::<4>().0 {
+                if p == &[0, 0, 0, 0] {
+                    continue;
+                }
+                let inked = p[0] <= 8
+                    && (p[1] as i16 - 180).abs() <= 4
+                    && (p[2] as i16 - 216).abs() <= 4
+                    && p[3] == 255;
+                if inked {
+                    ink += 1;
+                } else if !is_background(*p) {
+                    body += 1;
+                }
+            }
+        }
+        (ink, body)
+    };
+    let bounds = scene.summary();
+    // A vertical slab across the same bounds box (x ±32.5, y ±35), cut by the mixed-sign plane
+    // 30 mm down its own normal: both of plane A's corner distances sit at +16.8 and +13.2
+    // while its exact interval runs from -15.8, so the box straddles and the cap must draw. The
+    // second plane bounds the kept depth (n.x <= 20), so nothing kept stands in front of the
+    // clamped face as it would for a single plane. The old corner-dot gate drew only the
+    // crossing outline, a thin line of the same ink, so the assertion pins the filled section
+    // against the body it belongs to, not a bare pixel count.
+    let plane_a = ClipPlane::new([-13.4164079, 26.8328157, 0.0], [1.0, -2.0, 0.0]).unwrap();
+    let plane_b = ClipPlane::new([8.9442719, -17.8885438, 0.0], [-1.0, 2.0, 0.0]).unwrap();
+    let cut = Clipping {
+        planes: vec![plane_a, plane_b],
+        area: None,
+    };
+    let (ink, body) = picture(&ClipGpu::of(&cut, bounds.origin_mm));
+    assert!(
+        ink > 10 && ink * 2 > body,
+        "a mixed-sign normal that truly straddles keeps the filled cap: {ink} ink pixels against {body} body pixels"
+    );
 }
 
 /// V15: a display cut hides pixels in the image only. The masked picture keeps the bodies

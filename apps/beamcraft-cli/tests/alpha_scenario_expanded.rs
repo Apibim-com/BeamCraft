@@ -1222,7 +1222,11 @@ fn expanded_alpha_runs_tools_views_regressions_and_exact_outputs() {
             "--placed-section",
             &format!("{section}:right:0:positive:5:200,70:SECTION A-A"),
             "--placed-detail",
-            &format!("{detail}:{placed}:25,35:15:2:260,70:DETAIL B"),
+            // The detail draws its region's boundary circle at fivefold magnification
+            // (radius 15 x 10/2 = 75 mm), so its origin keeps the full circle and the
+            // annotation under it inside the portrait A3 frame, above the title block
+            // (issue 562 item 8).
+            &format!("{detail}:{placed}:25,35:15:2:85,210:DETAIL B"),
         ],
     );
     let placed_list = at(&placed_views, &["placed_views"]).array().unwrap();
@@ -2857,7 +2861,7 @@ fn a_bolt_group_generates_its_holes_and_survives_publication() {
     assert_eq!(text(record, "id"), group_id);
     assert_eq!(text(record, "hole_mode"), "generate");
     assert_eq!(text(record, "length_mode"), "auto");
-    assert_eq!(text(record, "length_mm"), "40");
+    assert_eq!(text(record, "length_mm"), "50");
     assert_eq!(text(record, "count"), "2");
     let bolted = parts(&s.ok("bolts-draft", "inspect-elements", &[]));
     assert_eq!(bolted.len(), 2);
@@ -2932,7 +2936,7 @@ fn a_bolt_group_generates_its_holes_and_survives_publication() {
     let published_record = &at(&published_book, &["bolt_groups"]).array().unwrap()[0];
     assert_eq!(text(published_record, "hole_mode"), "generate");
     assert_eq!(text(published_record, "count"), "2");
-    assert_eq!(text(published_record, "length_mm"), "40");
+    assert_eq!(text(published_record, "length_mm"), "50");
 }
 
 /// The model-data tool story (T01/T02): construction objects and the drawn grid line

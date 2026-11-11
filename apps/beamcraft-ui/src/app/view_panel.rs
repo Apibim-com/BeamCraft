@@ -280,11 +280,95 @@ impl App {
         self.views.note = Some(result);
     }
 
-    /// Writes the book beside the store; a failure is a note.
+    /// Writes the book beside the store, merged with what the file holds now (issue 569
+    /// item 3); a failure is a note. The window takes the merged book and makes it the new
+    /// baseline, so the views it never touched follow the file from here on.
     pub(super) fn persist_views(&mut self) {
-        if let Err(e) = crate::views::persist(&self.source.store, &self.views.book) {
-            self.view_note(Err(e));
+        match crate::views::persist(&self.source.store, &self.views.book, &self.views.baseline) {
+            Ok(merged) => {
+                self.views.book = merged.clone();
+                self.views.baseline = merged;
+                self.reconcile_panes_with_book();
+            }
+            Err(e) => self.view_note(Err(e)),
         }
+    }
+
+    /// Takes the views file as the book, keeping this session's temporary views: the file
+    /// also serves the CLI headlessly, and a scene that came from another process usually
+    /// carries its view changes with it (issue 569 item 3). A store the window has not
+    /// written views beside yet has no file: nothing to adopt, and an empty read must not
+    /// take the book for deleted. A failure is a note; so is a file that would drop a
+    /// session temporary view — the session's temporary views always survive an adoption,
+    /// the same clash the persist merge refuses loudly (the review on the 1111 batch).
+    pub(crate) fn adopt_views_file(&mut self) {
+        if !crate::views::session_path(&self.source.store).exists() {
+            return;
+        }
+        match crate::views::load(&self.source.store) {
+            Ok(mut book) => {
+                let temporary: Vec<ModelView> = self
+                    .views
+                    .book
+                    .views()
+                    .iter()
+                    .filter(|v| v.temporary)
+                    .cloned()
+                    .collect();
+                for view in temporary {
+                    if let Err(e) = book.insert(view) {
+                        self.view_note(Err(e.to_string()));
+                        return;
+                    }
+                }
+                self.views.baseline = book.clone();
+                self.views.book = book;
+                self.reconcile_panes_with_book();
+            }
+            Err(e) => self.view_note(Err(e)),
+        }
+    }
+
+    /// Re-anchors the open panes to the book after an adoption or a persist merge swapped it
+    /// under them (the review on the 1111 batch): a pane whose view the new book no longer
+    /// holds re-anchors to the default view instead of dangling as a silent free view, and a
+    /// surviving view's pane takes the book's render mode, grid guides and name, which
+    /// `activate_view` never re-reads for the same id.
+    fn reconcile_panes_with_book(&mut self) {
+        let default = self.default_view_id();
+        let default_view = default
+            .as_ref()
+            .and_then(|id| self.views.book.get(id).cloned());
+        let origin = self.view_origin();
+        let extent = self.view_extent();
+        for pane in &mut self.views.panes {
+            let Some(id) = pane.view else { continue };
+            match self.views.book.get(&id) {
+                Some(view) => {
+                    pane.mode = view.render_mode;
+                    pane.grids = view.grids_visible;
+                    pane.title = view.name.clone();
+                }
+                None => match default_view.as_ref() {
+                    Some(view) => {
+                        pane.view = default;
+                        pane.title = view.name.clone();
+                        pane.mode = view.render_mode;
+                        pane.grids = view.grids_visible;
+                        if let Ok(camera) = Camera::from_view(view, origin, extent) {
+                            pane.camera = camera;
+                        }
+                    }
+                    None => {
+                        pane.view = None;
+                        pane.title = "3D view".to_owned();
+                    }
+                },
+            }
+        }
+        self.views
+            .open
+            .retain(|id| self.views.book.get(id).is_some());
     }
 
     /// The default view's identity: the view a model opens on, and the one that stands for
@@ -544,6 +628,26 @@ impl App {
         form
     }
 
+    /// The pane whose camera the form is editing, resolved by the subject: a browser click
+    /// opens a saved view's form without activating its pane, and the height must track that
+    /// view's own pane, not whichever pane happens to be active. A saved view no pane shows
+    /// has no live camera, and the field keeps the saved value.
+    fn subject_pane(&self) -> Option<&crate::panes::ViewPane> {
+        match self.views.subject {
+            Subject::SavedView(id) => self.views.panes.iter().rev().find(|p| p.view == Some(id)),
+            Subject::FreeView(key) => self.views.panes.iter().find(|p| Some(p.key) == key),
+            Subject::NewView => self.views.active_pane(),
+        }
+    }
+
+    /// That pane's current visible height, from its camera. The panel's height field follows
+    /// this while it is not being edited, so the form never holds a height the user has
+    /// zoomed away from and Apply cannot re-zoom the viewport with it.
+    fn live_span(&self) -> Option<String> {
+        let (_, span) = self.subject_pane()?.camera.frame(self.view_origin()).ok()?;
+        Some(format!("{}", span.round().max(1.0)))
+    }
+
     /// Opens the view panel on a new view built by `construction`; the constructions that pick
     /// in the model start picking at once, and Apply creates the view.
     pub(crate) fn begin_view(&mut self, construction: Construction) {
@@ -782,6 +886,9 @@ impl App {
                 self.recolour();
             }
         }
+        // The form reloads from the saved view, so Apply leaves it clean (issue 569 item 20):
+        // the dirty flag and the row dots compare the form's text with the view's.
+        self.edit_view(id);
         Ok(Some("The view was updated; the model is unchanged.".into()))
     }
 
@@ -945,7 +1052,9 @@ impl App {
         if let Some(first) = first {
             self.views.selected.clear();
             self.views.selected.insert(first);
-            self.activate_view(Some(first));
+            // A new view opens as a tab of the active group, like from the browser, instead of
+            // taking over the active tab (issue 569 item 19).
+            self.open_view_at(first, None);
             // The panel moves on to the created view's properties.
             self.edit_view(first);
         }
@@ -1097,13 +1206,14 @@ impl App {
                     .map(|v| v.id)
                     .filter(|id| !before.contains(id))
                     .collect();
+                self.views.baseline = book.clone();
                 self.views.book = book;
                 self.view_note(Ok(format!(
                     "{} view(s) were created; the model is unchanged.",
                     added.len()
                 )));
                 if let Some(first) = added.first().copied() {
-                    self.activate_view(Some(first));
+                    self.open_view_at(first, None);
                     self.edit_view(first);
                 }
             }
@@ -2026,8 +2136,12 @@ impl App {
                 });
                 text(ui, "Name", &mut filter.name);
                 row(ui, "Elements", |ui| {
-                    ui.selectable_value(&mut filter.matching, FilterMatch::All, "match all");
-                    ui.selectable_value(&mut filter.matching, FilterMatch::Any, "match any");
+                    // Wrapped: two toggles exceed the value cell on a narrow panel, and an
+                    // unwrapped row would break the second label into letters.
+                    ui.horizontal_wrapped(|ui| {
+                        ui.selectable_value(&mut filter.matching, FilterMatch::All, "match all");
+                        ui.selectable_value(&mut filter.matching, FilterMatch::Any, "match any");
+                    });
                 });
                 section(ui, "Conditions", true, |ui| {
                     let mut remove = None;
@@ -2566,6 +2680,7 @@ impl App {
                         .id
                         .and_then(|id| self.views.book.get(&id))
                         .map(crate::views::Form::from_view);
+                    let live_span = self.live_span();
                     let form = &mut self.views.form;
                     // The type box at the top, as Revit's properties palette shows the kind of
                     // what is selected: the view's kind and its name.
@@ -2798,11 +2913,39 @@ impl App {
                                     );
                                 });
                         });
+                        // The field follows the pane's zoom while it has never been edited,
+                        // so the form never holds a height the user zoomed away from and
+                        // Apply cannot re-zoom the viewport with a stale one. Once the user
+                        // types a height, their text stays until the panel reopens.
+                        let span_id = egui::Id::unique("view-form-span");
+                        let edited_id = egui::Id::unique(("view-form-span-edited", form.id));
+                        let mut span_edited =
+                            ui.data(|d| d.get_temp::<bool>(edited_id).unwrap_or(false));
+                        if !span_edited
+                            && !ui.memory(|m| m.has_focus(span_id))
+                            && let Some(live) = &live_span
+                        {
+                            form.span.clone_from(live);
+                        }
                         crate::kit::mark_next_changed(
                             ui,
                             saved.as_ref().is_some_and(|o| o.span != form.span),
                         );
-                        text(ui, "Height, mm", &mut form.span);
+                        let mut typed = None;
+                        row(ui, "Height, mm", |ui| {
+                            typed = Some(
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut form.span)
+                                        .id_salt(span_id)
+                                        .desired_width((ui.available_width() - FIT).max(40.0))
+                                        .char_limit(crate::views::FIELD),
+                                ),
+                            );
+                        });
+                        if typed.is_some_and(|r| r.changed()) {
+                            span_edited = true;
+                        }
+                        ui.data_mut(|d| d.insert_temp(edited_id, span_edited));
                         crate::kit::mark_next_changed(
                             ui,
                             saved.as_ref().is_some_and(|o| o.rotation != form.rotation),
@@ -3646,4 +3789,155 @@ pub(crate) enum BrowserAction {
     OpenAll(Vec<Uuid7>),
     CloseAll(Vec<Uuid7>),
     Move(Uuid7, String),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::App;
+    use beamcraft_engine::RenderMode;
+
+    /// R and Reload adopt the views file even when the store is unchanged (issue 584 item 5):
+    /// a views-only CLI edit must be visible after a refresh, not only after the window's own
+    /// next write or a committed revision.
+    #[test]
+    fn a_reload_adopts_views_only_edits_of_the_file() {
+        let Some(mut app) = super::super::tests::headless() else {
+            return;
+        };
+        let executable = std::env::current_exe().unwrap();
+        let cli = executable
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        assert!(
+            cli.is_file(),
+            "build beamcraft-cli before native modelling tests"
+        );
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root =
+            std::env::temp_dir().join(format!("bc-584-adopt-{}-{nanos}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let store = root.join("model");
+        let run = |args: &[&str]| {
+            let output = std::process::Command::new(&cli)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+        };
+        run(&[
+            "create-project",
+            "--parent",
+            root.to_str().unwrap(),
+            "--name",
+            "model",
+            "--environment",
+            "blank",
+        ]);
+        run(&[
+            "create-member",
+            "--store",
+            store.to_str().unwrap(),
+            "--kind",
+            "column",
+            "--start",
+            "0,0,0",
+            "--end",
+            "0,0,3500",
+            "--profile",
+            "H-200x200",
+            "--material",
+            "Steel",
+        ]);
+        run(&[
+            "save-view",
+            "--file",
+            crate::views::session_path(&store).to_str().unwrap(),
+            "--store",
+            store.to_str().unwrap(),
+            "--name",
+            "Elev",
+            "--yaw",
+            "-1.0",
+            "--pitch",
+            "0.45",
+            "--target",
+            "3000,0,1750",
+            "--default",
+            "true",
+        ]);
+        app.source.store = store.clone();
+        app.source.cli = cli.clone();
+        let refresh = |app: &mut App| {
+            app.reload();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+            while app.reload_job.is_some() && std::time::Instant::now() < deadline {
+                app.poll_reload();
+                app.poll_colour();
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            assert!(app.reload_job.is_none(), "the refresh timed out");
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+            while app.colour_job.is_some() && std::time::Instant::now() < deadline {
+                app.poll_colour();
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        };
+        refresh(&mut app);
+        let named = |app: &App, name: &str| {
+            app.views
+                .book
+                .views()
+                .iter()
+                .find(|v| v.name == name)
+                .cloned()
+        };
+        let elev = named(&app, "Elev").expect("the first refresh lists the file's Elev");
+        assert_eq!(elev.render_mode, RenderMode::Shaded);
+        // The views-only CLI edits while the window is open, then the R key: the store is
+        // unchanged, so no scene is delivered, and the window must take the file's book.
+        run(&[
+            "update-view",
+            "--file",
+            crate::views::session_path(&store).to_str().unwrap(),
+            "--store",
+            store.to_str().unwrap(),
+            "--view",
+            "Elev",
+            "--render-mode",
+            "wireframe",
+            "--color",
+            "1,0,0",
+        ]);
+        run(&[
+            "save-view",
+            "--file",
+            crate::views::session_path(&store).to_str().unwrap(),
+            "--store",
+            store.to_str().unwrap(),
+            "--name",
+            "AgentView",
+            "--parallel",
+            "xz",
+            "--offset",
+            "0",
+        ]);
+        refresh(&mut app);
+        let elev = named(&app, "Elev").expect("the reload keeps Elev");
+        let agent = named(&app, "AgentView").expect("the reload adopts the added AgentView");
+        assert_eq!(elev.render_mode, RenderMode::Wireframe, "{:?}", elev);
+        assert_eq!(elev.color, Some([1.0, 0.0, 0.0]), "{:?}", elev);
+        assert!(!agent.temporary, "the adopted view is the file's own");
+        drop(app);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }

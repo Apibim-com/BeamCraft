@@ -71,6 +71,45 @@ fn tab_width(ui: &egui::Ui, title: &str) -> f32 {
     (galley.size().x + 44.0).clamp(96.0, 200.0)
 }
 
+/// The twelve edges of an axis-aligned box: the selection outline of a body whose snapshot
+/// entry carries no semantic features, such as a bolt group's merged mesh (issue 584 item 9).
+/// Display bounds only, like any outline — never a quantity.
+pub(super) fn box_edges(
+    beamcraft_engine::Aabb { min, max }: beamcraft_engine::Aabb,
+) -> Vec<[[f64; 3]; 2]> {
+    let [x0, y0, z0] = min;
+    let [x1, y1, z1] = max;
+    let (a, b, c, d) = ([x0, y0, z0], [x1, y0, z0], [x1, y1, z0], [x0, y1, z0]);
+    let (e, f, g, h) = ([x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1]);
+    vec![
+        [a, b],
+        [b, c],
+        [c, d],
+        [d, a], // the bottom ring
+        [e, f],
+        [f, g],
+        [g, h],
+        [h, e], // the top ring
+        [a, e],
+        [b, f],
+        [c, g],
+        [d, h], // the four uprights
+    ]
+}
+
+/// The selection outline of `text` over the snapshot: the body's semantic edges when it has
+/// them, otherwise its display bounds' twelve edges — a body without semantic features, such
+/// as a bolt group's merged mesh, must still show what is selected (issue 584 item 9).
+fn selection_edges(snapshot: &beamcraft_engine::ViewSnapshot, text: &str) -> Vec<[[f64; 3]; 2]> {
+    let id = beamcraft_engine::ElementId::parse(text).ok();
+    id.and_then(|id| beamcraft_engine::query::feature::element_edges(snapshot, &id).ok())
+        .or_else(|| {
+            id.and_then(|id| snapshot.element_bounds(&id).ok())
+                .map(box_edges)
+        })
+        .unwrap_or_default()
+}
+
 impl App {
     /// Width over height of the active pane's image; 1.6 without a pane.
     pub(super) fn aspect(&self) -> f32 {
@@ -84,9 +123,23 @@ impl App {
             .map_or(RenderMode::Shaded, |p| p.mode)
     }
 
-    /// Sets the render mode of the active pane; switching never reloads the scene.
+    /// Sets the render mode of the active pane; switching never reloads the scene. The view owns
+    /// the display (V12): every pane on it, the stored view and the open View properties form take
+    /// the mode too, so the panel tells the truth and an unrelated Apply keeps the switch
+    /// (issue 569 item 25).
     pub(super) fn set_active_mode(&mut self, mode: RenderMode) {
+        let view = self.views.active_pane().and_then(|p| p.view);
         if let Some(pane) = self.views.active_pane_mut() {
+            pane.mode = mode;
+        }
+        let Some(id) = view else { return };
+        if let Some(view) = self.views.book.get_mut(&id) {
+            view.render_mode = mode;
+        }
+        if self.views.form.id == Some(id) {
+            self.views.form.mode = mode;
+        }
+        for pane in self.views.panes.iter_mut().filter(|p| p.view == Some(id)) {
             pane.mode = mode;
         }
     }
@@ -96,9 +149,21 @@ impl App {
         self.views.active_pane().is_some_and(|p| p.grids)
     }
 
-    /// Shows or hides the grid guides of the active pane.
+    /// Shows or hides the grid guides of the active pane; the view and the open form follow like
+    /// the render mode does (issue 569 item 25).
     pub(super) fn set_grids_shown(&mut self, on: bool) {
+        let view = self.views.active_pane().and_then(|p| p.view);
         if let Some(pane) = self.views.active_pane_mut() {
+            pane.grids = on;
+        }
+        let Some(id) = view else { return };
+        if let Some(view) = self.views.book.get_mut(&id) {
+            view.grids_visible = on;
+        }
+        if self.views.form.id == Some(id) {
+            self.views.form.grids = on;
+        }
+        for pane in self.views.panes.iter_mut().filter(|p| p.view == Some(id)) {
             pane.grids = on;
         }
     }
@@ -229,6 +294,7 @@ impl App {
         // inspector combo, Details, the publish dialog, the sheet editor or the command search
         // lying over the work area never focuses a pane.
         let layer = ui.layer_id();
+        let dividers = self.views.dock.dividers(area);
         let pressed = ui
             .input(|i| {
                 i.pointer
@@ -237,9 +303,20 @@ impl App {
                     .flatten()
             })
             .filter(|pos| ui.ctx().layer_id_at(*pos) == Some(layer))
+            // A press on a divider starts a resize, never a group switch.
+            .filter(|pos| !dividers.iter().any(|d| d.handle.contains(*pos)))
             .and_then(|pos| panes::topmost_at(&self.views.panes, pos));
-        // The dividers between groups resize them.
-        for divider in self.views.dock.dividers(area) {
+        let mut outcomes = Vec::new();
+        for (group, rect) in self.views.dock.layout(area) {
+            if let Some(outcome) =
+                self.group_window(ui, area, group, rect, active, (zoom_in, zoom_out))
+            {
+                outcomes.push(outcome);
+            }
+        }
+        // The dividers between groups resize them. They are interacted after the groups so
+        // the pane under the handle's overlap cannot take the drag first.
+        for divider in dividers {
             let response = ui.interact(
                 divider.handle,
                 egui::Id::unique(("dock-divider", divider.path.clone())),
@@ -258,14 +335,6 @@ impl App {
                 self.views
                     .dock
                     .drag_divider(&divider.path, divider.room, divider.across, pos);
-            }
-        }
-        let mut outcomes = Vec::new();
-        for (group, rect) in self.views.dock.layout(area) {
-            if let Some(outcome) =
-                self.group_window(ui, area, group, rect, active, (zoom_in, zoom_out))
-            {
-                outcomes.push(outcome);
             }
         }
         // 1. Tab changes.
@@ -674,6 +743,7 @@ impl App {
             ctrl,
             shift,
             pane.camera.distance(),
+            body.height(),
             hovered,
             scroll_y,
             pinch,
@@ -720,14 +790,15 @@ impl App {
             }
         };
         view.tint = tint;
-        let rgb = if dark {
-            [0x17, 0x21, 0x2B]
+        // The same clear colours `screenshot-view` answers with (issue 562 item 36): the dark
+        // theme sits on the renderer's dark background, the light one on the paper tone.
+        let background = if dark {
+            crate::render::DARK_BACKGROUND
         } else {
-            [0xED, 0xF1, 0xF4]
+            crate::render::LIGHT_BACKGROUND
         };
-        let [r, g, b] = rgb.map(|c: u8| f64::from(c) / 255.0);
         if let Some(renderer) = pane.target.renderer_mut() {
-            renderer.background = wgpu::Color { r, g, b, a: 1.0 };
+            renderer.background = background;
         }
         if let Some(l) = &self.loaded {
             if own_scene {
@@ -842,29 +913,46 @@ impl App {
             }
         }
         if let Some(l) = &self.loaded {
-            if pane.grids {
+            // A view that hides the grid kind hides its lines and bubbles too, like it hides
+            // beams (issue 569 item 13): `pane.grids` is only the pane's guides switch.
+            if pane.grids && shown.is_none_or(|v| v.shows_kind(beamcraft_engine::ElementKind::Grid))
+            {
                 self.grid_scene.paint(
                     ui,
                     response.rect,
                     &view,
                     l.summary.origin_mm,
                     self.grid_edit.as_ref().map(|edit| edit.id.as_str()),
+                    shown,
                 );
             }
             if let Ok(rows) = self.annotation.rows.as_deref()
                 && !rows.is_empty()
             {
-                annotation_panel::paint(ui, response.rect, &view, l.summary.origin_mm, rows);
+                // V16 SelectedOnly draws the selected element only: annotations of hidden
+                // elements hide with their hosts, and nothing is selected draws none (issue 569
+                // item 18). Every other mode keeps all rows.
+                let selected = (pane.mode == RenderMode::SelectedOnly)
+                    .then(|| self.editor.selected().map(|s| s.id.clone()));
+                let all_rows = |_: &annotation_panel::Row| true;
+                let nothing_selected = |_: &annotation_panel::Row| false;
+                let selected_rows = |row: &annotation_panel::Row| {
+                    selected
+                        .as_ref()
+                        .and_then(|s| s.as_ref())
+                        .is_some_and(|id| row.hosts.iter().any(|h| h == id))
+                };
+                let keep: &dyn Fn(&annotation_panel::Row) -> bool = match &selected {
+                    None => &all_rows,
+                    Some(None) => &nothing_selected,
+                    Some(Some(_)) => &selected_rows,
+                };
+                annotation_panel::paint(ui, response.rect, &view, l.summary.origin_mm, rows, keep);
             }
             if let Some(selected) = self.editor.selected() {
                 let key = (selected.id.clone(), l.snapshot.token().as_str().to_owned());
                 if self.selection_edges.0 != key {
-                    let edges = beamcraft_engine::ElementId::parse(&selected.id)
-                        .ok()
-                        .and_then(|id| {
-                            beamcraft_engine::query::feature::element_edges(&l.snapshot, &id).ok()
-                        })
-                        .unwrap_or_default();
+                    let edges = selection_edges(&l.snapshot, &selected.id);
                     self.selection_edges = (key, edges);
                 }
                 let painter = ui.painter_at(response.rect);
@@ -874,15 +962,15 @@ impl App {
                     &view,
                     l.summary.origin_mm,
                     &self.selection_edges.1,
+                    cut.as_ref(),
                 );
                 // The selected plate's contour grips (V18): dormant while a creation tool or a
-                // view pick owns the pointer, and on any bench other than Select, whose click
-                // pickers (weld pairs, annotations) would lose their clicks to a grip.
+                // view pick owns the pointer, on any bench other than Select, whose click
+                // pickers (weld pairs, annotations) would lose their clicks to a grip, and while
+                // the selection's reading is stale — a grip off the moved plate floats (issue
+                // 569 item 12).
                 if let Some(contour) = selected.contour.as_ref()
-                    && !self.beam_mode
-                    && !self.plate_mode
-                    && self.views.picking.is_none()
-                    && self.bench == workbench::Bench::Select
+                    && !self.contour_grips_dormant()
                 {
                     contour_grips::paint(
                         &painter,
@@ -1078,5 +1166,177 @@ impl App {
                 self.start_select(ray);
             }
         }
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_box_outline_has_twelve_edges_around_its_bounds() {
+        let edges = box_edges(beamcraft_engine::Aabb {
+            min: [0.0, 0.0, 0.0],
+            max: [300.0, 150.0, 20.0],
+        });
+        assert_eq!(edges.len(), 12);
+        assert!(edges.contains(&[[0.0, 0.0, 0.0], [300.0, 0.0, 0.0]]));
+        assert!(edges.contains(&[[300.0, 150.0, 20.0], [0.0, 150.0, 20.0]]));
+    }
+
+    #[test]
+    fn a_selected_bolt_group_outlines_its_bounds() {
+        // Issue 584 item 9: the group's merged mesh carries no semantic features, so the
+        // selection outline fell back to nothing and the viewport stayed unchanged. The
+        // display bounds step in; a plate on the same snapshot keeps its own edges.
+        let executable = std::env::current_exe().unwrap();
+        let cli = executable
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        assert!(
+            cli.is_file(),
+            "build beamcraft-cli before native modelling tests"
+        );
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("bc-584d-{}-{nanos}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let store = root.join("model");
+        let bare = |args: &[&str]| {
+            let output = std::process::Command::new(&cli)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+        };
+        let run = |args: &[&str]| {
+            let output = std::process::Command::new(&cli)
+                .args(args)
+                .args(["--store", store.to_str().unwrap()])
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+            beamcraft_json::decode(&output.stdout, &beamcraft_json::Limits::DEFAULT).unwrap()
+        };
+        bare(&[
+            "create-project",
+            "--parent",
+            root.to_str().unwrap(),
+            "--name",
+            "model",
+        ]);
+        for (name, z) in [("PA", "0"), ("PB", "10")] {
+            let mut args = vec![
+                "create-plate",
+                "--width",
+                "300",
+                "--length",
+                "150",
+                "--thickness",
+                "10",
+                "--name",
+                name,
+            ];
+            if z != "0" {
+                args.extend(["--translation", "0,0,10"]);
+            }
+            let output = std::process::Command::new(&cli)
+                .args(&args)
+                .args(["--store", store.to_str().unwrap()])
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+        }
+        let listing = run(&["inspect-elements"]);
+        let plates = |listing: &beamcraft_json::Json| {
+            listing
+                .get("plates")
+                .and_then(|j| j.array())
+                .unwrap()
+                .iter()
+                .filter_map(|p| p.get("element_id").ok().and_then(|j| j.string().ok()))
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        };
+        let parts = plates(&listing);
+        assert_eq!(parts.len(), 2, "the two plates are listed");
+        let plate = parts.first().unwrap().clone();
+        let parts = parts.join(",");
+        let library = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../assets/libraries/synthetic-fasteners.usda");
+        bare(&[
+            "create-bolt-group",
+            "--store",
+            store.to_str().unwrap(),
+            "--name",
+            "BG",
+            "--parts",
+            &parts,
+            "--fastener-library",
+            library.to_str().unwrap(),
+            "--designation",
+            "SYN-BOLT-12x50",
+            "--point1",
+            "0,75,0",
+            "--point2",
+            "300,75,0",
+            "--plane-normal",
+            "0,0,1",
+            "--offset-start",
+            "50",
+            "--count",
+            "3",
+            "--pitch",
+            "100",
+        ]);
+        let listing = run(&["bolts"]);
+        let groups = listing.get("bolt_groups").and_then(|j| j.array()).unwrap();
+        assert_eq!(groups.len(), 1, "the group is committed");
+        let group = groups
+            .first()
+            .and_then(|g| g.get("id").ok())
+            .and_then(|j| j.string().ok())
+            .map(str::to_owned)
+            .unwrap_or_else(|| panic!("the group lists its id"));
+        let snapshot = crate::source::load(&cli, &store, &crate::stats::Stats::default()).unwrap();
+        let id = beamcraft_engine::ElementId::parse(&group).unwrap();
+        assert!(
+            beamcraft_engine::query::feature::element_edges(&snapshot, &id).is_err(),
+            "the merged mesh carries no semantic features"
+        );
+        let edges = selection_edges(&snapshot, &group);
+        assert_eq!(
+            edges.len(),
+            12,
+            "the bounds outline the selected group: {edges:?}"
+        );
+        // The primary path is untouched where features exist.
+        assert!(
+            beamcraft_engine::query::feature::element_edges(
+                &snapshot,
+                &beamcraft_engine::ElementId::parse(&plate).unwrap()
+            )
+            .is_ok(),
+            "a plate keeps its semantic edges"
+        );
+        assert!(!selection_edges(&snapshot, &plate).is_empty());
     }
 }

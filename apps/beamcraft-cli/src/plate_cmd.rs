@@ -1087,7 +1087,11 @@ fn create(
     let plane = command_plane(options)?;
     let new_id = match given("--new-id") {
         Some(text) => ElementId::parse(text).map_err(id_error)?,
-        None => ElementId::from_uuid(fresh()?),
+        None => ElementId::from_uuid(crate::command_context::default_id(
+            options.get("--op-id").copied(),
+            "new_id/0",
+            &mut fresh,
+        )?),
     };
     let op_id = match given("--op-id") {
         Some(text) => OpId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
@@ -1236,20 +1240,25 @@ fn kept_without_geometry(plate: &UnsupportedPlate) -> String {
 }
 
 /// The through holes of `create-plate`: `--hole-rect "X,Y,W,H;..."` (axis-aligned rectangles from
-/// the corner `X,Y`) and `--hole-round "X,Y,D;..."` (a regular polygon of `--hole-segments`
-/// sides, default 32, inscribed in the circle of centre `X,Y` and diameter `D`). Both are only
-/// generators: the model stores the clockwise polygons, so a "round" hole is that polygon and its
-/// volume is the polygon's, exactly. The polygon vertices use the platform sin and cos here, at
-/// the input edge, and are authored as the doubles they round to.
+/// the corner `X,Y`) and `--hole-round "X,Y,D;..."` (a regular polygon inscribed in the circle
+/// of centre `X,Y` and diameter `D`). Without `--hole-segments` the round hole follows the
+/// model's own round-hole rule (the smallest multiple of four, 16 to 256 sides, whose chord
+/// deviation stays within 0.05 mm — the same polygon `add-hole` authors), so a large hole
+/// stays smooth instead of freezing at 32 sides (issue 562 item 32). An explicit
+/// `--hole-segments` (8 to 256) keeps the plain generator. Both are only generators: the model
+/// stores the clockwise polygons, so a "round" hole is that polygon and its volume is the
+/// polygon's, exactly. The polygon vertices use the platform sin and cos here, at the input
+/// edge, and are authored as the doubles they round to.
 fn holes(options: &BTreeMap<&str, &str>) -> Run<Vec<Vec<[f64; 2]>>> {
     let given = |key: &str| options.get(key).copied();
     let segments = match given("--hole-segments") {
-        Some(text) => text
-            .parse::<usize>()
-            .ok()
-            .filter(|n| (8..=256).contains(n))
-            .ok_or_else(|| invalid("--hole-segments is 8 to 256"))?,
-        None => 32,
+        Some(text) => Some(
+            text.parse::<usize>()
+                .ok()
+                .filter(|n| (8..=256).contains(n))
+                .ok_or_else(|| invalid("--hole-segments is 8 to 256"))?,
+        ),
+        None => None,
     };
     // Non-finite values stay the kernel's `NON_FINITE_NUMBER`; only finite non-positive sizes are
     // refused here, because a reversed polygon would otherwise pass as a valid clockwise hole.
@@ -1271,15 +1280,28 @@ fn holes(options: &BTreeMap<&str, &str>) -> Run<Vec<Vec<[f64; 2]>>> {
                 if !size_ok(&[d]) {
                     return Err(invalid("a hole diameter must be positive"));
                 }
-                let r = d / 2.0;
-                result.push(
-                    (0..segments)
-                        .map(|k| {
-                            let theta = -std::f64::consts::TAU * (k as f64) / (segments as f64);
-                            [x + r * theta.cos(), y + r * theta.sin()]
-                        })
-                        .collect(),
-                );
+                match segments {
+                    None => result.push(
+                        steel::model::command::HoleSpec::Round {
+                            centre_mm: [x, y],
+                            diameter_mm: d,
+                        }
+                        .polygon()
+                        .map_err(Refusal::from)?,
+                    ),
+                    Some(sides) => {
+                        let r = d / 2.0;
+                        result.push(
+                            (0..sides)
+                                .map(|k| {
+                                    let theta =
+                                        -std::f64::consts::TAU * (k as f64) / (sides as f64);
+                                    [x + r * theta.cos(), y + r * theta.sin()]
+                                })
+                                .collect(),
+                        );
+                    }
+                }
             }
         }
     }
@@ -2617,7 +2639,11 @@ fn copy_command(
         .map_err(id_error)?;
     let new_id = match given("--new-id") {
         Some(text) => ElementId::parse(text).map_err(id_error)?,
-        None => ElementId::from_uuid(fresh()?),
+        None => ElementId::from_uuid(crate::command_context::default_id(
+            options.get("--op-id").copied(),
+            "new_id/0",
+            &mut fresh,
+        )?),
     };
     let op_id = match given("--op-id") {
         Some(text) => OpId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
@@ -2720,7 +2746,11 @@ fn lofted_create(
     let given = |key: &str| options.get(key).copied();
     let new_id = match given("--new-id") {
         Some(text) => ElementId::parse(text).map_err(id_error)?,
-        None => ElementId::from_uuid(fresh()?),
+        None => ElementId::from_uuid(crate::command_context::default_id(
+            options.get("--op-id").copied(),
+            "new_id/0",
+            &mut fresh,
+        )?),
     };
     let op_id = match given("--op-id") {
         Some(text) => OpId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
@@ -2896,8 +2926,12 @@ fn array_command(store: &RevisionStore, options: &BTreeMap<&str, &str>, polar: b
         return Err(invalid("count must be at least one"));
     }
     let mut new_ids = Vec::new();
-    for _ in 0..count {
-        new_ids.push(ElementId::from_uuid(fresh()?));
+    for index in 0..count {
+        new_ids.push(ElementId::from_uuid(crate::command_context::default_id(
+            options.get("--op-id").copied(),
+            &format!("new_id/{index}"),
+            &mut fresh,
+        )?));
     }
     let op_id = match given("--op-id") {
         Some(text) => OpId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
@@ -3261,7 +3295,11 @@ fn create_member_command(
     let plane = command_plane(options)?;
     let new_id = match given("--new-id") {
         Some(text) => ElementId::parse(text).map_err(id_error)?,
-        None => ElementId::from_uuid(fresh()?),
+        None => ElementId::from_uuid(crate::command_context::default_id(
+            options.get("--op-id").copied(),
+            "new_id/0",
+            &mut fresh,
+        )?),
     };
     let op_id = match given("--op-id") {
         Some(text) => OpId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
@@ -3442,7 +3480,11 @@ fn create_polybeam_command(
     let given = |key: &str| options.get(key).copied();
     let new_id = match given("--new-id") {
         Some(text) => ElementId::parse(text).map_err(id_error)?,
-        None => ElementId::from_uuid(fresh()?),
+        None => ElementId::from_uuid(crate::command_context::default_id(
+            options.get("--op-id").copied(),
+            "new_id/0",
+            &mut fresh,
+        )?),
     };
     let op_id = match given("--op-id") {
         Some(text) => OpId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
