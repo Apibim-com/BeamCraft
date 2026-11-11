@@ -8395,6 +8395,51 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn an_edit_with_several_views_selected_changes_them_all() {
+        use beamcraft_engine::views::ModelView;
+        use beamcraft_engine::work_plane::WorkPlane;
+        use beamcraft_model::id::Uuid7;
+        let Some(mut app) = headless() else { return };
+        let id = |n: u64| Uuid7::parse(&format!("019a7bf0-0000-7000-8000-{n:012}")).unwrap();
+        for (n, name, depth) in [
+            (1, "Grid 1", 1000.0),
+            (2, "Grid 2", 2000.0),
+            (3, "Grid 3", 3000.0),
+        ] {
+            let mut view = ModelView::new(id(n), name, WorkPlane::default(), 5000.0);
+            view.depth = Some([depth, depth]);
+            app.views.book.insert(view).unwrap();
+        }
+        app.views.selected = [id(1), id(2)].into_iter().collect();
+        app.edit_view(id(1));
+        app.views.form.folder = "Grids".into();
+        app.views.form.depth[0] = "500".into();
+        app.submit_view();
+        assert!(matches!(&app.views.note, Some(Ok(note)) if note.starts_with("2 views")));
+        let view = |app: &App, n| app.views.book.get(&id(n)).unwrap().clone();
+        for n in [1, 2] {
+            assert_eq!(view(&app, n).folder, "Grids", "view {n}");
+        }
+        // Only the changed value travels: each view keeps its own depth behind the plane and
+        // its own name.
+        assert_eq!(view(&app, 1).depth, Some([500.0, 1000.0]));
+        assert_eq!(view(&app, 2).depth, Some([500.0, 2000.0]));
+        assert_eq!(view(&app, 2).name, "Grid 2");
+        // An unselected view is untouched.
+        assert_eq!(view(&app, 3).folder, "");
+        assert_eq!(view(&app, 3).depth, Some([3000.0, 3000.0]));
+
+        // A change one selected view refuses changes none of them.
+        app.views.selected = [id(2), id(3)].into_iter().collect();
+        app.edit_view(id(2));
+        app.views.form.folder = "Bad/".into();
+        app.submit_view();
+        assert!(matches!(app.views.note, Some(Err(_))));
+        assert_eq!(view(&app, 2).folder, "Grids");
+        assert_eq!(view(&app, 3).folder, "");
+    }
+
+    #[test]
     fn a_visual_style_or_guides_switch_reaches_the_view_and_the_open_form() {
         use beamcraft_engine::RenderMode;
         use beamcraft_engine::views::ModelView;
