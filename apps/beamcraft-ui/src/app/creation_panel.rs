@@ -14,6 +14,20 @@ use beamcraft_engine::query::pick::{
 pub(super) const THICKNESS_SIDES: &[(&str, &str)] =
     &[("top", "Top"), ("middle", "Middle"), ("bottom", "Bottom")];
 
+/// Whether the vertical guide plane through the world XY segment `a`..`b` is seen edge-on
+/// along `direction`: the view direction lies in the plane, within about one degree.
+fn guide_edge_on(direction: [f64; 3], [ax, ay]: [f64; 2], [bx, by]: [f64; 2]) -> bool {
+    let (dx, dy) = (bx - ax, by - ay);
+    let length = dx.hypot(dy);
+    let [rx, ry, rz] = direction;
+    let norm = (rx * rx + ry * ry + rz * rz).sqrt();
+    if !(length > 0.0 && length.is_finite() && norm > 0.0 && norm.is_finite()) {
+        return false;
+    }
+    // The guide's horizontal normal is (-dy, dx, 0) / length.
+    ((-dy * rx + dx * ry) / (length * norm)).abs() <= 0.02
+}
+
 pub(super) fn token_combo(
     ui: &mut egui::Ui,
     id: &str,
@@ -149,6 +163,40 @@ impl App {
         planar: bool,
     ) -> Result<[f64; 3], ToolError> {
         self.creation_hit(ray, planar).map(|(point, _)| point)
+    }
+
+    /// Whether a grid-line snap lies where the user sees the line. A grid line stands for a
+    /// vertical guide plane: seen edge-on (a plan, or an elevation across the line) the whole
+    /// guide shows as the line, so any height on it counts. Seen at an angle or face-on (an
+    /// elevation along the line) the guide covers the view, and only the line's drawn trace at
+    /// Z = 0 counts.
+    fn grid_line_seen(
+        &self,
+        hit: &beamcraft_engine::query::pick::SnapCandidate,
+        direction: [f64; 3],
+        near: impl Fn([f64; 3]) -> bool,
+    ) -> bool {
+        use beamcraft_engine::grid_query::{local_to_world, segments};
+        let segment = hit.grid.as_ref().and_then(|identity| {
+            let grid = self
+                .grid_scene
+                .query_grids
+                .iter()
+                .find(|g| g.id == hit.element_id)?;
+            let segment = segments(grid)
+                .ok()?
+                .into_iter()
+                .find(|s| s.axis_id == identity.axis_id)?;
+            Some((
+                local_to_world(grid, segment.start),
+                local_to_world(grid, segment.end),
+            ))
+        });
+        if segment.is_some_and(|(a, b)| guide_edge_on(direction, a, b)) {
+            return true;
+        }
+        let [x, y, _] = hit.point_world_mm;
+        near([x, y, 0.0])
     }
 
     /// Resolve the preview and click through exactly the same coordinate path.
@@ -363,6 +411,13 @@ impl App {
                                     .element(&hit.element_id)
                                     .is_none_or(|e| view.shows_kind(e.kind))
                         })
+                    })
+                    // A grid line seen face-on covers the whole view; it counts only on its trace.
+                    .filter(|hit| {
+                        hit.kind != SnapKind::GridLine
+                            || self.grid_line_seen(hit, ray.direction, |p| {
+                                screen_distance(p).is_some_and(|d| d <= 10.0)
+                            })
                     })
                     .filter_map(|hit| {
                         screen_distance(hit.point_world_mm)
@@ -826,5 +881,30 @@ impl App {
             ui.label("Saving element…");
         }
         // Its outcome is told in the status bar (`App::status_note`).
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::guide_edge_on;
+
+    #[test]
+    fn a_grid_guide_is_a_line_only_when_seen_edge_on() {
+        // Grid line "1" runs along Y; grid line "A" runs along X.
+        let along_y = ([0.0, 0.0], [0.0, 20000.0]);
+        let along_x = ([0.0, 0.0], [18000.0, 0.0]);
+        let plan = [0.0, 0.0, -1.0];
+        let elevation_along_x = [-1.0, 0.0, 0.0];
+        assert!(guide_edge_on(plan, along_y.0, along_y.1), "a plan");
+        assert!(guide_edge_on(plan, along_x.0, along_x.1), "a plan");
+        // Looking along X: line "A" is edge-on, line "1" fills the view face-on.
+        assert!(guide_edge_on(elevation_along_x, along_x.0, along_x.1));
+        assert!(!guide_edge_on(elevation_along_x, along_y.0, along_y.1));
+        // An oblique 3D view sees no guide edge-on.
+        assert!(!guide_edge_on([-0.5, -0.5, -0.7], along_y.0, along_y.1));
+        assert!(
+            !guide_edge_on(plan, [1.0, 1.0], [1.0, 1.0]),
+            "a point is no guide"
+        );
     }
 }
