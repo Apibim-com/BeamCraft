@@ -9,6 +9,34 @@ use beamcraft_engine::query::pick::{
     SnapContext, SnapCursor, SnapKind, SnapQuery, snap_with_context,
 };
 
+/// A labelled drop-down that keeps one of `options`' tokens in `value`.
+/// The sides a plate's thickness is laid off from, as `--thickness-side` tokens and their names.
+pub(super) const THICKNESS_SIDES: &[(&str, &str)] =
+    &[("top", "Top"), ("middle", "Middle"), ("bottom", "Bottom")];
+
+pub(super) fn token_combo(
+    ui: &mut egui::Ui,
+    id: &str,
+    label: &str,
+    value: &mut String,
+    options: &[(&str, &str)],
+) {
+    let shown = options
+        .iter()
+        .find(|(token, _)| *token == value.as_str())
+        .map_or("", |(_, name)| *name);
+    crate::kit::prop_row(ui, label, |ui| {
+        egui::ComboBox::from_id_salt(id)
+            .width((ui.available_width() - crate::kit::FIT).max(60.0))
+            .selected_text(shown)
+            .show_ui(ui, |ui| {
+                for (token, name) in options {
+                    ui.selectable_value(value, (*token).to_owned(), *name);
+                }
+            });
+    });
+}
+
 /// The drop-down of the environment's presets for the active part kind; picking one refills the
 /// form (every field stays editable). Nothing is drawn when the environment has no preset.
 fn preset_combo(ui: &mut egui::Ui, tools: &mut crate::tools::Tools) {
@@ -711,12 +739,13 @@ impl App {
                     field(ui, "Name", &mut self.tools.plate.name, 160.0);
                     field(ui, "Class", &mut self.tools.plate.class, 80.0);
                     field(ui, "Thickness (mm)", &mut self.tools.plate.thickness, 80.0);
+                    token_combo(ui, "plate-thickness-side", "Thickness from", &mut self.tools.plate.thickness_side, THICKNESS_SIDES);
                     choice_combo(ui, "plate-material", "Material", &mut self.tools.plate.material, &self.tools.definitions.materials, false);
                     ui.separator();
                     ui.label("Pick contour vertices in 3D. Aim, type a length and press Enter to add a point. O toggles orthogonal X/Y/Z. Enter without a length, right-click, wheel-click or Finish creates the plate. Backspace removes a digit or point.");
                     ui.checkbox(&mut self.selection.orthogonal,"Orthogonal X/Y/Z (O)");
                     ui.label(format!("{} vertices", self.plate_draft.points().len()));
-                    ui.horizontal(|ui| {
+                    ui.horizontal_wrapped(|ui| {
                         if ui.add_enabled(self.plate_draft.points().len() >= 3, egui::Button::new("Finish plate")).clicked() { self.finish_plate(); }
                         if ui.add_enabled(!self.plate_draft.points().is_empty(), egui::Button::new("Remove last point")).clicked() { self.plate_draft.back(); }
                         if ui.add_enabled(self.plate_draft.points().len() >= 3, egui::Button::new("Reverse direction")).clicked() { self.plate_draft.reverse(); }
@@ -752,6 +781,16 @@ impl App {
                         field(ui, "Height (mm)", &mut self.tools.member.height, 80.0);
                         choice_combo(ui, "column-top-level", "Top level", &mut self.tools.member.top_level, &levels, false);
                     }
+                    crate::kit::fold(ui, "member-position", "Position and rotation", true, |ui| {
+                        let member = &mut self.tools.member;
+                        field(ui, "Rotation, °", &mut member.roll, 80.0);
+                        token_combo(ui, "member-plane", "On plane", &mut member.plane, &[("left", "Left"), ("centre", "Middle"), ("right", "Right")]);
+                        field(ui, "On plane offset, mm", &mut member.plane_offset, 80.0);
+                        token_combo(ui, "member-depth", "At depth", &mut member.depth, &[("front", "Front"), ("centre", "Middle"), ("back", "Behind")]);
+                        field(ui, "At depth offset, mm", &mut member.depth_offset, 80.0);
+                        field(ui, "Start offset, mm", &mut member.start_offset, 80.0);
+                        field(ui, "End offset, mm", &mut member.end_offset, 80.0);
+                    });
                     ui.separator();
                     ui.label(if column && self.beam.start().is_none() { "Click the base point. The top follows the chosen level, or the height when no level is chosen." } else if self.beam.start().is_some() { "Aim, type a length in mm and press Enter, or pick the end point. O toggles orthogonal X/Y/Z." } else { "Pick the start point, then the end point in the model view." });
                     if ui.button("Pick new points").clicked() {
@@ -767,7 +806,6 @@ impl App {
                         }
                         field(ui, "Start expression", &mut self.tools.member.start_input, 160.0);
                         field(ui, "End expression", &mut self.tools.member.end_input, 160.0);
-                        field(ui, "Roll (radians)", &mut self.tools.member.roll, 80.0);
                         if ui.button("Create member").clicked() { self.create_from_form(); }
                     });
                 }

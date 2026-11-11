@@ -14,6 +14,7 @@ mod contour_grips;
 mod creation_panel;
 mod export_panel;
 mod grid_panel;
+mod member_grips;
 mod switches;
 mod view_panel;
 mod weld_panel;
@@ -196,6 +197,7 @@ pub struct App {
     selection: crate::selection::Selection,
     /// The selected plate's contour grips (V18): the drag in progress and the commit in flight.
     contour: contour_grips::Grips,
+    member_grips: member_grips::Grips,
     /// The page the application menu shows.
     menu_section: workbench::MenuSection,
     /// What the last menu action reported, shown under the page heading.
@@ -1002,6 +1004,7 @@ impl App {
             grid_refresh_edit: false,
             selection: crate::selection::Selection::default(),
             contour: contour_grips::Grips::default(),
+            member_grips: member_grips::Grips::default(),
             details: false,
             pending_fit: false,
             logo: None,
@@ -1483,6 +1486,11 @@ impl App {
             None => self.editor.begin_commit(target),
         };
         let Some(edit) = edit else { return };
+        self.spawn_edit(edit);
+    }
+
+    /// Runs one edit command on a worker thread; the editor is already marked busy.
+    fn spawn_edit(&mut self, edit: crate::edit::Edit) {
         let cli = self.source.cli.clone();
         let (tx, rx) = std::sync::mpsc::channel();
         self.edit_job = Some(rx);
@@ -1554,6 +1562,7 @@ impl App {
                 self.invalidate_select();
                 self.reload();
                 self.edit_note = Some(Ok(format!("{}.", done.kind.done())));
+                self.editor.clear_axis_point();
                 match done.kind {
                     EditKind::Delete => {
                         self.editor.deselect();
@@ -1877,6 +1886,14 @@ impl App {
                     if details.is_plate() {
                         mark(ui, self.props.form.thickness != base.thickness);
                         field(ui, "Thickness, mm", &mut self.props.form.thickness, 80.0);
+                        mark(ui, self.props.form.thickness_side != base.thickness_side);
+                        creation_panel::token_combo(
+                            ui,
+                            "props-thickness-side",
+                            "Thickness from",
+                            &mut self.props.form.thickness_side,
+                            creation_panel::THICKNESS_SIDES,
+                        );
                     }
                 });
                 if !details.is_plate() {
@@ -2394,7 +2411,12 @@ impl App {
         let action = self.editor.action();
         ui.add_enabled_ui(selected, |ui| match action {
             EditKind::Move => {
-                ui.label("New position in mm (absolute):");
+                match self.editor.axis_point() {
+                    Some((_, end)) => {
+                        ui.label(format!("New {} point in mm (absolute):", end.label()))
+                    }
+                    None => ui.label("New position in mm (absolute):"),
+                };
                 point_fields(ui, &mut self.editor.move_to);
             }
             EditKind::Copy => {
@@ -2863,7 +2885,7 @@ impl App {
             axis_points_mm: vec![start, end],
             follow: None,
             profile: self.tools.member.profile.as_deref()?.parse().ok()?,
-            roll_rad: self.tools.member.roll.trim().parse::<f64>().ok(),
+            roll_rad: self.tools.member.roll_radians().ok().flatten(),
             section_placement: None,
             placement: Placement {
                 translation_mm: [0.0; 3],
