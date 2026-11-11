@@ -1453,9 +1453,10 @@ impl App {
     /// A click that selected nothing shows the active pane's view in the panel, unless a new
     /// view's form is open there.
     fn empty_click(&mut self) {
+        // The levels list closes like the view panel: nothing on it is lost.
         if matches!(
             self.bench,
-            workbench::Bench::Select | workbench::Bench::View
+            workbench::Bench::Select | workbench::Bench::View | workbench::Bench::Levels
         ) && self.views.subject != crate::views::Subject::NewView
         {
             self.show_view_properties();
@@ -4106,6 +4107,14 @@ pub(crate) mod tests {
         app.begin_select(rx);
         app.poll_select();
         assert!(app.bench == Bench::Select, "a picked element leaves it");
+
+        // A click on empty space shows the view's properties instead of the levels.
+        app.set_bench(Bench::Levels);
+        let (tx, rx) = std::sync::mpsc::channel();
+        tx.send(Ok(None)).unwrap();
+        app.begin_select(rx);
+        app.poll_select();
+        assert!(app.bench == Bench::View, "an empty click shows the view");
     }
 
     #[test]
