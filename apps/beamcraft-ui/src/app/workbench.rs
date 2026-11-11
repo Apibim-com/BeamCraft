@@ -411,6 +411,9 @@ impl App {
         if self.tools.plate.thickness.is_empty() {
             self.tools.plate.thickness = "10".into();
         }
+        if self.tools.plate.thickness_side.is_empty() {
+            self.tools.plate.thickness_side = "top".into();
+        }
         self.beam_mode = matches!(bench, Bench::Beam | Bench::Column);
         self.beam.reset();
         self.ghost_end = None;

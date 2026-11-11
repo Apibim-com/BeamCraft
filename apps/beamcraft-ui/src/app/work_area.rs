@@ -683,7 +683,7 @@ impl App {
         );
         // A contour grip holding the pointer takes the primary drag from the camera (V18): a
         // trackpad's primary drag would otherwise orbit while the grip is being dragged.
-        let (orbit, pan) = if self.contour.holds_pointer() {
+        let (orbit, pan) = if self.contour.holds_pointer() || self.member_grips.holds_pointer() {
             ([0.0; 2], [0.0; 2])
         } else {
             (orbit, pan)
@@ -901,6 +901,7 @@ impl App {
                         &self.contour,
                     );
                 }
+                self.paint_member_grips(&painter, response.rect, &view, l.summary.origin_mm);
             } else {
                 self.selection_edges = Default::default();
             }
@@ -928,7 +929,9 @@ impl App {
         // The contour grips (V18) see the pointer before any click: a grip drag is not a
         // selection or a camera move, and its release commits one contour edit. The corner
         // editor's window belongs to the active pane too.
-        let grip_hold = !swallow && self.contour_input(ui, response, view);
+        let grip_hold = !swallow
+            && (self.member_grip_input(ui, response, view)
+                | self.contour_input(ui, response, view));
         self.contour_editor_ui(ui.ctx());
         let finished_creation = !grip_hold && self.finish_creation_gesture(response, view);
         // A closure gesture consumes the click before it can append another point.
