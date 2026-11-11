@@ -572,7 +572,9 @@ pub(super) fn snapshot(
     {
         return Err(fail(
             ErrorCode::UnsupportedVersion,
-            "layer schema digest mismatch",
+            "layer schema digest mismatch: the store was written with another layer mapping \
+             (pre-alpha stores are not migrated); open-revision reports the store and build \
+             digests",
         ));
     }
     project_record(metadata)?;
@@ -1465,9 +1467,20 @@ pub(super) fn changes(
             ),
             // A binding rewrites the stored axis group (erase or restore of the world points)
             // and the follow relationship; the grid's existence is read, never its content.
-            Change::Follow { .. } => (
+            // A release also restores the derived pose, so it writes the placement group.
+            Change::Follow {
+                binding: FollowBinding::Bind(_),
+                ..
+            } => (
                 &[Group::Lifecycle, Group::ShapeInputs, Group::Relationship],
                 &[Group::ShapeInputs, Group::Relationship],
+            ),
+            Change::Follow {
+                binding: FollowBinding::Release { .. },
+                ..
+            } => (
+                &[Group::Lifecycle, Group::ShapeInputs, Group::Relationship],
+                &[Group::ShapeInputs, Group::Relationship, Group::Placement],
             ),
             Change::Delete { .. } => (
                 &[Group::Lifecycle, Group::Relationship],
@@ -1572,14 +1585,14 @@ pub(super) fn changes(
             });
         }
         if let Change::Follow {
-            binding: FollowBinding::Release(world),
+            binding: FollowBinding::Release { axis_mm, .. },
             ..
         } = change
         {
             // The restored axis replaces the record's storage: the same member bounds apply.
-            if world.len() < 2
-                || world.len() > beamcraft_model::limits::MAX_MEMBER_PATH_POINTS
-                || world
+            if axis_mm.len() < 2
+                || axis_mm.len() > beamcraft_model::limits::MAX_MEMBER_PATH_POINTS
+                || axis_mm
                     .iter()
                     .flatten()
                     .any(|v| !v.is_finite() || v.abs() > 1e9)

@@ -462,9 +462,25 @@ fn finite_point(point: [f64; 2]) -> Result<(), CommandError> {
     Ok(())
 }
 
-/// Validates one geometry against the D07 slice bounds. Public because the closed intent reader
-/// rebuilds geometry from persisted bytes and must pass it through the same bounds.
+/// Validates one geometry against the D07 slice bounds, with the every-mark-draws glyph rule
+/// over a drawn text. Public because the closed intent reader rebuilds geometry from persisted
+/// bytes and must pass it through the same bounds.
 pub fn validate_geometry(geometry: &DraftingGeometry) -> Result<(), CommandError> {
+    validate_geometry_for(geometry, true)
+}
+
+/// The decode-time structural validation of one geometry: the same bounds without the
+/// presentation-era every-mark-draws rule, so a stored revision whose drawn text carries a
+/// character the glyph set grew to refuse still re-admits ([`super::Drawing::admit_stored`]);
+/// its drawn export refuses through [`super::Drawing::ensure_drawable_text`] instead.
+pub fn validate_geometry_stored(geometry: &DraftingGeometry) -> Result<(), CommandError> {
+    validate_geometry_for(geometry, false)
+}
+
+fn validate_geometry_for(
+    geometry: &DraftingGeometry,
+    require_drawable: bool,
+) -> Result<(), CommandError> {
     match geometry {
         DraftingGeometry::Line { a, b } => {
             finite_point(*a)?;
@@ -592,6 +608,20 @@ pub fn validate_geometry(geometry: &DraftingGeometry) -> Result<(), CommandError
             }
             if text.chars().any(char::is_control) {
                 return Err(invalid("drafting", "text must not hold control characters"));
+            }
+            // Every admitted character must draw as an original stroke glyph: a text that
+            // silently blanked the marks it cannot draw lied about its own content (visual
+            // audit finding 11). Supported set: capitals (ASCII lowercase folds onto
+            // them), digits, space and the drawing punctuation. The rule gates authoring
+            // only; the decode path re-admits what an older glyph set accepted and the
+            // drawn export refuses instead (the review on the 1111 batch).
+            if require_drawable && text.chars().find(|ch| !super::svg::draws(*ch)).is_some() {
+                return Err(invalid(
+                    "drafting",
+                    "text draws with the drawing's own stroke glyphs; a character outside \
+                     the supported set cannot be drawn faithfully (use ASCII capitals, \
+                     digits and , ; / ( ) + = # & _ % - : .)",
+                ));
             }
         }
         DraftingGeometry::Hatch { outline, .. } => {
@@ -899,6 +929,21 @@ mod tests {
             })
             .is_err()
         );
+    }
+
+    #[test]
+    fn text_admits_only_what_the_stroke_glyphs_draw() {
+        // Visual audit finding 11: the CLI accepted text whose marks the export could not
+        // draw and silently blanked them. Admission now refuses a character outside the
+        // drawable set, so an admissible text keeps every mark.
+        assert!(validate_geometry(&text("LEVEL +3.500")).is_ok());
+        assert!(validate_geometry(&text("MARK B-1 (2 PCS) 50%")).is_ok());
+        assert!(validate_geometry(&text("st. mary")).is_ok());
+        assert!(validate_geometry(&text("SECTION A-A 1:20")).is_ok());
+        assert!(validate_geometry(&text("R_#&=;,/")).is_ok());
+        for hostile in ["Уровень 3,5", "N° 7", "100 µm", "a\tb"] {
+            assert!(validate_geometry(&text(hostile)).is_err(), "{hostile}");
+        }
     }
 
     #[test]

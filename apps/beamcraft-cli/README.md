@@ -6,7 +6,8 @@ started, and no command opens a socket or a service except the opt-in loopback c
 commands. A
 corrupt or hostile layer is an ordinary refusal with a stable F04 code under the layer engine's
 size and depth budgets; the project's own layers are verified by SHA-256 before they are parsed.
-`commit-revision` and `open-revision` (below) publish already stored blobs and do not parse USD;
+`commit-revision` (below) publishes already stored blobs and does not parse USD (`open-revision`
+reads only the layer-schema pins of a project head);
 `create-plate` (P01, below) and the other modelling commands author USD and publish it.
 
 The commands themselves are the library `beamcraft-commands` (`crates/commands`, #208); this
@@ -78,7 +79,12 @@ Usage and options: [`commit-revision`](COMMANDS.md#commit-revision), [`open-revi
 (`put-blob`), and each size is taken from the verified stored bytes. The commit verifies the
 expected base, every blob and the op id, then switches the root in one step; a retry of the
 same op returns `revision_replayed`. `open-revision` verifies the root, its manifest and every
-layer blob and prints the revision (`revision_verified`). Output is JSON with decimal strings
+layer blob once, then reads the layer-schema pins from those verified bytes, and prints the
+revision (`revision_verified`) with `schema` (the store's pins, this build's digest and
+`compatible`). A project store pinned to another layer mapping is `UNSUPPORTED_VERSION`, and
+one whose layers cannot be parsed is refused with the reader's code (`INTEGRITY_ERROR`, ...);
+`schema` is `null` only for a head that is not a project base (its root layer is not
+`root.usda`). Output is JSON with decimal strings
 for `sequence`, `workspace_generation` and sizes. Errors use the existing exit codes
 (`BASE_REVISION_MISMATCH`, `OP_ID_REUSE`, `INTEGRITY_ERROR`, ... exit 2). `--timeout-ms` and
 `--cancel-after-ms` are checked while preparing and at every commit point before the root
@@ -174,7 +180,9 @@ operations are saved as authored-only plates: `inspect-elements` reports `validi
 They remain in the plate list and inspection snapshot without a render instance. Replays create
 no revision and deletion works. Editing/copying these plates and geometry-dependent numbering,
 BOM, IFC and binary view export return `DEPENDENCY_UNAVAILABLE`; none silently drops the element.
-Rotated element placements remain `UNSUPPORTED_GEOMETRY` at command application. The layer engine runs in
+Rotated placements (`--plane`, `--orientation-xyzw`) are applied by plate and member commands,
+`add-hole` and bolt groups, including generated holes (issue 555); the remaining placement-rotation
+refusals are named in the help of their commands. The layer engine runs in
 process by the U17 decision. Workspace and undo commands have their own sections below; a full
 F04 envelope/JSON command adapter remains absent. Quantities are printed, not stored in USD
 (the pinned schema has none).

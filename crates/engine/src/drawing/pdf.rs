@@ -164,6 +164,9 @@ pub fn export(
     version: DocumentVersionId,
     projection: &Projection,
 ) -> Result<Vec<u8>, CommandError> {
+    // A stored revision with a now-undrawable name or title exports as blanks; refuse the
+    // drawn surface honestly instead (visual audit finding 11).
+    drawing.ensure_drawable_text()?;
     let (groups, _) = stroke_groups(projection)?;
     let drafting = drafting_layers(drawing)?;
     let [min_x, min_y, max_x, max_y] = bounds(
@@ -305,8 +308,9 @@ mod tests {
         // The tight page carries the label glyphs, so metadata text stays out of the page:
         // the model-mm label is drawn as strokes, never written as font text.
         assert!(!text.contains("label_mm"));
-        // The fixture strokes span 20.5 x 25 mm with the shared margin, in points.
-        assert!(text.contains("/MediaBox [0 0 58.1102 70.8661]"));
+        // The fixture strokes span 20.7 x 25 mm with the shared margin, in points; the
+        // centred digit 1's flag reaches left of the old right-column-only glyph.
+        assert!(text.contains("/MediaBox [0 0 58.6772 70.8661]"));
         assert!(text.contains("0.7087 w"));
         // No font anywhere: the glyphs are the shared original stroke geometry.
         assert!(!text.contains("/Font"));
@@ -401,11 +405,13 @@ mod tests {
 
     #[test]
     fn textual_metadata_is_escaped_in_pdf_strings() {
-        let drawing = drawing("a<b>&\"c'");
+        // The ampersand is admissible (it draws as strokes) and stays literal in the PDF
+        // string; an undrawable name like a<b> refuses at admission now.
+        let drawing = drawing("a&b");
         let version = DocumentVersionId::parse(C).unwrap();
         let bytes = export(&drawing, version, &projection("10.5")).unwrap();
         let text = std::str::from_utf8(&bytes).unwrap();
-        assert!(text.contains("/Title (a<b>&\"c')"));
+        assert!(text.contains("/Title (a&b)"));
         assert!(text.contains("/Keywords ("));
     }
 }

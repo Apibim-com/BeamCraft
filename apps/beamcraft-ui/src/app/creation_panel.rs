@@ -3,7 +3,7 @@
 
 //! Modelling properties and point-driven creation on the existing command adapters.
 
-use super::{App, View, choice_combo, field, ground_point, pick_point_in, workbench::Bench};
+use super::{App, View, choice_combo, field, ground_point, workbench::Bench};
 use crate::tools::{ToolError, ToolKind};
 use beamcraft_engine::query::pick::{
     SnapContext, SnapCursor, SnapKind, SnapQuery, snap_with_context,
@@ -224,18 +224,29 @@ impl App {
         } else if let Some(plane) = self.tools.plane {
             plane.ray_point(ray.origin, ray.direction)
         } else if let Some(loaded) = &self.loaded {
-            // An active model view hits only what it shows (V12).
+            // An active model view hits only what it shows (V12); the display cut hides in the
+            // picture, so picks and snaps skip it too (issue 569 item 17).
             match self.views.active_view() {
-                Some(view) => beamcraft_engine::views::pick_visible(
+                Some(view) => beamcraft_engine::views::pick_visible_except(
                     &loaded.snapshot,
                     view,
                     ray.origin,
                     ray.direction,
                     beamcraft_engine::query::pick::SelectionFilter::ALL,
+                    &std::collections::BTreeSet::new(),
+                    self.cut.as_ref(),
                 )
                 .map_err(|e| ToolError::local("INVALID_ARGUMENT", e.to_string()))?
                 .map(|hit| hit.point_world_mm),
-                None => pick_point_in(&loaded.snapshot, &ray)?.map(|(point, _)| point),
+                None => beamcraft_engine::views::pick_kept(
+                    &loaded.snapshot,
+                    ray.origin,
+                    ray.direction,
+                    beamcraft_engine::query::pick::SelectionFilter::ALL,
+                    self.cut.as_ref(),
+                )
+                .map_err(|e| ToolError::local("INVALID_ARGUMENT", e.to_string()))?
+                .map(|hit| hit.point_world_mm),
             }
             .or_else(|| ground_point(&ray))
         } else {
@@ -346,7 +357,16 @@ impl App {
         if !kinds.is_empty()
             && let Some(loaded) = &self.loaded
         {
-            let grids = if self.grids_shown() {
+            // The cut's kept half-spaces: a snap target they hide never offers itself (issue
+            // 569 item 17), like the view's own slab and work area below.
+            let cut_planes = self.cut.as_ref().and_then(|cut| cut.effective().ok());
+            // A view that hides the grid kind hides its lines, so it hides its snaps too
+            // (issue 569 item 13, the review on the 1111 batch): `grids_shown` is only the
+            // pane's guides switch.
+            let shown = pane.view.and_then(|id| self.views.book.get(&id));
+            let grids = if self.grids_shown()
+                && shown.is_none_or(|v| v.shows_kind(beamcraft_engine::ElementKind::Grid))
+            {
                 self.grid_scene.query_grids.as_slice()
             } else {
                 &[]
@@ -402,7 +422,15 @@ impl App {
                 if let Some((hit, _)) = result
                     .candidates
                     .iter()
-                    // The active view snaps only to what it shows (V12).
+                    // The active view snaps only to what it shows (V12), and what the window
+                    // cut hides never offers itself either (issue 569 item 17).
+                    .filter(|hit| {
+                        cut_planes.as_ref().is_none_or(|planes| {
+                            planes
+                                .iter()
+                                .all(|plane| plane.distance(hit.point_world_mm) >= 0.0)
+                        })
+                    })
                     .filter(|hit| {
                         self.views.active_view().is_none_or(|view| {
                             view.contains(hit.point_world_mm)
@@ -800,6 +828,8 @@ impl App {
                     ui.label("Pick contour vertices in 3D. Aim, type a length and press Enter to add a point. O toggles orthogonal X/Y/Z. Enter without a length, right-click, wheel-click or Finish creates the plate. Backspace removes a digit or point.");
                     ui.checkbox(&mut self.selection.orthogonal,"Orthogonal X/Y/Z (O)");
                     ui.label(format!("{} vertices", self.plate_draft.points().len()));
+                    // Wrapped: three actions exceed the panel's width, and an unwrapped row
+                    // would squeeze the last button into a letter-per-line column.
                     ui.horizontal_wrapped(|ui| {
                         if ui.add_enabled(self.plate_draft.points().len() >= 3, egui::Button::new("Finish plate")).clicked() { self.finish_plate(); }
                         if ui.add_enabled(!self.plate_draft.points().is_empty(), egui::Button::new("Remove last point")).clicked() { self.plate_draft.back(); }
@@ -865,20 +895,23 @@ impl App {
                     });
                 }
             }
-            crate::kit::section(ui, "create", "Work plane", false, |ui| {
-                match self.plane_form.show(ui) {
-                    Ok(Some(crate::work_plane::Action::Apply(plane))) => self.install_plane(Some(plane)),
-                    Ok(Some(crate::work_plane::Action::Clear)) => self.install_plane(None),
-                    Ok(Some(crate::work_plane::Action::PickFace)) => { self.install_plane(self.tools.plane); self.plane_pick = true; },
-                    Err(error) => self.tool_note = Some(Err(error.to_string())),
-                    _ => {}
-                }
-            });
+            // The form draws its own "Work plane" section; wrapping it again nested one
+            // collapsible inside another of the same name.
+            match self.plane_form.show(ui) {
+                Ok(Some(crate::work_plane::Action::Apply(plane))) => self.install_plane(Some(plane)),
+                Ok(Some(crate::work_plane::Action::Clear)) => self.install_plane(None),
+                Ok(Some(crate::work_plane::Action::PickFace)) => { self.install_plane(self.tools.plane); self.plane_pick = true; },
+                Err(error) => self.tool_note = Some(Err(error.to_string())),
+                _ => {}
+            }
             if ui.button("Cancel").clicked() { self.tools.cancel(); self.set_bench(Bench::Select); self.tool_note = None; }
         });
         if busy {
             ui.spinner();
-            ui.label("Saving element…");
+            // Only the creation's own write says saving; another command running is just busy.
+            if self.tools.busy() {
+                ui.label("Saving element…");
+            }
         }
         // Its outcome is told in the status bar (`App::status_note`).
     }

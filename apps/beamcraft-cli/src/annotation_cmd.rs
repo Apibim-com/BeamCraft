@@ -120,7 +120,11 @@ fn run(args: &[OsString]) -> Run<Json> {
     };
     let new_id = match given("--new-id") {
         Some(text) => ElementId::parse(text).map_err(id_error)?,
-        None => ElementId::from_uuid(fresh()?),
+        None => ElementId::from_uuid(crate::command_context::default_id(
+            options.get("--op-id").copied(),
+            "new_id/0",
+            &mut fresh,
+        )?),
     };
     // One qualified FeatureId text per anchor; the engine admits the full F06 grammar.
     let feature = |key: &'static str| -> Run<FeatureRef> {
@@ -219,6 +223,22 @@ pub(crate) fn list_json(
                         fields.push(("end_mm", triple(*end_mm)?));
                     }
                 }
+                // The host element ids the anchors address (issue 569 item 18): what a window
+                // that hides an element needs to hide the annotation with it. A malformed
+                // address contributes nothing; the admission path refuses such text anyway.
+                let hosts: Vec<String> = a
+                    .payload
+                    .anchors()
+                    .filter_map(|anchor| {
+                        beamcraft_engine::query::feature::FeatureId::parse(anchor.as_str())
+                            .ok()
+                            .map(|feature| feature.element().to_string())
+                    })
+                    .collect();
+                fields.push((
+                    "host_elements",
+                    Json::Array(hosts.into_iter().map(Json::text).collect()),
+                ));
                 // Every record carries its anchors, empty when nothing resolves: the reply has
                 // one shape whatever the binding state.
                 let anchors = match state_of(&a.id) {

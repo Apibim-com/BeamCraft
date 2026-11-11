@@ -338,7 +338,7 @@ pub fn parse_details(
     }
     Err(ToolError::local(
         "NOT_FOUND",
-        "the element is not a plate or straight member of the accepted revision",
+        "the reply has no plate or member for this element",
     ))
 }
 
@@ -486,9 +486,12 @@ impl State {
 /// Why a failed reading leaves the properties unknown.
 fn unknown_reason(error: &ToolError) -> String {
     let what = match error.code.as_str() {
+        // A bolt group sits in the head and still gets this code: it is a kind the editor
+        // reads nothing from, not an element the revision lost. Say both.
         "NOT_FOUND" => {
-            "the element is not a plate or straight member of the accepted revision; the \
-             properties editor supports only those"
+            "the engine reported no properties for this element: the properties editor reads \
+             only plates and straight members, so a bolt group or another kind has nothing to \
+             show here (an element the accepted revision no longer has answers the same way)"
         }
         "UNREADABLE_REPLY" => {
             "the engine reply was too large for the control-message limit or unreadable"
@@ -1223,7 +1226,10 @@ mod tests {
             message: "x".into(),
         };
         q.load(ID, Err(unsupported));
-        assert!(q.state().unwrap().label().contains("supports only those"));
+        // The honest why: a kind the editor reads nothing from, not a false absence claim.
+        let label = q.state().unwrap().label();
+        assert!(label.contains("reads only plates and straight members"));
+        assert!(label.contains("nothing to show here"));
         q.clear();
         assert_eq!(q.state(), None);
     }

@@ -77,7 +77,25 @@ impl Set {
     }
 
     /// One-line description of a rule for the legend: the field, the operator and the value.
+    /// A composite rule (`any` / `all`) describes as its branches joined; a branch nest past
+    /// the depth cap, a shape the legend cannot read, says `?`.
     pub fn describe(rule: &Json) -> String {
+        Self::describe_at(rule, 0)
+    }
+
+    fn describe_at(rule: &Json, depth: u8) -> String {
+        if depth > 4 {
+            return "?".into();
+        }
+        for (key, joiner) in [("any", " or "), ("all", " and ")] {
+            if let Ok(branches) = rule.get(key).and_then(Json::array) {
+                return branches
+                    .iter()
+                    .map(|branch| Self::describe_at(branch, depth + 1))
+                    .collect::<Vec<_>>()
+                    .join(joiner);
+            }
+        }
         let field = rule.get("field").and_then(Json::string).unwrap_or("?");
         let attribute = match rule.get("attribute") {
             Ok(name) => format!(" {}", name.string().unwrap_or("?")),
@@ -160,6 +178,37 @@ pub fn catalogue_set() -> Set {
 /// The built-in presets in display order: the catalogue set first, the P15 class set second.
 fn presets() -> Vec<Set> {
     vec![catalogue_set(), class_set()]
+}
+
+/// The catalogue overlay of a snapshot: the set's three rules are `type eq` rules, so the
+/// kinds the snapshot carries answer them — the same elements the engine's rule evaluation
+/// colours, derived where the kinds already are (issue 562 items 20 and 34). The model then
+/// colours as it is delivered, with no CLI round trip, and elements another process added
+/// colour with the next refresh like the rest.
+pub fn catalogue_overlay(entries: &[beamcraft_engine::ElementEntry]) -> Overlay {
+    let set = catalogue_set();
+    let mut tints = set.rules.iter().map(Set::tint);
+    let Some(member) = tints.next() else {
+        return Overlay::default();
+    };
+    let Some(plate) = tints.next() else {
+        return Overlay::default();
+    };
+    let Some(bolt) = tints.next() else {
+        return Overlay::default();
+    };
+    let mut map = BTreeMap::new();
+    for entry in entries {
+        let tint = match entry.kind {
+            beamcraft_engine::ElementKind::Beam | beamcraft_engine::ElementKind::Column => member,
+            beamcraft_engine::ElementKind::Plate => plate,
+            beamcraft_engine::ElementKind::Connection => bolt,
+            // Everything else of the set stays uncoloured.
+            _ => continue,
+        };
+        map.insert(entry.id, tint);
+    }
+    Overlay(map, BTreeSet::new())
 }
 
 impl Default for Sets {
@@ -366,6 +415,11 @@ impl Overlay {
     /// The tint of `id`: the matching rule's colour, or [`WHITE`].
     pub fn tint_of(&self, id: ElementId) -> [f32; 4] {
         self.0.get(&id).copied().unwrap_or(WHITE)
+    }
+
+    /// Whether `id` carries a colour.
+    pub fn contains(&self, id: ElementId) -> bool {
+        self.0.contains_key(&id)
     }
 
     /// Whether `id` is hidden by a view's filter override.
@@ -630,7 +684,15 @@ mod tests {
                 class as u64
             );
         }
-        let (sets, note) = Sets::load(None);
+        // A scratch directory, so a colour-sets file the user really saved never decides
+        // what "no file" means here.
+        let scratch = std::env::temp_dir().join(format!(
+            "beamcraft-colour-sets-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        let _ = std::fs::remove_dir_all(&scratch);
+        let (sets, note) = Sets::load(Some(&scratch));
         assert_eq!(sets, Sets::default());
         assert!(note.is_none(), "a missing file is a normal first run");
         assert!(!sets.has_own(), "the presets alone are not the user's own");
@@ -679,8 +741,22 @@ mod tests {
             bolt.rule.get("field").and_then(Json::string).unwrap(),
             "type"
         );
-        // Both presets ride in every load; a file set cannot take a preset's name.
-        let (sets, note) = Sets::load(None);
+        // The legend reads every catalogue rule as field/operator/value (issue 562 item 16).
+        assert_eq!(
+            Set::describe(&member.rule),
+            "type eq beam or type eq column"
+        );
+        assert_eq!(Set::describe(&plate.rule), "type eq plate");
+        assert_eq!(Set::describe(&bolt.rule), "type eq connection");
+        // Both presets ride in every load; a file set cannot take a preset's name. The
+        // scratch directory keeps the user's real colour-sets file out of the assertion.
+        let scratch = std::env::temp_dir().join(format!(
+            "beamcraft-colour-sets-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        let _ = std::fs::remove_dir_all(&scratch);
+        let (sets, note) = Sets::load(Some(&scratch));
         assert!(note.is_none());
         assert_eq!(sets.find(CATALOGUE_SET_NAME), Some(&catalogue_set()));
         assert_eq!(sets.find(CLASS_SET_NAME), Some(&class_set()));

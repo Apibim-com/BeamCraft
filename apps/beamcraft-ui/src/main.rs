@@ -269,10 +269,11 @@ fn run() -> Result<Option<(String, u8)>, Error> {
                 Some((yaw, pitch))
             }
         };
+        // `None` keeps the fitted orthographic default; both named projections switch.
         let ortho = match map.get("--projection").map(String::as_str) {
-            None => false,
-            Some("perspective") => false,
-            Some("ortho") => true,
+            None => None,
+            Some("perspective") => Some(false),
+            Some("ortho") => Some(true),
             Some(_) => return Err(usage()),
         };
         let zoom: f32 = map
@@ -345,8 +346,16 @@ fn run() -> Result<Option<(String, u8)>, Error> {
                 set
             }
         };
-        let overlay = colour_sets::evaluate(&cli, &store, &set, &AtomicBool::new(false), &stats)
-            .map_err(Error::Cli)?;
+        // The catalogue preset is the snapshot's own kinds: derived, not evaluated (the same
+        // shift the window made for issue 562 items 20 and 34). Every other set evaluates on
+        // the store head the way the window does, and a headless screenshot reads no
+        // colour-sets file on its own.
+        let overlay = if set.name == colour_sets::CATALOGUE_SET_NAME {
+            colour_sets::catalogue_overlay(snapshot.elements())
+        } else {
+            colour_sets::evaluate(&cli, &store, &set, &AtomicBool::new(false), &stats)
+                .map_err(Error::Cli)?
+        };
         let scene = Scene::from_snapshot_showing(
             &snapshot,
             Representation::Full,
@@ -354,6 +363,22 @@ fn run() -> Result<Option<(String, u8)>, Error> {
             Some(&overlay),
             beamcraft_engine::KindFilter::SHOW_ALL,
         )?;
+        // The resolved D06 annotations ride the screenshot like the grid guides (issue 562
+        // item 37): the same `annotation-list` query the window's panel runs, painted by the
+        // same painter. A store without annotations or a failed query renders without them.
+        let annotations = beamcraft_ui::command::run(
+            &cli,
+            &[
+                "annotation-list".to_owned(),
+                "--store".to_owned(),
+                store.to_string_lossy().into_owned(),
+            ],
+            std::time::Duration::from_secs(30),
+            &stats,
+        )
+        .ok()
+        .and_then(|out| beamcraft_ui::app::annotation_panel::parse_rows(out.code, &out.stdout).ok())
+        .unwrap_or_default();
         let saved = screenshot::capture(
             &scene,
             &grids,
@@ -367,6 +392,7 @@ fn run() -> Result<Option<(String, u8)>, Error> {
                 pan,
             },
             background,
+            &annotations,
             &stats,
         )?
         .to_json();
@@ -518,6 +544,17 @@ fn main() -> ExitCode {
             ExitCode::from(code)
         }
         Ok(None) => ExitCode::SUCCESS,
+        // A relayed CLI rejection keeps its own code, message and diagnostics (issue 555
+        // finding 6): `screenshot-view` re-issues them unchanged.
+        Err(Error::Rejected(r)) => {
+            println!(
+                "{{\"outcome\":\"rejected\",\"code\":{},\"message\":{},\"diagnostics\":{}}}",
+                json_string(&r.code),
+                json_string(&r.message),
+                r.diagnostics
+            );
+            ExitCode::from(2)
+        }
         Err(e) => {
             let code = match e {
                 Error::NoAdapter | Error::Graphics(_) => 3,

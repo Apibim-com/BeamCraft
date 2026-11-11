@@ -315,7 +315,7 @@ fn a_group_places_its_row_and_edits_as_one_undo_unit() {
     assert!(strings(group, "spacings_mm") == ["150"], "{group:?}");
     assert_eq!(text(group, "spacing_mode"), "spacings");
     assert_eq!(text(group, "length_mode"), "auto");
-    assert_eq!(text(group, "length_mm"), "40");
+    assert_eq!(text(group, "length_mm"), "50");
     assert_eq!(text(group, "washer_under_head"), "true");
     assert_eq!(text(group, "washer_under_nut"), "true");
     assert_eq!(text(group, "count"), "2");
@@ -347,14 +347,14 @@ fn a_group_places_its_row_and_edits_as_one_undo_unit() {
     assert!(strings(group, "spacings_mm") == ["150"]);
     // The re-place runs over the meshes the group's own generated holes rewrote: the stored
     // length survives them (issue 519 review).
-    assert_eq!(text(group, "length_mm"), "40");
+    assert_eq!(text(group, "length_mm"), "50");
     for part in &parts {
         assert_eq!(holes_of(&f, part).len(), 2, "{part}");
     }
     f.undo();
     let group = &f.groups()[0];
     assert_eq!(strings(group, "point2_mm"), ["600", "250", "0"]);
-    assert_eq!(text(group, "length_mm"), "40");
+    assert_eq!(text(group, "length_mm"), "50");
     // The undo returns the created records with their identities.
     for part in &parts {
         let holes = holes_of(&f, part);
@@ -395,7 +395,7 @@ fn a_rename_reaches_the_authored_layer_and_survives_a_reopen() {
     assert_eq!(text(group, "name"), "G2");
     // A plain rename re-places the group over the meshes its own generated holes rewrote: the
     // stored length survives them instead of collapsing (issue 519 review).
-    assert_eq!(text(group, "length_mm"), "40");
+    assert_eq!(text(group, "length_mm"), "50");
 
     // A retry of the same operation replays; a different name under the same id is reuse:
     // the label is part of the operation's content.
@@ -620,8 +620,8 @@ fn the_definition_is_pinned_repinned_and_the_holes_follow_a_repin() {
     assert_eq!(text(group, "length_mode"), "auto");
     assert_eq!(
         text(group, "length_mm"),
-        "40",
-        "grip 20 + nut 12 + protrusion 4 = 36"
+        "50",
+        "grip 20 + nut 12 + head 14 + protrusion 4 = 50"
     );
     // The repin regenerates the holes: the records keep the group ownership and the count.
     for part in &parts {
@@ -1175,5 +1175,49 @@ fn a_group_follows_its_main_part_and_never_comes_apart() {
             ],
         )),
         "DEPENDENCY_CONFLICT"
+    );
+}
+
+#[test]
+fn a_framed_plate_in_a_bolt_group_refuses_instead_of_reading_a_wrong_slab() {
+    // The review on the 1111 batch: a framed (out-of-plane contour) plate carries its
+    // material along its contour frame, not the element-local Z the bolt slice's slab and
+    // world bounds assume, so the bearing and generated-hole decisions would read the wrong
+    // slab. The group refuses honestly; the frame-aware bolt slice is a documented
+    // follow-up.
+    let mut f = Fixture::new();
+    let flat = f.plate("019a7bf0-0000-7000-8000-0000007100f4", "0");
+    // A framed plate: an exactly rectangular contour lifted out of z = 0 (A12.3/P13).
+    let framed = text(
+        at(
+            &f.ok(&owned(
+                "create-plate",
+                &[
+                    "--name",
+                    "F",
+                    "--new-id",
+                    "019a7bf0-0000-7000-8000-0000007100f5",
+                    "--contour",
+                    "0,0,0;200,0,100;200,100,100;0,100,0",
+                    "--thickness",
+                    "10",
+                ],
+            )),
+            &["plate"],
+        ),
+        "element_id",
+    );
+    f.fork();
+    assert_eq!(
+        f.rejected(&strs(
+            "create-bolt-group",
+            &f.group_args(
+                "019a7bf0-0000-7000-8000-000000710004",
+                &[flat, framed],
+                WASHERED,
+                &["--spacings", "150"],
+            ),
+        )),
+        "UNSUPPORTED_GEOMETRY"
     );
 }

@@ -373,7 +373,9 @@ fn pipeline(
             },
             wgpu::BindGroupLayoutEntry {
                 binding: 1,
-                visibility: wgpu::ShaderStages::FRAGMENT,
+                // The face-on cap of a cut (issue 584 item 4) clamps vertices onto a plane in
+                // the vertex stage, so the clip planes must be readable there too.
+                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
@@ -407,7 +409,36 @@ fn pipeline(
         source: wgpu::ShaderSource::Wgsl(include_str!("viewport.wgsl").into()),
     });
     let attributes = wgpu::vertex_attr_array![0=>Float32x3,1=>Float32x3];
-    let instance_attributes = wgpu::vertex_attr_array![2=>Float32x3,3=>Float32x4,4=>Float32x4];
+    // The instance stride carries the pad word after the tint, so the bounds box the face-on
+    // cut reads (issue 584 item 4) starts after it, at 48: the auto-accumulating macro would
+    // pack the attributes tight and read the pad as part of the box.
+    let instance_attributes = [
+        wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Float32x3,
+            offset: 0,
+            shader_location: 2,
+        },
+        wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Float32x4,
+            offset: 12,
+            shader_location: 3,
+        },
+        wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Float32x4,
+            offset: 28,
+            shader_location: 4,
+        },
+        wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Float32x3,
+            offset: 48,
+            shader_location: 5,
+        },
+        wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Float32x3,
+            offset: 60,
+            shader_location: 6,
+        },
+    ];
     let vertex_layout = || {
         Some(wgpu::VertexBufferLayout {
             array_stride: 24,
@@ -420,7 +451,7 @@ fn pipeline(
         step_mode: wgpu::VertexStepMode::Instance,
         attributes: &instance_attributes,
     });
-    let pipeline = |label, fragment, polygon_mode, blend, depth_write| {
+    let pipeline = |label, fragment, polygon_mode, blend, depth_write, cull| {
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some(label),
             layout: Some(&pipeline_layout),
@@ -431,7 +462,12 @@ fn pipeline(
                 buffers: &[vertex_layout(), instance_layout.clone()],
             },
             primitive: wgpu::PrimitiveState {
-                cull_mode: Some(wgpu::Face::Back),
+                // The fill pipelines cull in the shader instead: with a cut applied the back
+                // faces draw as the opened body's inside, and without one the fragment's
+                // `front_facing` test culls exactly what the hardware would (issue 569 item 1).
+                // The wireframe keeps the hardware cull: its line fragments carry no reliable
+                // facing.
+                cull_mode: cull,
                 polygon_mode,
                 ..Default::default()
             },
@@ -461,6 +497,8 @@ fn pipeline(
         })
     };
     let alpha = wgpu::BlendState::ALPHA_BLENDING;
+    let no_cull: Option<wgpu::Face> = None;
+    let back_cull = Some(wgpu::Face::Back);
     let pipelines = Pipelines {
         shaded: pipeline(
             "BeamCraft shaded",
@@ -468,6 +506,7 @@ fn pipeline(
             wgpu::PolygonMode::Fill,
             None,
             true,
+            no_cull,
         ),
         // `Line` draws every triangle edge; native backends only, which is all this app targets.
         wireframe: pipeline(
@@ -476,6 +515,7 @@ fn pipeline(
             wgpu::PolygonMode::Line,
             None,
             true,
+            back_cull,
         ),
         transparent: pipeline(
             "BeamCraft transparent",
@@ -483,6 +523,7 @@ fn pipeline(
             wgpu::PolygonMode::Fill,
             Some(alpha),
             false,
+            no_cull,
         ),
         grey: pipeline(
             "BeamCraft grey",
@@ -490,6 +531,7 @@ fn pipeline(
             wgpu::PolygonMode::Fill,
             None,
             true,
+            no_cull,
         ),
         ghost: pipeline(
             "BeamCraft ghost",
@@ -497,6 +539,7 @@ fn pipeline(
             wgpu::PolygonMode::Fill,
             None,
             true,
+            no_cull,
         ),
     };
     finish_scopes(scopes)?;
@@ -536,6 +579,25 @@ pub struct Renderer {
     /// The colour behind the model; the window sets it from the theme.
     pub background: wgpu::Color,
 }
+
+/// The dark clear colour of the model viewport, in sRGB bytes `(23, 33, 43)`: one colour for
+/// the window's panes and for `screenshot-view --background dark`, so both surfaces name the
+/// same value (issue 562 item 36).
+pub const DARK_BACKGROUND: wgpu::Color = wgpu::Color {
+    r: 23.0 / 255.0,
+    g: 33.0 / 255.0,
+    b: 43.0 / 255.0,
+    a: 1.0,
+};
+/// The light clear colour of the model viewport, the drawing paper tone `rgb(245, 246, 248)`
+/// (`srgb(0.961, 0.965, 0.973)` quantized): one colour for `screenshot-view --background
+/// light` and the window's light theme (issue 562 item 36).
+pub const LIGHT_BACKGROUND: wgpu::Color = wgpu::Color {
+    r: 0.961,
+    g: 0.965,
+    b: 0.973,
+    a: 1.0,
+};
 impl Renderer {
     /// Create bounded targets and pipelines with the adapter's default sample count
     /// ([`samples_for`]). Setup is excluded from upload and frame measurements.
@@ -592,12 +654,7 @@ impl Renderer {
             samples,
             width,
             height,
-            background: wgpu::Color {
-                r: 0.02,
-                g: 0.03,
-                b: 0.05,
-                a: 1.0,
-            },
+            background: DARK_BACKGROUND,
         })
     }
 
@@ -879,6 +936,15 @@ mod tests {
         }
         assert_eq!(samples_for(Cpu, true), 1);
         assert_eq!(samples_for(Cpu, false), 1);
+    }
+
+    #[test]
+    fn the_clear_colours_quantize_to_the_measured_viewport_values() {
+        // The window's dark pane and `screenshot-view --background dark` share one colour, and
+        // so do the light ones (issue 562 item 36): the bytes a viewer measures on both.
+        let bytes = |c: wgpu::Color| [c.r, c.g, c.b].map(|v| (v * 255.0).round() as u8);
+        assert_eq!(bytes(DARK_BACKGROUND), [23, 33, 43]);
+        assert_eq!(bytes(LIGHT_BACKGROUND), [245, 246, 248]);
     }
 
     #[test]

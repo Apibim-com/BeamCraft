@@ -73,6 +73,22 @@ fn unit(v: [f32; 3]) -> Option<[f32; 3]> {
 fn narrow(v: [f64; 3]) -> [f32; 3] {
     v.map(|x| x as f32)
 }
+/// Whether a view plane's anchor carries no framing meaning: it is a derived anchor, not a
+/// saved target. The level and coordinate planes are anchored on the world axis planes (two
+/// zero coordinates at the origin), and a grid-axis plane is the vertical plane through its
+/// line's start (world-up local Y, origin on the ground plane); a view opened for the first
+/// time on such a plane is cast to the scene centre (issue 569 item 14). A view saved with
+/// its own target — an orbit plane, or any user-drawn anchor — is kept (issue 584 item 1).
+/// The stored plane decides, not the rotated camera frame: a camera rotation the user added
+/// on top of a derived anchor does not give the anchor framing meaning.
+fn derived_anchor(plane: &WorkPlane) -> bool {
+    let [ox, oy, oz] = plane.origin();
+    let zero = |v: f64| v == 0.0;
+    let axis_anchored = (zero(ox) && zero(oy)) || (zero(oy) && zero(oz)) || (zero(ox) && zero(oz));
+    let [yx, yy, yz] = plane.y();
+    let line_start = zero(oz) && yx.abs() <= 1e-9 && yy.abs() <= 1e-9 && (yz - 1.0).abs() <= 1e-9;
+    axis_anchored || line_start
+}
 impl Camera {
     /// Frames a bounded scene for a viewport of `aspect` (width / height): `extent` is the
     /// diagonal of its bounds in millimetres. The bounding sphere fits both the vertical and the
@@ -100,10 +116,15 @@ impl Camera {
             reach: extent,
         })
     }
-    /// The camera a model view restores: its rotated view plane as the basis, the target on the
-    /// plane origin (scene-relative to `origin`, the display origin in millimetres), the visible
-    /// height and the projection. `extent` is the scene diagonal, so an orthographic eye stands
-    /// in front of everything.
+    /// The camera a model view restores: its rotated view plane as the basis, the visible
+    /// height and the projection. A plane whose anchor carries no framing meaning — a level or
+    /// coordinate plane at (0, 0, elevation) and its siblings, and a grid-axis plane at its
+    /// line start — is cast to the scene centre (scene-relative to `origin`, the display
+    /// origin in millimetres), so a view opened for the first time does not centre on that
+    /// anchor and miss the model (issue 569 item 14). A view saved with its own target keeps
+    /// the anchor: the pan is part of what was saved (issue 584 item 1). Orthographic, the
+    /// cast along the normal is invisible; the move across the plane is the framing. `extent`
+    /// is the scene diagonal, so an orthographic eye stands in front of everything.
     pub fn from_view(view: &ModelView, origin: [f64; 3], extent: f32) -> Result<Self, Error> {
         let frame = view
             .camera_plane()
@@ -112,6 +133,15 @@ impl Camera {
         camera.orthographic = view.projection == Projection::Orthographic;
         if let Some([above, _]) = view.depth {
             camera.reach = camera.reach.max(above as f32 + 10.0);
+        }
+        let normal = frame.normal();
+        let [px, py, pz] = frame.origin();
+        let d = (origin[0] - px) * normal[0]
+            + (origin[1] - py) * normal[1]
+            + (origin[2] - pz) * normal[2];
+        let cast = narrow([-normal[0] * d, -normal[1] * d, -normal[2] * d]);
+        if derived_anchor(&view.plane) && cast.iter().all(|x| x.is_finite() && x.abs() <= 1e7) {
+            camera.target = cast;
         }
         Ok(camera)
     }
@@ -242,6 +272,13 @@ impl Camera {
     /// Distance used to convert UI pan pixels to display millimetres.
     pub fn distance(&self) -> f32 {
         self.distance
+    }
+    /// Screen millimetres per pointer point at `distance`: the visible height at the target
+    /// plane (`2 tan(half FOV) * distance`) over the `viewport_height` in points. Dragging one
+    /// point then moves the model exactly one point on screen (issue 562 item 21); the height
+    /// is floored at 1.0 so a degenerate pane cannot scale the pan up without bound.
+    pub fn pan_per_pixel(distance: f32, viewport_height: f32) -> f32 {
+        2.0 * HALF_FOV.tan() * distance / viewport_height.max(1.0)
     }
     /// The pan (millimetres) that keeps the point under the cursor fixed while zooming: `ndc` is
     /// the cursor in normalized device coordinates (`edit::ndc_of`, y up, inside `[-1, 1]`) and
@@ -425,7 +462,8 @@ mod tests {
         assert!(c.is_aligned() && c.is_orthographic());
         let v = c.view(1.0).unwrap();
         assert!((v.back[1] + 1.0).abs() < 1e-6, "{:?}", v.back);
-        // The plane origin projects to the centre; a point 2 m up reaches the top edge.
+        // A saved section keeps its own anchor: the plane's origin projects to the centre, and
+        // a point 2 m up its local Y reaches the top edge.
         let centre = v.project([0.0, 2000.0, 300.0]);
         assert!(centre[0].abs() < 1e-5 && centre[1].abs() < 1e-5);
         let top = v.project([0.0, 2000.0, 2300.0]);
@@ -464,6 +502,66 @@ mod tests {
         }
         assert!(c.view(1.0).unwrap().bytes().len() == 112);
         assert!(c.distance().is_finite());
+    }
+    #[test]
+    fn a_view_opened_for_the_first_time_centres_on_the_model_not_on_the_plane_anchor() {
+        use beamcraft_engine::views::ModelView;
+        let id = beamcraft_model::id::Uuid7::parse("019a7bf0-0000-7000-8000-000000000002").unwrap();
+        // A level plan at elevation 4000 for a model centred at (106000, 52500, 6000) —
+        // the plane's own anchor (0, 0, 4000) is metres away from anything (issue 569 item 14).
+        let plane = WorkPlane::new([0.0, 0.0, 4000.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]).unwrap();
+        let view = ModelView::new(id, "Plan", plane, 21390.0);
+        let c = Camera::from_view(&view, [106_000.0, 52_500.0, 6000.0], 500.0).unwrap();
+        // The target sits on the plane (scene z -2000 is model z 4000) over the scene centre.
+        let cast = c.target;
+        assert!(
+            cast[0].abs() < 1e-2 && cast[1].abs() < 1e-2 && (cast[2] + 2000.0).abs() < 1e-2,
+            "{cast:?}"
+        );
+    }
+    #[test]
+    fn a_saved_view_opens_on_its_own_target_not_on_the_scene_centre() {
+        use beamcraft_engine::views::{ModelView, orbit_plane};
+        let id = beamcraft_model::id::Uuid7::parse("019a7bf0-0000-7000-8000-000000000003").unwrap();
+        // "Saved corner" (issue 584 item 1): a perspective orbit view targets grid corner
+        // 1/A at (100000, 50000, 0), metres from the scene centre at (106000, 52500, 2000).
+        let plane = orbit_plane([100_000.0, 50_000.0, 0.0], -0.6, 0.5).unwrap();
+        let view = ModelView::new(id, "Saved corner", plane, 6000.0);
+        let c = Camera::from_view(&view, [106_000.0, 52_500.0, 2000.0], 500.0).unwrap();
+        let want = [-6000.0f32, -2500.0, -2000.0];
+        assert!(
+            c.target.iter().zip(want).all(|(g, w)| (g - w).abs() < 1e-2),
+            "{:?}",
+            c.target
+        );
+    }
+    #[test]
+    fn a_grid_axis_view_still_centres_on_the_model_not_on_its_line_start() {
+        use beamcraft_engine::views::ModelView;
+        let id = beamcraft_model::id::Uuid7::parse("019a7bf0-0000-7000-8000-000000000004").unwrap();
+        // An along-grid-axes view of the far frame (issue 569 item 14): the vertical plane
+        // starts at the line start (100000, 50000, 0) and the first open still centres on the
+        // model — the normal is +X, so the cast is the scene centre at scene x -6000.
+        let plane =
+            WorkPlane::new([100_000.0, 50_000.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]).unwrap();
+        let view = ModelView::new(id, "Along 1", plane, 21390.0);
+        let c = Camera::from_view(&view, [106_000.0, 52_500.0, 2000.0], 500.0).unwrap();
+        let want = [-6000.0f32, 0.0, 0.0];
+        assert!(
+            c.target.iter().zip(want).all(|(g, w)| (g - w).abs() < 1e-2),
+            "{:?}",
+            c.target
+        );
+        // A camera rotation stored on top of the derived anchor changes neither the anchor nor
+        // the cast: the stored plane decides, so the scene centre still projects to the middle.
+        let mut turned = ModelView::new(id, "Along 1 turned", plane, 21390.0);
+        turned.rotation_rad = [0.3, 0.2];
+        let c = Camera::from_view(&turned, [106_000.0, 52_500.0, 2000.0], 500.0).unwrap();
+        let centre = c.view(1.0).unwrap().project([0.0; 3]);
+        assert!(
+            centre[0].abs() < 1e-4 && centre[1].abs() < 1e-4,
+            "{centre:?}"
+        );
     }
     #[test]
     fn orthographic_zoom_toward_the_cursor_keeps_the_point_under_the_cursor_still() {
