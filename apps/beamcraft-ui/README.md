@@ -64,8 +64,8 @@ beamcraft-ui --store ROOT --perf-run PLAN [--samples 1|4] [--cli PATH]
   snapshot, not invented drawings or views. Menu → New and Open create or open another model in
   the same window; Model library (Ctrl+K) returns to the library when launched from the start
   page. Ctrl+K searches supported commands in a native dialog.
-  Existing create/edit/property/publish commands still use the same CLI paths. Unimplemented
-  tools (Bolts, Weld and floor-plan views) remain explicitly disabled.
+  Existing create/edit/property/publish commands still use the same CLI paths. Ribbon tools that
+  do not exist yet stay disabled, with a "Not available yet" tooltip.
 - An orthographic elevation or section shows every level on the pane as a dashed line with its
   name and elevation at the right end; the view's grid switch shows and hides them with the grids.
 - Manage > Levels lists the model's levels from the highest down, with their elevations and the
