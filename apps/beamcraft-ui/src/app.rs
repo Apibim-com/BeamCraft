@@ -136,6 +136,9 @@ pub struct App {
     /// The millimetre-quantized hover end the current ghost was built for: the buffers rebuild
     /// only when the preview actually moves.
     ghost_end: Option<[i64; 3]>,
+    /// The member form the current ghost was built from: a new position, roll or profile
+    /// rebuilds it although the end did not move.
+    ghost_form: Option<crate::tools::MemberForm>,
     beam_hover: Option<[f64; 3]>,
     /// Why the last definitions refresh failed; kept apart from `tool_note` so neither hides the other.
     refresh_error: Option<String>,
@@ -953,6 +956,7 @@ impl App {
             plane_form: crate::work_plane::Form::default(),
             plane_pick: false,
             ghost_end: None,
+            ghost_form: None,
             beam_hover: None,
             job: None,
             reload_job: None,
@@ -2844,10 +2848,11 @@ impl App {
             None => return,
         };
         let key = end.map(|v| v.round() as i64);
-        if self.ghost_end == Some(key) {
+        if self.ghost_end == Some(key) && self.ghost_form.as_ref() == Some(&self.tools.member) {
             return;
         }
         self.ghost_end = Some(key);
+        self.ghost_form = Some(self.tools.member.clone());
         let ghost = self.build_ghost(start, end, origin_mm);
         self.set_active_ghost(ghost.as_ref());
     }
@@ -2879,7 +2884,7 @@ impl App {
             follow: None,
             profile: self.tools.member.profile.as_deref()?.parse().ok()?,
             roll_rad: self.tools.member.roll_radians().ok().flatten(),
-            section_placement: None,
+            section_placement: self.tools.member.section_placement().ok()?,
             placement: Placement {
                 translation_mm: [0.0; 3],
                 orientation_xyzw: orientation,

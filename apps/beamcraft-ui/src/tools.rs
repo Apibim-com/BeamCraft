@@ -526,6 +526,42 @@ impl MemberForm {
         Ok(())
     }
 
+    /// The position on the axis as the engine authors it from the flags `push_position` sends:
+    /// `None` for the default position (no flag), otherwise the whole position. The ghost uses
+    /// it, so the preview sits where Commit puts the member.
+    pub fn section_placement(
+        &self,
+    ) -> Result<Option<steel::model::command::SectionPlacement>, FormError> {
+        use steel::model::command::{SectionDepthPosition, SectionPlanePosition};
+        let mut flags = Vec::new();
+        self.push_position(&mut flags)?;
+        if flags.is_empty() {
+            return Ok(None);
+        }
+        let value = |label, text: &str| -> Result<f64, FormError> {
+            number(label, text)?.parse::<f64>().map_err(|_| FormError {
+                field: label,
+                message: "enter a number".into(),
+            })
+        };
+        let plane = SectionPlanePosition::parse(self.plane.trim()).ok_or_else(|| FormError {
+            field: "On plane",
+            message: "choose left, centre or right".into(),
+        })?;
+        let depth = SectionDepthPosition::parse(self.depth.trim()).ok_or_else(|| FormError {
+            field: "At depth",
+            message: "choose front, centre or back".into(),
+        })?;
+        Ok(Some(steel::model::command::SectionPlacement {
+            plane,
+            plane_offset_mm: value("On plane offset", &self.plane_offset)?,
+            depth,
+            depth_offset_mm: value("At depth offset", &self.depth_offset)?,
+            start_offset_mm: value("Start offset", &self.start_offset)?,
+            end_offset_mm: value("End offset", &self.end_offset)?,
+        }))
+    }
+
     /// Fills both endpoints from resolved world points (the two clicks of the viewport
     /// placement): the shortest decimal text that parses back exactly.
     pub fn set_endpoints(&mut self, start: [f64; 3], end: [f64; 3]) {
@@ -1396,6 +1432,25 @@ mod tests {
         assert_eq!(value("--start-offset"), "25.5");
         form.end_offset = "x".into();
         assert_eq!(form.prepare(store()).unwrap_err().field, "End offset");
+    }
+
+    #[test]
+    fn the_ghost_takes_the_position_the_command_authors() {
+        use steel::model::command::{SectionDepthPosition, SectionPlanePosition};
+        let mut form = MemberForm::default();
+        assert_eq!(form.section_placement().unwrap(), None);
+        form.depth = "front".into();
+        form.end_offset = "-150".into();
+        let placement = form.section_placement().unwrap().unwrap();
+        assert_eq!(placement.depth, SectionDepthPosition::Front);
+        assert_eq!(placement.plane, SectionPlanePosition::Centre);
+        assert_eq!(placement.end_offset_mm, -150.0);
+        assert_eq!(placement.start_offset_mm, 0.0);
+        form.depth_offset = "1,5".into();
+        assert_eq!(
+            form.section_placement().unwrap_err().field,
+            "At depth offset"
+        );
     }
 
     #[test]
