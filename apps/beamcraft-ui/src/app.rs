@@ -630,10 +630,27 @@ fn viewport_sense() -> egui::Sense {
     egui::Sense::CLICK | egui::Sense::DRAG
 }
 
-/// Rounds an engine quantity for display the way the engine rounds a mass for its
-/// `kg_display` (one decimal): the stored value stays the engine's, only the panel's text
-/// is a display rounding. A raw float volume runs wider than the value cell, and a value
-/// at 0.1 mm³ is far more precise than the 0.1 kg the mass row beside it shows.
+/// The neutral properties note for a selected kind the editor has no editable properties for,
+/// e.g. "Bolt group BG1: this kind has no editable properties here yet." An unnamed element
+/// keeps the kind alone.
+fn unsupported_kind_text(kind: &str, name: &str) -> String {
+    let mut kind_title = String::new();
+    let mut chars = kind.chars();
+    if let Some(first) = chars.next() {
+        kind_title.extend(first.to_uppercase());
+        kind_title.push_str(chars.as_str());
+    }
+    if name.is_empty() {
+        format!("{kind_title}: this kind has no editable properties here yet.")
+    } else {
+        format!("{kind_title} {name}: this kind has no editable properties here yet.")
+    }
+}
+
+/// Rounds a raw engine quantity (the volume) to one decimal for display: the stored value
+/// stays the engine's, only the panel's text is a display rounding. A raw float volume runs
+/// wider than the value cell. The mass needs none: its `kg_display` is already the engine's
+/// display value.
 fn display_round(value: f64) -> String {
     format!("{:.1}", (value * 10.0).round() / 10.0)
 }
@@ -1564,10 +1581,18 @@ impl App {
                         self.editor.select(info);
                         self.edit_note = None;
                     }
-                    Err(e) => {
-                        self.editor.select_id(id.clone());
-                        self.edit_note = Some(Err(format!("details: {e}")));
-                    }
+                    Err(e) => match self.unreadable_kind(&id) {
+                        // A kind the editor reads nothing from is not a failure: the selection
+                        // names it and the panel says so plainly (issue 562 item 15).
+                        Some((kind, name)) => {
+                            self.editor.select_kind(id.clone(), kind, name);
+                            self.edit_note = None;
+                        }
+                        None => {
+                            self.editor.select_id(id.clone());
+                            self.edit_note = Some(Err(format!("details: {e}")));
+                        }
+                    },
                 }
                 if self.props.selected() != Some(id.as_str()) {
                     self.props_note = None;
@@ -1928,6 +1953,43 @@ impl App {
         self.refresh_selection();
     }
 
+    /// The display kind and name of a selected element the properties editor has no details
+    /// for, when the loaded snapshot knows it as such a kind: a bolt group is a connection
+    /// element, named from the bolt listing when it is loaded. `None` for anything else, whose
+    /// unreadable details stay an error.
+    fn unreadable_kind(&self, id: &str) -> Option<(&'static str, String)> {
+        let loaded = self.loaded.as_ref()?;
+        let wanted = beamcraft_model::id::ElementId::parse(id).ok()?;
+        let entry = loaded
+            .snapshot
+            .elements()
+            .iter()
+            .find(|entry| entry.id == wanted)?;
+        match entry.kind {
+            beamcraft_engine::ElementKind::Connection => {
+                let name = self
+                    .bolt
+                    .groups
+                    .iter()
+                    .find(|group| group.id == id)
+                    .map(|group| group.name.clone())
+                    .unwrap_or_default();
+                Some(("bolt group", name))
+            }
+            _ => None,
+        }
+    }
+
+    /// The neutral note shown instead of an error for a selected kind the properties editor
+    /// reads nothing from, or `None` when the selection is not such a kind.
+    fn unsupported_kind_note(&self) -> Option<String> {
+        let info = self.editor.selected()?;
+        if self.props.selected() != Some(info.id.as_str()) || info.kind != "bolt group" {
+            return None;
+        }
+        Some(unsupported_kind_text(&info.kind, &info.name))
+    }
+
     fn props_panel(&mut self, ui: &mut egui::Ui) {
         let Some(_id) = self.props.selected().map(str::to_owned) else {
             let palette = crate::theme::Palette::current(ui);
@@ -1943,6 +2005,12 @@ impl App {
             return;
         };
         let state = self.props.state();
+        if let (Some(State::Unknown { .. }), Some(note)) = (&state, self.unsupported_kind_note()) {
+            let palette = crate::theme::Palette::current(ui);
+            ui.add_space(crate::kit::SPACE_S);
+            ui.label(egui::RichText::new(note).color(palette.muted));
+            return;
+        }
         match &state {
             Some(State::Current) if self.props.head_known() => {}
             Some(State::Current) => {
@@ -2129,13 +2197,19 @@ impl App {
             });
             crate::kit::section(ui, "part", "Quantities", true, |ui| {
                 let quantities = &details.quantities;
-                for (label, number, unit, status, stored_freshness) in [
+                // The volume is a raw float and keeps the panel's display rounding. The mass
+                // is the engine's own `kg_display`, already rounded the way every report
+                // prints it (22.54 in the BOM, the schedule and the inspection alike), so it
+                // is shown as given: re-rounding it would disagree with them.
+                let engine_display = |value: f64| format!("{value}");
+                for (label, number, unit, status, stored_freshness, shown) in [
                     (
                         "Volume",
                         quantities.volume_mm3,
                         "mm³",
                         quantities.volume_status.as_deref(),
                         quantities.stored_volume_freshness.as_deref(),
+                        &display_round as &dyn Fn(f64) -> String,
                     ),
                     (
                         "Mass",
@@ -2143,14 +2217,14 @@ impl App {
                         "kg",
                         quantities.mass_status.as_deref(),
                         quantities.stored_mass_freshness.as_deref(),
+                        &engine_display as &dyn Fn(f64) -> String,
                     ),
                 ] {
                     let (value, unit) = match (number, status) {
-                        (Some(value), Some("current")) => (display_round(value), Some(unit)),
-                        (Some(value), Some("stale")) => (
-                            format!("{} · out of date", display_round(value)),
-                            Some(unit),
-                        ),
+                        (Some(value), Some("current")) => (shown(value), Some(unit)),
+                        (Some(value), Some("stale")) => {
+                            (format!("{} · out of date", shown(value)), Some(unit))
+                        }
                         _ => ("Not available".to_owned(), None),
                     };
                     let value = if stored_freshness == Some("stale") {
@@ -3356,6 +3430,20 @@ pub(crate) mod tests {
     use super::{
         App, Preset, Source, WATCH_INTERVAL, load_icon, revisions_token, spawn_watch, target_size,
     };
+
+    #[test]
+    fn a_bolt_group_reads_as_a_kind_without_editable_properties() {
+        // Issue 562 item 15: a selected bolt group read as a red load failure with a wrong
+        // reason. It is named as what it is, in a neutral note.
+        assert_eq!(
+            super::unsupported_kind_text("bolt group", "BG1"),
+            "Bolt group BG1: this kind has no editable properties here yet."
+        );
+        assert_eq!(
+            super::unsupported_kind_text("bolt group", ""),
+            "Bolt group: this kind has no editable properties here yet."
+        );
+    }
 
     #[test]
     fn a_committed_revision_moves_the_watch_token() {
@@ -10508,6 +10596,204 @@ mod navigation_tests {
                 "at {size:?} the snap strip starts at {snaps_left} but the filters reach {filters_right}"
             );
         }
+    }
+
+    /// What the status strips drew in one frame, composed like `strip_buttons_at_size` but
+    /// with input: the square switch buttons in paint order (the 20 entity filters, then the
+    /// snap switches the strip shows), every other rect of the band, and the frame of the Snap
+    /// toggle (the smallest band rect around its text; the toggle is on by default).
+    struct Strips {
+        buttons: Vec<egui::Rect>,
+        others: Vec<egui::Rect>,
+        snap_toggle: Option<egui::Rect>,
+    }
+
+    fn strips_at(
+        app: &mut App,
+        ctx: &egui::Context,
+        size: [f32; 2],
+        events: Vec<egui::Event>,
+        time: f64,
+    ) -> Strips {
+        let output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(size[0], size[1]),
+                )),
+                events,
+                time: Some(time),
+                ..Default::default()
+            },
+            |ui| {
+                app.header(ui);
+                app.ribbon(ui);
+                app.status_bar(ui);
+                app.inspector(ui);
+                app.project_browser(ui);
+                egui::CentralPanel::default().show(ui, |_| {});
+            },
+        );
+        let band_top = size[1] - 60.0;
+        let mut buttons = Vec::new();
+        let mut others = Vec::new();
+        let mut snap_text = None;
+        for clipped in &output.shapes {
+            match &clipped.shape {
+                egui::Shape::Rect(rect) if rect.rect.top() >= band_top => {
+                    let r = rect.rect;
+                    if (16.0..=40.0).contains(&r.width()) && (r.width() - r.height()).abs() < 1.0 {
+                        buttons.push(r);
+                    } else {
+                        others.push(r);
+                    }
+                }
+                egui::Shape::Text(text)
+                    if text.pos.y >= band_top && text.galley.text() == "Snap" =>
+                {
+                    snap_text = Some(egui::Rect::from_min_size(text.pos, text.galley.size()));
+                }
+                _ => {}
+            }
+        }
+        output.drop_without_applying_deltas();
+        let snap_toggle = snap_text.and_then(|text| {
+            others
+                .iter()
+                .copied()
+                .filter(|r| r.contains_rect(text))
+                .min_by(|a, b| a.area().total_cmp(&b.area()))
+        });
+        Strips {
+            buttons,
+            others,
+            snap_toggle,
+        }
+    }
+
+    #[test]
+    fn the_status_row_stays_below_the_switch_row_at_every_width() {
+        // The 584 recheck: the scrolling snap strip reserved the space above its switches
+        // rather than where they hang, so the status row (selection, Details, Snap) climbed
+        // 4 px at every width and the Snap toggle painted over the snap switches. The rows
+        // keep their item spacing apart, at a wide window exactly as before the scroll.
+        let Some(mut app) = headless() else { return };
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        assert!(crate::app::inter(&ctx));
+        for size in [
+            [1400.0, 900.0],
+            [1100.0, 800.0],
+            [900.0, 650.0],
+            [800.0, 600.0],
+        ] {
+            let strips = strips_at(&mut app, &ctx, size, Vec::new(), 0.1);
+            assert!(
+                strips.buttons.len() > 20,
+                "the status strips drew at {size:?}: {:?}",
+                strips.buttons
+            );
+            let switches_bottom = strips
+                .buttons
+                .iter()
+                .map(|rect| rect.bottom())
+                .fold(f32::NEG_INFINITY, f32::max);
+            let toggle = strips
+                .snap_toggle
+                .unwrap_or_else(|| panic!("the Snap toggle at {size:?}: {:?}", strips.others));
+            assert!(
+                toggle.top() - switches_bottom >= 2.0,
+                "at {size:?} the Snap toggle starts at {} but the switches reach {switches_bottom}",
+                toggle.top()
+            );
+        }
+    }
+
+    #[test]
+    fn the_plain_wheel_scrolls_the_narrow_snap_strip() {
+        // The 584 recheck: the narrow snap strip scrolled only with Shift held, so the plain
+        // wheel over it did nothing. The strip has one direction, and the wheel scrolls it.
+        let Some(mut app) = headless() else { return };
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        assert!(crate::app::inter(&ctx));
+        let size = [800.0, 600.0];
+        let before = strips_at(&mut app, &ctx, size, Vec::new(), 0.1);
+        let snaps_before: Vec<f32> = before.buttons.iter().skip(20).map(|r| r.left()).collect();
+        let over = before
+            .buttons
+            .get(21)
+            .map(|rect| rect.center())
+            .unwrap_or_else(|| panic!("the snap switches at {size:?}: {:?}", before.buttons));
+        let mut after = before;
+        for frame in 0..12 {
+            let mut events = vec![egui::Event::PointerMoved(over)];
+            if frame < 3 {
+                events.push(egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Point,
+                    delta: egui::vec2(0.0, -60.0),
+                    phase: egui::TouchPhase::Move,
+                    source: egui::MouseWheelSource::Unknown,
+                    modifiers: egui::Modifiers::NONE,
+                });
+            }
+            after = strips_at(&mut app, &ctx, size, events, 0.2 + f64::from(frame) * 0.05);
+        }
+        let snaps_after: Vec<f32> = after.buttons.iter().skip(20).map(|r| r.left()).collect();
+        assert_ne!(
+            snaps_after, snaps_before,
+            "the plain wheel scrolls the narrow snap strip"
+        );
+    }
+
+    #[test]
+    fn hovering_the_narrow_snap_strip_covers_none_of_its_switches() {
+        // The 584 recheck: hovering the narrow snap strip grew egui's floating scroll bar
+        // over the lower half of the switches it scrolls. Hovering adds nothing over them.
+        let Some(mut app) = headless() else { return };
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        assert!(crate::app::inter(&ctx));
+        let size = [800.0, 600.0];
+        // What lies over a snap switch without covering it whole (the band's own fill does).
+        let over_switches = |strips: &Strips| -> Vec<egui::Rect> {
+            let snaps: Vec<egui::Rect> = strips.buttons.iter().skip(20).copied().collect();
+            strips
+                .others
+                .iter()
+                .copied()
+                .filter(|r| {
+                    snaps
+                        .iter()
+                        .any(|s| r.intersects(*s) && !r.contains_rect(*s))
+                })
+                .collect()
+        };
+        let away = strips_at(&mut app, &ctx, size, Vec::new(), 0.1);
+        let resting = over_switches(&away);
+        let over = away
+            .buttons
+            .get(21)
+            .map(|rect| rect.center())
+            .unwrap_or_else(|| panic!("the snap switches at {size:?}: {:?}", away.buttons));
+        let mut hovered = away;
+        for frame in 0..4 {
+            hovered = strips_at(
+                &mut app,
+                &ctx,
+                size,
+                vec![egui::Event::PointerMoved(over)],
+                0.2 + f64::from(frame) * 0.1,
+            );
+        }
+        let added: Vec<egui::Rect> = over_switches(&hovered)
+            .into_iter()
+            .filter(|r| !resting.contains(r))
+            .collect();
+        assert!(
+            added.is_empty(),
+            "hovering the snap strip paints over its switches: {added:?}"
+        );
     }
 
     #[test]
