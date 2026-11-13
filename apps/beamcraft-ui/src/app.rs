@@ -301,6 +301,9 @@ struct SelectJob {
     asked: u64,
     rx: Receiver<Result<Option<Selected>, ToolError>>,
     cancel: Arc<AtomicBool>,
+    /// The window re-reads the selection after an edit: the user asked for nothing, so its
+    /// answer keeps the edit's outcome in the status line and shows no "Looking up…".
+    refresh: bool,
 }
 
 /// A set evaluation in flight (V17): the set it colours, its receiver and the flag that gives
@@ -628,6 +631,12 @@ fn draw_selection(
 /// Viewport clicks do not capture keyboard focus from construction input.
 fn viewport_sense() -> egui::Sense {
     egui::Sense::CLICK | egui::Sense::DRAG
+}
+
+/// The colour panel's note while a set picked in the list differs from the set shown: the
+/// legend below still describes the shown one.
+fn colour_pick_pending_text(shown: &str, pick: &str) -> String {
+    format!("Showing {shown}. Show colours applies {pick}; the legend below is {shown}'s.")
 }
 
 /// The neutral properties note for a selected kind the editor has no editable properties for,
@@ -1471,6 +1480,7 @@ impl App {
             asked: self.select_epoch.advance(),
             rx,
             cancel: Arc::clone(&cancel),
+            refresh: false,
         });
         cancel
     }
@@ -1534,10 +1544,17 @@ impl App {
     }
 
     fn poll_select(&mut self) {
-        let Some(SelectJob { asked, rx, .. }) = &self.select_job else {
+        let Some(SelectJob {
+            asked, rx, refresh, ..
+        }) = &self.select_job
+        else {
             return;
         };
         let asked = *asked;
+        // A refresh after an edit must not wipe the edit's outcome from the status line: the
+        // sentence "Undid the last change." vanished the moment the re-read answered (the 562
+        // recheck). A user's own pick still clears it.
+        let keep_note = *refresh;
         let result = match rx.try_recv() {
             Ok(result) => result,
             Err(TryRecvError::Empty) => return,
@@ -1563,7 +1580,9 @@ impl App {
             Ok(None) => {
                 self.editor.deselect();
                 self.props.clear();
-                self.edit_note = None;
+                if !keep_note {
+                    self.edit_note = None;
+                }
                 self.empty_click();
             }
             Ok(Some(Selected { id, info, details })) => {
@@ -1579,14 +1598,25 @@ impl App {
                 match info {
                     Ok(info) => {
                         self.editor.select(info);
-                        self.edit_note = None;
+                        if !keep_note {
+                            self.edit_note = None;
+                        }
                     }
                     Err(e) => match self.unreadable_kind(&id) {
                         // A kind the editor reads nothing from is not a failure: the selection
                         // names it and the panel says so plainly (issue 562 item 15).
                         Some((kind, name)) => {
+                            // The bolt listing names the group; when it was never loaded
+                            // (the Bolts bench not opened yet) it is read now, and its
+                            // arrival names the selection (the recheck of item 15).
+                            let unnamed = name.is_empty();
                             self.editor.select_kind(id.clone(), kind, name);
-                            self.edit_note = None;
+                            if !keep_note {
+                                self.edit_note = None;
+                            }
+                            if unnamed {
+                                self.bolt_load();
+                            }
                         }
                         None => {
                             self.editor.select_id(id.clone());
@@ -1712,11 +1742,11 @@ impl App {
             Ok(done) => {
                 // A lookup that started before this edit describes the element as it was.
                 self.invalidate_select();
-                // Undo and redo reshape the scene but move no model point the user chose: the
-                // refreshed view keeps the camera and only tracks the framing (issue 562 item 50).
-                if matches!(done.kind, EditKind::Undo | EditKind::Redo) {
-                    self.keep_camera = true;
-                }
+                // Undo and redo reshape the scene but move no model point the user chose, and
+                // a move, copy or delete acts on what the user is looking at: the refreshed
+                // view keeps the camera and only tracks the framing (issue 562 item 50 and its
+                // recheck).
+                self.keep_camera = true;
                 self.reload();
                 self.edit_note = Some(Ok(format!("{}.", done.kind.done())));
                 self.editor.clear_axis_point();
@@ -1759,6 +1789,9 @@ impl App {
         let (cli, store) = (self.source.cli.clone(), self.source.store.clone());
         let (tx, rx) = std::sync::mpsc::channel();
         let cancel = self.begin_select(rx);
+        if let Some(job) = self.select_job.as_mut() {
+            job.refresh = true;
+        }
         let stats = Arc::clone(&self.stats);
         let spawned = std::thread::Builder::new()
             .name("beamcraft-info".into())
@@ -2425,6 +2458,16 @@ impl App {
                 format!("Evaluating {pick}… the colours and legend shown are the previous set")
             });
             ui.label(pending.as_deref().unwrap_or("Evaluating the set…"));
+        } else if let Some((name, _)) = applied
+            .as_ref()
+            .filter(|(name, _)| !pick.is_empty() && name != &pick)
+        {
+            // A set picked in the list but not shown yet: the legend below still belongs to
+            // the shown set, which the note names, so it never reads as the picked set's
+            // (the recheck of issue 562 item 52).
+            ui.label(
+                egui::RichText::new(colour_pick_pending_text(name, &pick)).color(palette.muted),
+            );
         }
         // The legend of the applied set: one swatch per rule, in rule order.
         if let Some((name, coloured)) = &applied {
@@ -2817,6 +2860,10 @@ impl App {
         self.last_commit_ok = result.is_ok();
         match result {
             Ok(created) => {
+                // A part created in the window sits where the user picked it, so it is already
+                // in view: the refreshed scene keeps the camera instead of refitting a zoomed
+                // view to the whole model (the recheck of issue 562 item 50).
+                self.keep_camera = true;
                 self.reload();
                 let what = match created.kind {
                     ToolKind::Plate => "plate",
@@ -3399,6 +3446,9 @@ impl eframe::App for App {
             }
             self.ribbon(ui);
             self.status_bar(ui);
+            // Floating windows open and stay between the ribbon and the status bar (issue 562
+            // item 46 and its recheck): the area left after them is where a dialog may sit.
+            crate::kit::set_work_area(ui.ctx(), ui.available_rect_before_wrap());
             // Registered after the status bar, so the snap strip sits directly above it.
             self.inspector(ui);
             self.project_browser(ui);
@@ -3443,6 +3493,15 @@ pub(crate) mod tests {
             super::unsupported_kind_text("bolt group", ""),
             "Bolt group: this kind has no editable properties here yet."
         );
+    }
+
+    #[test]
+    fn a_picked_colour_set_not_shown_yet_says_whose_legend_is_shown() {
+        // The recheck of issue 562 item 52: picking a set in the list left the shown set's
+        // legend under the picked name. The note names both.
+        let note = super::colour_pick_pending_text("Catalogue", "Part classes");
+        assert!(note.starts_with("Showing Catalogue."), "{note}");
+        assert!(note.contains("applies Part classes"), "{note}");
     }
 
     #[test]
@@ -3523,6 +3582,21 @@ pub(crate) mod tests {
     use eframe::egui_wgpu;
     use std::sync::Arc;
     use std::sync::atomic::Ordering;
+
+    /// The workspace's `beamcraft` CLI binary, found beside the running test binary through
+    /// any cargo build layout: cargo ≤1.99 hardlinks tests into `target/debug/deps`, so two
+    /// parents up held `target/debug/beamcraft`, while 1.100 keeps the canonical binaries in
+    /// the build script's `out` directory and the fixed two-parent walk stopped finding them.
+    /// Walks the ancestors instead and takes the first directory that carries the binary.
+    pub(crate) fn workspace_cli() -> std::path::PathBuf {
+        let cli = format!("beamcraft{}", std::env::consts::EXE_SUFFIX);
+        let exe = std::env::current_exe().unwrap();
+        exe.ancestors()
+            .find(|dir| dir.join(&cli).is_file())
+            .map(std::path::Path::to_path_buf)
+            .unwrap_or_else(|| exe.parent().unwrap().to_path_buf())
+            .join(cli)
+    }
 
     /// The window state on the headless adapter, with no window and no CLI behind it: the
     /// refresh it starts fails and is never read, and a test hands it results itself. `None`,
@@ -4815,13 +4889,7 @@ pub(crate) mod tests {
     fn interactive_plate_and_member_creation_use_real_commands_without_preview_steps() {
         let mut app =
             headless().expect("a software/native adapter is required for modelling acceptance");
-        let executable = std::env::current_exe().unwrap();
-        let cli = executable
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        let cli = workspace_cli();
         assert!(
             cli.is_file(),
             "build beamcraft-cli before native modelling tests"
@@ -5007,13 +5075,7 @@ pub(crate) mod tests {
         // although the framing did not change; a Move keeps it. The workspace edit sits inside
         // the model's bounds, so the extents agree before and after the undo.
         let Some(mut app) = headless() else { return };
-        let executable = std::env::current_exe().unwrap();
-        let cli = executable
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        let cli = workspace_cli();
         assert!(
             cli.is_file(),
             "build beamcraft-cli before native modelling tests"
@@ -5248,13 +5310,7 @@ pub(crate) mod tests {
         // framed that remainder — the camera landed inside the model with two grid lines and a
         // hugely magnified element. The framing is the model's own; a hide is display state.
         let Some(mut app) = headless() else { return };
-        let executable = std::env::current_exe().unwrap();
-        let cli = executable
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        let cli = workspace_cli();
         assert!(
             cli.is_file(),
             "build beamcraft-cli before native modelling tests"
@@ -5423,13 +5479,7 @@ pub(crate) mod tests {
         // coloured siblings; R did not help. Every delivery of the catalogue set re-derives
         // the overlay from the snapshot's kinds.
         let Some(mut app) = headless() else { return };
-        let executable = std::env::current_exe().unwrap();
-        let cli = executable
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        let cli = workspace_cli();
         assert!(
             cli.is_file(),
             "build beamcraft-cli before native modelling tests"
@@ -5553,13 +5603,7 @@ pub(crate) mod tests {
     fn the_weld_ribbon_button_picks_two_parts_and_commits_the_cli_weld_command() {
         let mut app =
             headless().expect("a native/software adapter is required for modelling acceptance");
-        let executable = std::env::current_exe().unwrap();
-        let cli = executable
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        let cli = workspace_cli();
         assert!(
             cli.is_file(),
             "build beamcraft-cli before native modelling tests"
@@ -5837,13 +5881,7 @@ pub(crate) mod tests {
     fn the_bolt_ribbon_button_picks_parts_and_points_and_commits_the_cli_bolt_command() {
         let mut app =
             headless().expect("a native/software adapter is required for modelling acceptance");
-        let executable = std::env::current_exe().unwrap();
-        let cli = executable
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        let cli = workspace_cli();
         assert!(
             cli.is_file(),
             "build beamcraft-cli before native modelling tests"
@@ -6281,13 +6319,7 @@ pub(crate) mod tests {
     fn the_bolt_bench_loads_a_placed_group_and_updates_it_through_the_cli() {
         let mut app =
             headless().expect("a native/software adapter is required for modelling acceptance");
-        let executable = std::env::current_exe().unwrap();
-        let cli = executable
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        let cli = workspace_cli();
         assert!(
             cli.is_file(),
             "build beamcraft-cli before native modelling tests"
@@ -6675,13 +6707,7 @@ pub(crate) mod tests {
     fn typed_length_and_o_create_a_spatial_plate_through_real_keyboard_events() {
         let mut app =
             headless().expect("a native/software adapter is required for construction input");
-        let executable = std::env::current_exe().unwrap();
-        let cli = executable
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        let cli = workspace_cli();
         assert!(cli.is_file(), "build beamcraft-cli before input acceptance");
         let root = std::env::temp_dir().join(format!(
             "bc-length-{}-{}",
@@ -6920,13 +6946,7 @@ pub(crate) mod tests {
         use beamcraft_engine::query::{feature::element_edges, pick::SnapKind};
         let mut app =
             headless().expect("a native/software adapter is required for construction acceptance");
-        let executable = std::env::current_exe().unwrap();
-        let cli = executable
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        let cli = workspace_cli();
         let root = std::env::temp_dir().join(format!(
             "bc-bay-outline-{}-{}",
             std::process::id(),
@@ -7084,13 +7104,7 @@ pub(crate) mod tests {
         use beamcraft_engine::query::pick::SnapKind;
         let mut app =
             headless().expect("a native/software adapter is required for snap acceptance");
-        let executable = std::env::current_exe().unwrap();
-        let cli = executable
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        let cli = workspace_cli();
         assert!(cli.is_file(), "build beamcraft-cli before snap acceptance");
         let root = std::env::temp_dir().join(format!(
             "bc-snaps-{}-{:?}",
@@ -7362,13 +7376,7 @@ pub(crate) mod tests {
     fn review_triangle_and_rectangle_finish_with_right_or_wheel_click_and_drags_do_not_finish() {
         use crate::tools::{Created, ToolError};
         let mut app = headless().expect("software/native graphics required for input acceptance");
-        let exe = std::env::current_exe().unwrap();
-        let cli = exe
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        let cli = workspace_cli();
         assert!(cli.is_file());
         let root = std::env::temp_dir().join(format!(
             "bc-finish-{}-{:?}",
@@ -10844,13 +10852,7 @@ mod navigation_tests {
         use beamcraft_model::grid::{DrawnGridLine, Grid, GridFamily};
         use beamcraft_model::id::ElementId;
         let Some(mut app) = headless() else { return };
-        let executable = std::env::current_exe().unwrap();
-        let cli = executable
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        let cli = super::tests::workspace_cli();
         assert!(cli.is_file(), "build beamcraft-cli before native tests");
         let root = std::env::temp_dir().join(format!(
             "bc-584-hidden-grid-{}-{}",

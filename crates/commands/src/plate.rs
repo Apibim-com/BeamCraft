@@ -1167,7 +1167,7 @@ fn decode_stored(prim: &Prim) -> Option<Option<StoredRecord>> {
 
 /// The stored placement values of a committed group, for the view snapshot's re-derivation
 /// (issue 512). The definition, holes and labels are not the view's business.
-fn bolt_placement(spec: crate::bolt::GroupSpec) -> steel::engine::bolt::StoredPlacement {
+pub(crate) fn bolt_placement(spec: crate::bolt::GroupSpec) -> steel::engine::bolt::StoredPlacement {
     steel::engine::bolt::StoredPlacement {
         point1_mm: spec.point1_mm,
         point2_mm: spec.point2_mm,
@@ -1319,22 +1319,6 @@ pub(crate) fn decode(
         }
     }
     let definitions = decode_definitions(&prims)?;
-    let bolt_scene = bolt_views
-        .into_iter()
-        .map(|view| {
-            let spec = match definitions.get(&view.spec.fastener) {
-                Some(DefinitionRecord::Fastener { spec }) => spec,
-                _ => {
-                    return Err(integrity(
-                        "a committed bolt group's fastener definition is missing",
-                    ));
-                }
-            };
-            let placed =
-                steel::engine::bolt::BoltGroupPlaced::from_stored(&bolt_placement(view.spec))?;
-            steel::engine::bolt_scene::scene_element(view.id, &placed, spec).map_err(Refusal::from)
-        })
-        .collect::<Result<Vec<_>, Refusal>>()?;
     let levels = levels_of(&prims)?;
     let derived_elements = plates
         .iter()
@@ -1412,14 +1396,14 @@ pub(crate) fn decode(
             ))
         })
         .collect::<Result<BTreeMap<_, _>, Refusal>>()?;
-    Ok(Decoded {
+    let mut decoded = Decoded {
         hole_history,
         member_hole_history,
         cut_history,
         plates,
         members,
         lofted,
-        bolt_scene,
+        bolt_scene: Vec::new(),
         other_elements: other,
         definitions,
         levels,
@@ -1430,7 +1414,11 @@ pub(crate) fn decode(
         elements,
         derived_elements,
         reference_scene: crate::reference_view::scene_elements(&prims),
-    })
+    };
+    // The bolt groups are drawn once the parts they clamp are decoded: each fastener's nut
+    // stack seats on the far face of its joint (issue 562 item 5).
+    crate::bolt::attach_bolt_scene(&mut decoded, bolt_views)?;
+    Ok(decoded)
 }
 
 /// A committed member's authored inputs. The profile is one required pinned definition target;

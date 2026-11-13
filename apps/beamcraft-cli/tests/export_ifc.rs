@@ -434,6 +434,34 @@ fn property_values(file: &StepFile, product: &verify::Instance) -> BTreeMap<Stri
     out
 }
 
+/// The named values of one product's element quantity set (`IfcPhysicalQuantity` reals).
+fn quantity_values(file: &StepFile, product: &verify::Instance) -> BTreeMap<String, f64> {
+    let mut out = BTreeMap::new();
+    for rel in file.all("IFCRELDEFINESBYPROPERTIES") {
+        let Value::List(related) = &rel.args[4] else {
+            continue;
+        };
+        if !related.contains(&Value::Ref(product.id)) {
+            continue;
+        }
+        let set = file.target(&rel.args[5]).unwrap();
+        if set.name != "IFCELEMENTQUANTITY" {
+            continue;
+        }
+        let Some(Value::List(items)) = set.args.last() else {
+            continue;
+        };
+        for item in items {
+            let quantity = file.target(item).unwrap();
+            let Value::Real(value) = quantity.args[3] else {
+                panic!("a quantity value that is not a real: {quantity:?}");
+            };
+            out.insert(str_arg(file, quantity.args.first()).to_owned(), value);
+        }
+    }
+    out
+}
+
 #[test]
 fn a_scene_exports_to_a_structurally_valid_file_with_the_volumes_of_the_store() {
     let f = Fixture::new();
@@ -937,6 +965,83 @@ fn an_unknown_density_leaves_the_mass_out_and_says_so() {
 }
 
 #[test]
+fn an_add_hole_plate_exports_its_hole_count_and_no_gross_quantities() {
+    // Issue 598: the exporter counted only the deprecated create-authored hole polygons, so
+    // a plate whose holes all come from add-hole said HoleCount 0 and carried gross values.
+    let f = Fixture::new();
+    let material = text(
+        at(
+            &f.ok(
+                "define-material",
+                &[
+                    "--project-id",
+                    PROJECT,
+                    "--density",
+                    "7850",
+                    "--name",
+                    "S355",
+                    "--grade",
+                    "S355",
+                ],
+            ),
+            &["definition"],
+        ),
+        "digest",
+    );
+    f.ok(
+        "create-plate",
+        &[
+            "--width",
+            "120",
+            "--length",
+            "80",
+            "--thickness",
+            "10",
+            "--material-digest",
+            &material,
+            "--name",
+            "PL-A",
+        ],
+    );
+    let plate = f.scene_plate();
+    f.ok("add-hole", &["--id", &plate, "--hole-round", "60,40,18"]);
+    let inspected = f.ok("inspect-elements", &[]);
+    let stored = at(
+        &list(&inspected, "plates")[0],
+        &["quantities", "volume", "mm3"],
+    )
+    .float()
+    .unwrap();
+    let report = f.export(&f.path("a.ifc"), &[]);
+    assert_eq!(text(&report, "outcome"), "exported");
+    let file = f.parsed("a.ifc");
+    file.check().unwrap();
+    let product = file.all("IFCPLATE")[0];
+    // The model's hole count, create-authored and AddHole alike, reaches the property set.
+    assert_eq!(property_values(&file, product)["HoleCount"], Value::Int(1));
+    // The face set still carries the hole: its volume is the net one.
+    let from_file = volumes_by_name(&file);
+    assert!(
+        ((from_file["PL-A"] - stored) / stored).abs() < 1e-4,
+        "face set {} store {stored}",
+        from_file["PL-A"]
+    );
+    // IFCX-QTY-004: an element with operations carries the net quantities only.
+    let quantities = quantity_values(&file, product);
+    assert!(quantities.contains_key("NetVolume"));
+    assert!(
+        !quantities.contains_key("GrossVolume"),
+        "a plate with a hole has no gross volume"
+    );
+    let props = property_values(&file, product);
+    assert!(props.contains_key("NetWeightKg"));
+    assert!(
+        !props.contains_key("GrossWeightKg"),
+        "a plate with a hole has no gross weight"
+    );
+}
+
+#[test]
 fn a_stale_quantity_is_left_out_and_listed() {
     let f = Fixture::new();
     let s = f.scene();
@@ -1073,6 +1178,105 @@ fn a_reference_wrapper_is_a_proxy_with_its_pose_and_no_representation() {
         "IfcBuildingElementProxy"
     );
     assert!(is_null(row(&report, &wrapper), "representation"));
+}
+
+#[test]
+fn a_bolt_group_is_a_proxy_exporting_its_fastener_mesh() {
+    let f = Fixture::new();
+    f.scene();
+    let library = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../assets/libraries/synthetic-fasteners.usda"
+    );
+    let low = text(
+        at(
+            &f.ok(
+                "create-plate",
+                &["--width", "1000", "--length", "500", "--thickness", "10"],
+            ),
+            &["plate"],
+        ),
+        "element_id",
+    );
+    let high = text(
+        at(
+            &f.ok(
+                "create-plate",
+                &[
+                    "--width",
+                    "1000",
+                    "--length",
+                    "500",
+                    "--thickness",
+                    "10",
+                    "--translation",
+                    "0,0,10",
+                ],
+            ),
+            &["plate"],
+        ),
+        "element_id",
+    );
+    let group = "019a7bf0-0000-7000-8000-00000071000a";
+    f.ok(
+        "create-bolt-group",
+        &[
+            "--name",
+            "BG1",
+            "--new-id",
+            group,
+            "--parts",
+            &format!("{low},{high}"),
+            "--fastener-library",
+            library,
+            "--designation",
+            "SYN-BOLT-12x50",
+            "--point1",
+            "0,250,0",
+            "--point2",
+            "600,250,0",
+            "--plane-normal",
+            "0,0,1",
+            "--offset-start",
+            "100",
+            "--spacings",
+            "150",
+        ],
+    );
+    // The group is a proxy like the weld, but it carries its fasteners: the merged mesh a view
+    // draws is exported as the proxy representation, so the file shows the bolts and the
+    // washers instead of an empty element (issue 558).
+    let report = f.export(&f.path("bolts.ifc"), &[]);
+    assert_eq!(
+        text(row(&report, group), "entity"),
+        "IfcBuildingElementProxy"
+    );
+    assert_eq!(text(row(&report, group), "representation"), "Tessellation");
+    let file = f.parsed("bolts.ifc");
+    file.check().unwrap();
+    let proxy = file
+        .all("IFCBUILDINGELEMENTPROXY")
+        .into_iter()
+        .find(|p| str_arg(&file, p.args.get(2)) == "BG1")
+        .unwrap();
+    let Value::List(reps) = &file.target(&proxy.args[6]).unwrap().args[2] else {
+        panic!("a product definition shape carries representations");
+    };
+    let Value::List(items) = &file.target(&reps[0]).unwrap().args[3] else {
+        panic!("a shape representation carries items");
+    };
+    let set = file.target(&items[0]).unwrap();
+    assert_eq!(set.name, "IFCTRIANGULATEDFACESET");
+    let Value::List(vertices) = &file.target(&set.args[0]).unwrap().args[0] else {
+        panic!("a point list carries its points");
+    };
+    // Two placed SYN-BOLT-12x50 stacks (washer, head, shank, nut, washer nut each), far more
+    // vertices than a bare box; the mesh digest is the view bundle's.
+    assert!(
+        vertices.len() > 100,
+        "the fastener mesh, got {}",
+        vertices.len()
+    );
 }
 
 #[test]
@@ -1418,8 +1622,10 @@ fn the_report_file_equals_the_printed_report() {
         printed.trim_end(),
         fs::read_to_string(&report_path).unwrap()
     );
-    // The report holds no path, host name or time.
-    for forbidden in [f.shared.root.to_str().unwrap(), "tmp", "T00:", "hostname"] {
+    // The report holds no path, host name or time. The temp-path guard is separator-anchored:
+    // a bare "tmp" also occurs inside random IFC GlobalIds (22-char base64, alphabet without
+    // "/"), which tripped the assertion about once per ~2000 runs with no path leaked.
+    for forbidden in [f.shared.root.to_str().unwrap(), "/tmp/", "T00:", "hostname"] {
         assert!(!printed.contains(forbidden), "{forbidden}");
     }
     // Keys are sorted: the first key is `contract_version`.

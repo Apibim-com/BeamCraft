@@ -51,6 +51,18 @@ pub(crate) enum Bench {
     Levels,
 }
 
+/// Height the application menu's navigation needs with its "Menu" heading: fourteen 34 pt
+/// entries one point apart plus the heading and its spacing.
+const MENU_FULL_HEIGHT: f32 = 14.0 * 35.0 + 60.0;
+/// Width of the strip each ribbon overflow chevron covers at the ribbon's edge.
+const RIBBON_CHEVRON_WIDTH: f32 = 18.0;
+/// The least a ribbon chevron click scrolls: about two tool buttons.
+const RIBBON_CHEVRON_STEP: f32 = 120.0;
+/// Width of each chevron that scrolls the status bar's snap strip when it does not fit.
+const SNAP_CHEVRON_WIDTH: f32 = 16.0;
+/// How far one chevron click scrolls the snap strip: about three switches.
+const SNAP_CHEVRON_STEP: f32 = 72.0;
+
 impl Bench {
     /// The inspector's title.
     pub(crate) const fn title(self) -> &'static str {
@@ -685,7 +697,24 @@ impl App {
                 let has_pane = self.views.active_pane().is_some();
                 let mut pick = None;
                 let (mut undo, mut redo) = (false, false);
-                let ribbon = egui::ScrollArea::horizontal().id_salt("ribbon-tools").show(ui, |ui| {
+                // A chevron click scrolls the ribbon on the next frame (the click lands after the
+                // ribbon was laid out); the plain wheel scrolls it too, it has one direction.
+                let ribbon_step_key = egui::Id::unique("ribbon-chevron-step");
+                let ribbon_step = ui
+                    .data_mut(|d| d.remove_temp::<f32>(ribbon_step_key))
+                    .unwrap_or(0.0);
+                let ribbon_offset_key = egui::Id::unique("ribbon-offset");
+                let (ribbon_offset, ribbon_max) = ui
+                    .data(|d| d.get_temp::<(f32, f32)>(ribbon_offset_key))
+                    .unwrap_or((0.0, 0.0));
+                let mut ribbon_area = egui::ScrollArea::horizontal().id_salt("ribbon-tools");
+                if ribbon_step != 0.0 {
+                    ribbon_area = ribbon_area.horizontal_scroll_offset(
+                        (ribbon_offset + ribbon_step).clamp(0.0, ribbon_max),
+                    );
+                }
+                ui.style_mut().always_scroll_the_only_direction = true;
+                let ribbon = ribbon_area.show(ui, |ui| {
                 ui.horizontal(|ui| {
                     let group = |ui: &mut Ui, name: &str, add: &mut dyn FnMut(&mut Ui)| {
                         ui.vertical(|ui| {
@@ -916,18 +945,43 @@ impl App {
                     }
                 });
                 });
-                // An overflow hint: a muted chevron at each edge that hides more groups, so a
-                // narrow window shows there is more to scroll to (the wheel scrolls too).
-                let more_right = ribbon.content_size.x > ribbon.inner_rect.width() + 1.0;
-                let more_left = ribbon.state.clamped_offset().x > 1.0;
-                for (at, points_right) in [
-                    (ribbon.inner_rect.right_center(), true),
-                    (ribbon.inner_rect.left_center(), false),
-                ] {
-                    let show = if points_right { more_right } else { more_left };
+                // An overflow chevron at each edge that hides more groups: a real button on its
+                // own strip over the cut-off tools, so it says there is more and a click scrolls
+                // there instead of pressing the half-hidden tool under it. It shows only while
+                // there is more on its side (the 562 recheck).
+                let max = (ribbon.content_size.x - ribbon.inner_rect.width()).max(0.0);
+                let offset = ribbon.state.clamped_offset().x;
+                ui.data_mut(|d| d.insert_temp(ribbon_offset_key, (offset, max)));
+                for points_right in [true, false] {
+                    let show = if points_right {
+                        offset < max - 1.0
+                    } else {
+                        offset > 1.0
+                    };
                     if !show {
                         continue;
                     }
+                    let inner = ribbon.inner_rect;
+                    let strip = if points_right {
+                        egui::Rect::from_min_max(
+                            egui::pos2(inner.right() - RIBBON_CHEVRON_WIDTH, inner.top()),
+                            inner.right_bottom(),
+                        )
+                    } else {
+                        egui::Rect::from_min_max(
+                            inner.left_top(),
+                            egui::pos2(inner.left() + RIBBON_CHEVRON_WIDTH, inner.bottom()),
+                        )
+                    };
+                    let id = egui::Id::unique(("ribbon-chevron", points_right));
+                    let response = ui.interact(strip, id, egui::Sense::click());
+                    ui.painter().rect_filled(strip, 0.0, palette.surface);
+                    let colour = if response.hovered() {
+                        palette.text
+                    } else {
+                        palette.muted
+                    };
+                    let at = strip.center();
                     let half = 3.5;
                     let turn = |x: f32, y: f32| {
                         let x = if points_right { x } else { -x };
@@ -935,8 +989,15 @@ impl App {
                     };
                     ui.painter().line(
                         vec![turn(-half, -5.0), turn(half, 0.0), turn(-half, 5.0)],
-                        Stroke::new(1.5, palette.muted),
+                        Stroke::new(1.5, colour),
                     );
+                    if response.clicked() {
+                        let step = (inner.width() * 0.6).max(RIBBON_CHEVRON_STEP);
+                        ui.data_mut(|d| {
+                            d.insert_temp(ribbon_step_key, if points_right { step } else { -step })
+                        });
+                        ui.ctx().request_repaint();
+                    }
                 }
                 if let Some(bench) = pick {
                     if bench == Bench::Delete && grid_selected {
@@ -1040,7 +1101,12 @@ impl App {
                             }
                         });
                 }
-                if self.bench == Bench::Select && self.props.selected().is_some() {
+                // A kind with no editable properties (a bolt group) offers no Apply or Reset:
+                // there is nothing to apply (the recheck of issue 562 item 15).
+                if self.bench == Bench::Select
+                    && self.props.selected().is_some()
+                    && self.unsupported_kind_note().is_none()
+                {
                     egui::Panel::bottom("property-actions")
                         .exact_size(54.0)
                         .frame(
@@ -1146,6 +1212,29 @@ impl App {
                         // recheck). Its bar stays hidden, since a floating bar covers the
                         // switches it scrolls (the edge fade still marks more to the side),
                         // and the plain wheel scrolls the strip: it has no other direction.
+                        // When the strip does not fit, chevrons at both ends say there is
+                        // more to the side and scroll it a few switches at a click; a strip
+                        // cut at the window edge with no sign of the rest read as missing
+                        // snaps (the recheck of issue 562 item 47).
+                        let overflow = super::switches::snaps_width() > room;
+                        let chevrons = if overflow {
+                            2.0 * SNAP_CHEVRON_WIDTH
+                        } else {
+                            0.0
+                        };
+                        let extent_key = egui::Id::unique("status-snaps-extent");
+                        // The strip's last offset and its largest offset, from the frame before.
+                        let (offset, max_offset) = ui
+                            .data(|d| d.get_temp::<(f32, f32)>(extent_key))
+                            .unwrap_or((0.0, 0.0));
+                        let (can_left, can_right) = (offset > 0.5, offset < max_offset - 0.5);
+                        // A chevron click scrolls the strip on the next frame, which the
+                        // click's repaint brings: the strip is laid out between the two.
+                        let step_key = egui::Id::unique("status-snaps-step");
+                        let step = ui
+                            .data_mut(|d| d.remove_temp::<f32>(step_key))
+                            .unwrap_or(0.0);
+                        let mut next_step = 0.0;
                         ui.allocate_ui_with_layout(
                             vec2(
                                 super::switches::snaps_width().min(room),
@@ -1153,17 +1242,76 @@ impl App {
                             ),
                             egui::Layout::left_to_right(egui::Align::Center),
                             |ui| {
-                                ui.style_mut().always_scroll_the_only_direction = true;
-                                egui::ScrollArea::horizontal()
-                                    .id_salt("status-snaps")
-                                    .scroll_bar_visibility(
-                                        egui::scroll_area::ScrollBarVisibility::AlwaysHidden,
-                                    )
-                                    .show(ui, |ui| {
-                                        super::switches::snaps(ui, &mut self.selection);
-                                    });
+                                ui.spacing_mut().item_spacing.x = 0.0;
+                                // Exactly one switch row tall: a framed button grew past the
+                                // row and pushed the status row below onto the switches.
+                                let chevron = |ui: &mut Ui, text: &str, enabled: bool| {
+                                    let sense = if enabled {
+                                        egui::Sense::click()
+                                    } else {
+                                        egui::Sense::hover()
+                                    };
+                                    let (rect, response) = ui.allocate_exact_size(
+                                        vec2(SNAP_CHEVRON_WIDTH, ui.spacing().interact_size.y),
+                                        sense,
+                                    );
+                                    let colour = if !enabled {
+                                        palette.muted.gamma_multiply(0.5)
+                                    } else if response.hovered() {
+                                        palette.text
+                                    } else {
+                                        palette.muted
+                                    };
+                                    ui.painter().text(
+                                        rect.center(),
+                                        egui::Align2::CENTER_CENTER,
+                                        text,
+                                        egui::FontId::proportional(14.0),
+                                        colour,
+                                    );
+                                    enabled && response.clicked()
+                                };
+                                if overflow && chevron(ui, "‹", can_left) {
+                                    next_step = -SNAP_CHEVRON_STEP;
+                                }
+                                ui.allocate_ui_with_layout(
+                                    vec2(
+                                        (super::switches::snaps_width().min(room) - chevrons)
+                                            .max(0.0),
+                                        ui.spacing().interact_size.y,
+                                    ),
+                                    egui::Layout::left_to_right(egui::Align::Center),
+                                    |ui| {
+                                        ui.style_mut().always_scroll_the_only_direction = true;
+                                        let mut area = egui::ScrollArea::horizontal()
+                                            .id_salt("status-snaps")
+                                            .scroll_bar_visibility(
+                                                egui::scroll_area::ScrollBarVisibility::AlwaysHidden,
+                                            );
+                                        if step != 0.0 {
+                                            area = area.horizontal_scroll_offset(
+                                                (offset + step).clamp(0.0, max_offset),
+                                            );
+                                        }
+                                        let output = area.show(ui, |ui| {
+                                            super::switches::snaps(ui, &mut self.selection);
+                                        });
+                                        let max = (output.content_size.x
+                                            - output.inner_rect.width())
+                                        .max(0.0);
+                                        let offset = output.state.clamped_offset().x;
+                                        ui.data_mut(|d| d.insert_temp(extent_key, (offset, max)));
+                                    },
+                                );
+                                if overflow && chevron(ui, "›", can_right) {
+                                    next_step = SNAP_CHEVRON_STEP;
+                                }
                             },
                         );
+                        if next_step != 0.0 {
+                            ui.data_mut(|d| d.insert_temp(step_key, next_step));
+                            ui.ctx().request_repaint();
+                        }
                     });
                 });
                 ui.horizontal(|ui| {
@@ -1180,8 +1328,16 @@ impl App {
                         }
                     };
                     ui.label(RichText::new(selection).size(10.0).color(palette.muted));
-                    if self.select_job.is_some() {
+                    if self.select_job.as_ref().is_some_and(|job| !job.refresh) {
                         ui.label(RichText::new("Looking up…").small().color(palette.muted));
+                    }
+                    // An edit's outcome is told as soon as the command answers, while the
+                    // viewport still shows the scene before it until the refresh lands; say
+                    // so, rather than a status that runs ahead of the picture.
+                    if self.reload_job.is_some() {
+                        ui.label(
+                            RichText::new("Updating the view…").small().color(palette.muted),
+                        );
                     }
                     // What the active editor has to tell, in one place for every panel.
                     if let Some(note) = self.status_note() {
@@ -1619,6 +1775,10 @@ impl App {
                         )
                         .on_hover_text(self.source.store.display().to_string());
                     });
+                // A short window drops the "Menu" heading, which the title bar repeats, so
+                // every entry fits above the footer instead of Help hiding half under it
+                // behind a scroll (the recheck of issue 562 item 47).
+                let compact = ui.available_height() < MENU_FULL_HEIGHT;
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     ui.spacing_mut().item_spacing.y = 1.0;
                     // While a page opens a model, the menu waits for it.
@@ -1626,12 +1786,16 @@ impl App {
                     if menu_navigation(ui, Icon::Back, "Back to model", false, idle).clicked() {
                         self.close_menu();
                     }
-                    ui.add_space(14.0);
-                    ui.horizontal(|ui| {
-                        ui.add_space(12.0);
-                        ui.label(theme::bold("Menu", 23.0).color(palette.side_text()));
-                    });
-                    ui.add_space(14.0);
+                    if compact {
+                        ui.add_space(6.0);
+                    } else {
+                        ui.add_space(14.0);
+                        ui.horizontal(|ui| {
+                            ui.add_space(12.0);
+                            ui.label(theme::bold("Menu", 23.0).color(palette.side_text()));
+                        });
+                        ui.add_space(14.0);
+                    }
                     let free = idle && self.from_library && !self.other_command_running();
                     let new = MenuSection::New;
                     if menu_navigation(ui, Icon::Plus, "New", self.menu_section == new, free)
