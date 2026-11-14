@@ -38,6 +38,7 @@ use beamcraft_engine::ViewSnapshot;
 use beamcraft_engine::element::ElementId;
 use beamcraft_model::command::Placement;
 use session::settings::{self, CameraPreference, Settings};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -52,8 +53,12 @@ pub type PerfReport = Sender<(String, bool)>;
 /// Where the window reads its model from.
 #[derive(Debug, Clone)]
 pub struct Source {
-    /// The published store.
+    /// The published store. Unused while [`Source::ifc_source`] is set: a received IFC file
+    /// is not a store, and the read-only gates keep every store query away from this path.
     pub store: PathBuf,
+    /// The received IFC file the window shows instead of a store (`--source`): one read-only
+    /// display bundle, nothing written anywhere (issue 614).
+    pub ifc_source: Option<PathBuf>,
     /// The `beamcraft` CLI that exports the snapshot.
     pub cli: PathBuf,
     /// The personal workspace directory when the window was opened on one (`--workspace`): it is
@@ -75,6 +80,14 @@ pub struct Source {
     /// render-mode shortcuts are read from it, and the side-panel camera choice is read from
     /// and saved to its settings file.
     pub config_dir: Option<PathBuf>,
+}
+
+impl Source {
+    /// True when this window shows a received IFC file instead of a store: it writes nothing
+    /// and reads no store, so every editing command and store query stays off (issue 614).
+    pub fn read_only(&self) -> bool {
+        self.ifc_source.is_some()
+    }
 }
 
 /// The scene on screen: the pinned snapshot, its buffers on the device and what the window
@@ -114,12 +127,19 @@ pub struct App {
     reload_job: Option<Receiver<Reloaded>>,
     reload_queued: bool,
     /// The store watcher: one message per head change another process committed, so the view
-    /// refreshes without the `R` key. `None` when the watcher thread could not start.
+    /// refreshes without the `R` key. `None` when the watcher thread could not start. A
+    /// source file instead watches the file itself (see [`App::spawn_file_watch`]).
     store_watch: Option<Receiver<()>>,
     /// The watcher's shutdown handle: dropping it (with the window) ends the thread even
     /// when the store never changes again. Never read: its drop is the shutdown.
     #[expect(dead_code)]
     store_watch_shutdown: Option<Sender<()>>,
+    /// The IFC body facts of the loaded source snapshot (`ifc-shapes`), keyed by the display
+    /// id each body became; empty while no facts are loaded. Shared with the pick worker, so
+    /// a click can name the body it hit without a store (issue 614).
+    foreign: Arc<BTreeMap<ElementId, crate::source::ForeignBody>>,
+    /// Why the body facts of a source file are missing, when a refresh could not read them.
+    foreign_note: Option<String>,
     /// The result of the last Preview, Cancel or Commit.
     tool_note: Option<Result<String, String>>,
     /// The two-click 3D placement of the member tool (issue #134).
@@ -222,6 +242,9 @@ pub struct App {
     /// A model the window should switch to, set by the menu's New and Open; Shell reads it
     /// after the frame.
     pub(crate) open_request: Option<PathBuf>,
+    /// A received IFC file the window should switch to (the export panel's «Open IFC…»),
+    /// read-only; read before [`App::open_request`], so a plain path never wins over a file.
+    pub(crate) open_source_request: Option<PathBuf>,
     /// The read of the menu's Project page, running on a worker thread.
     project_job: Option<Receiver<Result<crate::library::ProjectFacts, String>>>,
     /// What the Project page shows: the project read from the store's head, or why it could not
@@ -633,6 +656,10 @@ fn viewport_sense() -> egui::Sense {
     egui::Sense::CLICK | egui::Sense::DRAG
 }
 
+/// The Level value of a part with no level: short enough for the narrow value cell, where
+/// "Not assigned" was cut to "Not assig…" (the 562 recheck).
+const LEVEL_NONE: &str = "None";
+
 /// The colour panel's note while a set picked in the list differs from the set shown: the
 /// legend below still describes the shown one.
 fn colour_pick_pending_text(shown: &str, pick: &str) -> String {
@@ -678,6 +705,28 @@ fn field(ui: &mut egui::Ui, label: &str, text: &mut String, width: f32) {
                 .char_limit(MAX_TEXT),
         );
     });
+}
+
+/// Frames a pane's first scene. A default view saved with its own target opens on its own
+/// camera (`own_camera`, see `default_view_camera`), as a double click opens any other view, so
+/// its height, projection and orbit stay the saved ones (the 584 recheck on master: the fit
+/// replaced a saved 10000 mm height, View properties then marked the fitted one changed, and
+/// Apply wrote it back). A pane without a view, and the window's own "3D View", are fitted to
+/// the scene.
+fn first_framing(
+    pane: &mut crate::panes::ViewPane,
+    own_camera: Option<Result<Camera, crate::Error>>,
+    target: [f32; 3],
+    extent: f32,
+    aspect: f32,
+) -> Result<(), crate::Error> {
+    match own_camera.filter(|_| pane.view.is_some()) {
+        Some(camera) => {
+            pane.camera = camera?;
+            Ok(())
+        }
+        None => pane.camera.fit(target, extent, aspect),
+    }
 }
 
 /// The offscreen render target size in device pixels: the viewport with its longest side clamped
@@ -747,12 +796,59 @@ fn spawn_watch(store: PathBuf) -> Option<(Receiver<()>, Sender<()>, std::thread:
     Some((rx, shutdown_tx, spawned))
 }
 
+/// The token of a source file: its length and modification time. Timestamps alone do not
+/// identify content, but the refresh re-reads the file's own digest, so a stale token only
+/// costs one CLI read that finds the same bytes.
+fn source_file_token(file: &Path) -> Option<(u64, std::time::SystemTime)> {
+    let meta = std::fs::metadata(file).ok()?;
+    Some((meta.len(), meta.modified().ok()?))
+}
+
+/// Watches a received IFC file and reports every change as one message, so the window says
+/// so and re-reads it instead of mixing heads (issue 614). The same shape as [`spawn_watch`].
+fn spawn_file_watch(
+    file: PathBuf,
+) -> Option<(Receiver<()>, Sender<()>, std::thread::JoinHandle<()>)> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let (shutdown_tx, shutdown_rx) = std::sync::mpsc::channel();
+    let spawned = std::thread::Builder::new()
+        .name("beamcraft-source-watch".into())
+        .spawn(move || {
+            let mut seen = source_file_token(&file);
+            loop {
+                match shutdown_rx.recv_timeout(WATCH_INTERVAL) {
+                    Ok(()) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                }
+                let now = source_file_token(&file);
+                if now != seen {
+                    seen = now;
+                    if tx.send(()).is_err() {
+                        return; // the window is gone
+                    }
+                }
+            }
+        })
+        .ok()?;
+    Some((rx, shutdown_tx, spawned))
+}
+
 /// One resolved world point, for notes and hints.
 struct PointText([f64; 3]);
 impl std::fmt::Display for PointText {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let [x, y, z] = self.0;
-        write!(f, "({x:.1}, {y:.1}, {z:.1}) mm")
+        // A residue that rounds to this decimal shows without its sign: `-0.0` reads as a
+        // defect (issue 611), and a tenth of a millimetre carries no sign of its own.
+        let axis = |v: f64| {
+            let shown = format!("{v:.1}");
+            if shown == "-0.0" {
+                "0.0".to_owned()
+            } else {
+                shown
+            }
+        };
+        write!(f, "({}, {}, {}) mm", axis(x), axis(y), axis(z))
     }
 }
 
@@ -958,7 +1054,19 @@ impl App {
             );
             (PerfRun::new(phases, header), report)
         });
-        let (store_watch, store_watch_shutdown) = match spawn_watch(source.store.clone()) {
+        // A source file is watched for its own changes, a store for its revisions; both
+        // deliver the same "refresh" message. `None` when the thread could not start: the
+        // `R` key keeps working either way.
+        let watched = if source.read_only() {
+            let file = source
+                .ifc_source
+                .clone()
+                .ok_or(Error::Input("a source window needs a file"))?;
+            spawn_file_watch(file)
+        } else {
+            spawn_watch(source.store.clone())
+        };
+        let (store_watch, store_watch_shutdown) = match watched {
             Some((rx, shutdown, handle)) => {
                 drop(handle);
                 (Some(rx), Some(shutdown))
@@ -966,14 +1074,17 @@ impl App {
             None => (None, None),
         };
         // The named-view sidecar is display state: a missing file is an empty book, and an
-        // unreadable one only notes, never blocks opening the model.
+        // unreadable one only notes, never blocks opening the model. A source file keeps no
+        // sidecar: its store path is a file, and nothing is written beside it (issue 614).
         let mut views = crate::views::Views::default();
-        match crate::views::load(&source.store) {
-            Ok(book) => {
-                views.baseline = book.clone();
-                views.book = book;
+        if !source.read_only() {
+            match crate::views::load(&source.store) {
+                Ok(book) => {
+                    views.baseline = book.clone();
+                    views.book = book;
+                }
+                Err(note) => views.note = Some(Err(note)),
             }
-            Err(note) => views.note = Some(Err(note)),
         }
         let (presets, presets_note) = crate::views::load_presets(source.config_dir.as_deref());
         views.presets = presets;
@@ -1010,6 +1121,7 @@ impl App {
             menu_models: crate::library::ModelPicker::new(),
             menu_export: export_panel::Form::new(),
             open_request: None,
+            open_source_request: None,
             project_job: None,
             project_facts: None,
             command_search: false,
@@ -1045,6 +1157,8 @@ impl App {
             reload_queued: false,
             store_watch,
             store_watch_shutdown,
+            foreign: Arc::new(BTreeMap::new()),
+            foreign_note: None,
             tool_note: None,
             refresh_error: None,
             editor: Editor::default(),
@@ -1117,9 +1231,25 @@ impl App {
         if self.other_command_running() {
             return None;
         }
+        // A received IFC file first: the read-only window it opens is the whole request.
+        if let Some(file) = self.open_source_request.take() {
+            return Some(Source {
+                store: file.clone(),
+                ifc_source: Some(file),
+                cli: self.source.cli.clone(),
+                workspace: None,
+                published: None,
+                samples: self.source.samples,
+                actor: None,
+                environment: self.source.environment.clone(),
+                author: self.source.author.clone(),
+                config_dir: self.source.config_dir.clone(),
+            });
+        }
         let store = self.open_request.take()?;
         Some(Source {
             store,
+            ifc_source: None,
             cli: self.source.cli.clone(),
             workspace: None,
             published: None,
@@ -1179,16 +1309,18 @@ impl App {
         });
         let (tx, rx) = std::sync::mpsc::channel();
         let stats = Arc::clone(&self.stats);
+        // A source file refreshes from the file itself; a store from the framed store export.
+        let source_file = self.source.ifc_source.clone();
         let spawned = std::thread::Builder::new()
             .name("beamcraft-reload".into())
             .spawn(move || {
-                let _ = tx.send(source::reload(
-                    &cli,
-                    &store,
-                    &known,
-                    overlay.as_deref(),
-                    &stats,
-                ));
+                let reloaded = match &source_file {
+                    Some(file) => {
+                        source::reload_source(&cli, file, &known, overlay.as_deref(), &stats)
+                    }
+                    None => source::reload(&cli, &store, &known, overlay.as_deref(), &stats),
+                };
+                let _ = tx.send(reloaded);
             });
         match spawned {
             Ok(_) => {
@@ -1228,6 +1360,22 @@ impl App {
             self.refresh_timings.push(reloaded.timing);
         }
         self.refresh_error = self.tools.apply_definitions(reloaded.definitions);
+        // The body facts of a source file ride only a new snapshot: the same snapshot again
+        // keeps the facts the window already holds, a failed read keeps the picture and says
+        // why (issue 614).
+        match reloaded.foreign {
+            Some(Ok(facts)) => {
+                self.foreign = Arc::new(facts);
+                // A note about facts that failed earlier must not outlive the facts that
+                // finally loaded (issue 614 review).
+                self.foreign_note = None;
+            }
+            Some(Err(why)) => {
+                self.foreign = Arc::new(BTreeMap::new());
+                self.foreign_note = Some(why);
+            }
+            None => {}
+        }
         let grids = reloaded.grids;
         let result = reloaded.scene.and_then(|refreshed| match refreshed {
             Refreshed::Unchanged => Ok(None),
@@ -1267,8 +1415,10 @@ impl App {
                 {
                     let aspect = self.aspect();
                     // An active model view keeps its own camera (V12); the default view is
-                    // framed once, then stays where the user left it.
+                    // framed once (on its own camera when saved with its own target, see
+                    // `first_framing`), then stays where the user left it.
                     let default = self.default_view_id();
+                    let own_camera = self.default_view_camera(self.view_origin(), None);
                     match self
                         .views
                         .active_pane_mut()
@@ -1281,7 +1431,7 @@ impl App {
                                 pane.framed = content.then_some((target, extent, aspect));
                                 self.error = None;
                             } else {
-                                match pane.camera.fit(target, extent, aspect) {
+                                match first_framing(pane, own_camera, target, extent, aspect) {
                                     Ok(()) => {
                                         pane.framed = content.then_some((target, extent, aspect));
                                         self.error = None;
@@ -1304,6 +1454,17 @@ impl App {
                 }
             }
             Ok(Some(loaded)) => {
+                // A source file whose bytes changed on disk reloaded to a new pin: the window
+                // says so instead of silently mixing heads (issue 614).
+                if self.source.read_only()
+                    && self.loaded.as_ref().is_some_and(|l| {
+                        l.snapshot.pin().revision() != loaded.snapshot.pin().revision()
+                    })
+                {
+                    self.edit_note = Some(Ok(
+                        "The source file changed on disk; the window re-read it.".into(),
+                    ));
+                }
                 // The scene may have come from a revision another process committed: take the
                 // views file's own changes with it (issue 569 item 3).
                 self.adopt_views_file();
@@ -1322,10 +1483,16 @@ impl App {
                 let aspect = self.aspect();
                 let default = self.default_view_id();
                 // The default view is framed when it shows its first scene with something in
-                // it; after that a new revision (an inserted column, an undo) keeps the user's
+                // it (on its own camera when saved with its own target, see `first_framing`);
+                // after that a new revision (an inserted column, an undo) keeps the user's
                 // camera, carried to the new display origin in `show`. A scene the camera cannot
                 // frame keeps the previous scene and shows why.
                 let content = loaded.summary.elements > 0 || !next_grids.lines.is_empty();
+                // The new scene's origin and reach: `show` installs them only below.
+                let own_camera = self.default_view_camera(
+                    loaded.summary.origin_mm,
+                    Some(view_panel::scene_reach(&loaded.summary)),
+                );
                 let fitted = match self
                     .views
                     .active_pane_mut()
@@ -1338,9 +1505,11 @@ impl App {
                             pane.framed = content.then_some((target, extent, aspect));
                             None
                         } else {
-                            Some(pane.camera.fit(target, extent, aspect).map(|()| {
-                                pane.framed = content.then_some((target, extent, aspect));
-                            }))
+                            Some(first_framing(pane, own_camera, target, extent, aspect).map(
+                                |()| {
+                                    pane.framed = content.then_some((target, extent, aspect));
+                                },
+                            ))
                         }
                     }
                     // Framed already: the framing is tracked and the camera stays, carried to
@@ -1501,7 +1670,6 @@ impl App {
         let (cli, store) = (self.source.cli.clone(), self.source.store.clone());
         let (tx, rx) = std::sync::mpsc::channel();
         let cancel = self.begin_select(rx);
-        let stats = Arc::clone(&self.stats);
         let selection = self.selection.filter();
         // With an active model view only what it shows can be picked (V12).
         let view = self.views.active_view().cloned();
@@ -1512,6 +1680,62 @@ impl App {
             .map(|o| Arc::clone(&o.overlay));
         // The display cut hides in the picture, so it hides from the pick too (issue 569 item 2).
         let cut = self.cut.clone();
+        if self.source.ifc_source.is_some() {
+            // The pick runs in this process and names the body from the facts the window
+            // already holds: a source file has no store to look the element up in (issue
+            // 614). The panel shows what the file itself reports.
+            let foreign = Arc::clone(&self.foreign);
+            let spawned = std::thread::Builder::new()
+                .name("beamcraft-pick".into())
+                .spawn(move || {
+                    // The display pick of a read-only file: the foreign bodies take part
+                    // (issue 614), where the engineering pick keeps them out (R01).
+                    let picked = command::pick_id(
+                        &snapshot,
+                        &ray,
+                        selection,
+                        view.as_ref(),
+                        overlay.as_ref().map(|o| o.hidden()),
+                        cut.as_ref(),
+                        true,
+                    );
+                    let selected = picked.map(|picked| {
+                        picked.map(|id| {
+                            let facts = ElementId::parse(&id)
+                                .ok()
+                                .and_then(|eid| foreign.get(&eid).cloned());
+                            let element =
+                                snapshot.elements().iter().find(|e| e.id.to_string() == id);
+                            Selected {
+                                id: id.clone(),
+                                info: Ok(crate::edit::ElementInfo {
+                                    id: id.clone(),
+                                    kind: "reference".into(),
+                                    name: facts
+                                        .as_ref()
+                                        .and_then(|f| f.name.clone())
+                                        .unwrap_or_default(),
+                                    translation_mm: element
+                                        .map(|e| e.placement_mm)
+                                        .unwrap_or([0.0; 3]),
+                                    contour: None,
+                                }),
+                                details: Err(ToolError::local(
+                                    "FOREIGN_BODY",
+                                    "a received IFC file reports no editable properties",
+                                )),
+                            }
+                        })
+                    });
+                    let _ = tx.send(selected);
+                });
+            if spawned.is_err() {
+                self.select_job = None;
+                self.edit_note = Some(Err("the pick thread could not be started".into()));
+            }
+            return;
+        }
+        let stats = Arc::clone(&self.stats);
         let spawned = std::thread::Builder::new()
             .name("beamcraft-pick".into())
             .spawn(move || {
@@ -1568,9 +1792,14 @@ impl App {
         if !self.select_epoch.is_current(asked) {
             return;
         }
+        // A source file pick carries no detail reading (there is no store to read), so its
+        // missing details are not a failure: the panel shows the file's own facts.
+        let read_only = self.source.read_only();
         let failed = match &result {
             Ok(None) => false,
-            Ok(Some(selected)) => selected.info.is_err() || selected.details.is_err(),
+            Ok(Some(selected)) => {
+                selected.info.is_err() || (!read_only && selected.details.is_err())
+            }
             Err(_) => true,
         };
         if failed {
@@ -1647,6 +1876,13 @@ impl App {
     }
 
     fn start_edit(&mut self, direct: Option<EditKind>) {
+        if self.source.read_only() {
+            self.edit_note = Some(Err(
+                "Read-only: this window shows a received IFC file, there is nothing to edit."
+                    .into(),
+            ));
+            return;
+        }
         if self.other_command_running() {
             self.edit_note = Some(Err(
                 "another command is running; wait for it to finish.".into()
@@ -1979,11 +2215,15 @@ impl App {
         self.refresh_status();
     }
 
-    /// Re-reads the selected element and the head, so a stale reading becomes current.
+    /// Re-reads the selected element and the head, so a stale reading becomes current. A
+    /// source window has no element reading to refresh: the reload re-reads the file itself,
+    /// and the facts panel follows it (issue 614).
     fn reread(&mut self) {
         self.invalidate_select();
         self.reload();
-        self.refresh_selection();
+        if !self.source.read_only() {
+            self.refresh_selection();
+        }
     }
 
     /// The display kind and name of a selected element the properties editor has no details
@@ -2013,6 +2253,92 @@ impl App {
         }
     }
 
+    /// The read-only properties of a picked body of a received IFC file: exactly what the
+    /// file itself reports — the product's name, IFC entity, GlobalId and placed bounds, from
+    /// the same `ifc-shapes` read the bundle came from (issue 614). Nothing is editable: the
+    /// window of a source file writes nowhere.
+    fn foreign_props_panel(&mut self, ui: &mut egui::Ui) {
+        let palette = crate::theme::Palette::current(ui);
+        let Some(selected) = self
+            .editor
+            .selected()
+            .map(|s| (s.id.clone(), s.name.clone(), s.translation_mm))
+        else {
+            ui.add_space(crate::kit::SPACE_S);
+            ui.label(
+                egui::RichText::new(
+                    "Click a body of the file to see what it reports: its name, IFC entity, \
+                     GlobalId and bounds.",
+                )
+                .size(12.0)
+                .color(palette.muted),
+            );
+            return;
+        };
+        crate::kit::type_box(ui, crate::theme::Icon::Block, "IFC body");
+        if let Some(why) = &self.foreign_note {
+            ui.add_space(crate::kit::SPACE_S);
+            ui.label(egui::RichText::new(why).size(12.0).color(palette.muted));
+        }
+        let facts = ElementId::parse(&selected.0)
+            .ok()
+            .and_then(|id| self.foreign.get(&id).cloned());
+        crate::kit::section(ui, "part", "Identity", true, |ui| {
+            crate::kit::prop_row(ui, "Name", |ui| {
+                ui.label(match facts.as_ref().and_then(|f| f.name.as_deref()) {
+                    Some(name) if !name.is_empty() => name.to_owned(),
+                    _ => "the file carries no Name for this product".into(),
+                });
+            });
+            crate::kit::prop_row(ui, "Entity", |ui| {
+                ui.label(
+                    facts
+                        .as_ref()
+                        .map(|f| f.entity.clone())
+                        .unwrap_or_else(|| "unknown (not reported)".into()),
+                );
+            });
+            crate::kit::prop_row(ui, "GlobalId", |ui| {
+                ui.label(
+                    facts
+                        .as_ref()
+                        .and_then(|f| f.global_id.clone())
+                        .unwrap_or_else(|| "none".into()),
+                );
+            });
+            crate::kit::prop_row(ui, "Element", |ui| {
+                ui.label(selected.0.clone());
+            });
+        });
+        crate::kit::section(ui, "part", "Placement", true, |ui| {
+            crate::kit::prop_row(ui, "Position", |ui| {
+                ui.label(PointText(selected.2).to_string());
+            });
+        });
+        crate::kit::section(ui, "part", "Bounds", true, |ui| match facts.as_ref() {
+            Some(facts) => {
+                crate::kit::prop_row(ui, "Min", |ui| {
+                    ui.label(PointText(facts.bounds[0]).to_string());
+                });
+                crate::kit::prop_row(ui, "Max", |ui| {
+                    ui.label(PointText(facts.bounds[1]).to_string());
+                });
+            }
+            None => {
+                ui.label(egui::RichText::new("unknown (not reported)").color(palette.muted));
+            }
+        });
+        ui.add_space(crate::kit::SPACE_S);
+        ui.label(
+            egui::RichText::new(
+                "Read-only: this window shows a received IFC file. Nothing is edited, saved \
+                 or written anywhere.",
+            )
+            .size(11.0)
+            .color(palette.muted),
+        );
+    }
+
     /// The neutral note shown instead of an error for a selected kind the properties editor
     /// reads nothing from, or `None` when the selection is not such a kind.
     fn unsupported_kind_note(&self) -> Option<String> {
@@ -2024,6 +2350,10 @@ impl App {
     }
 
     fn props_panel(&mut self, ui: &mut egui::Ui) {
+        if self.source.read_only() {
+            self.foreign_props_panel(ui);
+            return;
+        }
         let Some(_id) = self.props.selected().map(str::to_owned) else {
             let palette = crate::theme::Palette::current(ui);
             ui.add_space(crate::kit::SPACE_S);
@@ -2194,7 +2524,7 @@ impl App {
                 }
                 crate::kit::section(ui, "part", "Placement", true, |ui| {
                     let level_label = self.props.form.level.as_ref().map_or_else(
-                        || "Not assigned".into(),
+                        || LEVEL_NONE.into(),
                         |id| level_choice_label(id, &details.levels),
                     );
                     mark(ui, self.props.form.level != base.level);
@@ -2204,11 +2534,7 @@ impl App {
                             .truncate()
                             .selected_text(level_label)
                             .show_ui(ui, |ui| {
-                                ui.selectable_value(
-                                    &mut self.props.form.level,
-                                    None,
-                                    "Not assigned",
-                                );
+                                ui.selectable_value(&mut self.props.form.level, None, LEVEL_NONE);
                                 for (id, _, _) in &details.levels {
                                     ui.selectable_value(
                                         &mut self.props.form.level,
@@ -2578,6 +2904,16 @@ impl App {
                 Arc::new(derived),
             ));
             self.recolour();
+            return;
+        }
+        // A colour set of a store is evaluated against that store's head; a source file has
+        // no store, so only the built-in Catalogue applies to its bodies (issue 614).
+        if self.source.read_only() {
+            self.colour_note = Some(Err(format!(
+                "a received IFC file has no store to evaluate `{name}` against; only the \
+                 built-in `{}` set applies to its bodies",
+                crate::colour_sets::CATALOGUE_SET_NAME
+            )));
             return;
         }
         let Some(set) = self.colour_sets.find(name).cloned() else {
@@ -3580,6 +3916,7 @@ pub(crate) mod tests {
     use beamcraft_engine::{Limits, RenderMode, Representation, ViewPin, ViewSnapshot};
     use beamcraft_model::digest::Sha256;
     use eframe::egui_wgpu;
+    use std::path::Path;
     use std::sync::Arc;
     use std::sync::atomic::Ordering;
 
@@ -3638,6 +3975,7 @@ pub(crate) mod tests {
         std::fs::create_dir_all(&config).unwrap();
         let source = Source {
             store: missing.clone(),
+            ifc_source: None,
             cli: missing,
             workspace: None,
             published: None,
@@ -3651,11 +3989,346 @@ pub(crate) mod tests {
         Some(App::new(&cc, source, stats).unwrap())
     }
 
+    /// A window on a received IFC file (`--source FILE`), with no CLI behind it and no real
+    /// file: the read-only mode the window of a source runs in (issue 614). `None` on a
+    /// machine without a usable GPU adapter, like [`headless`].
+    fn headless_source() -> Option<App> {
+        let gpu = match pollster::block_on(Gpu::headless()) {
+            Ok(gpu) => gpu,
+            Err(Error::NoAdapter) => {
+                eprintln!("SKIP window test: no native wgpu adapter");
+                return None;
+            }
+            Err(e) => panic!("adapter or device failed: {e}"),
+        };
+        let format = wgpu::TextureFormat::Rgba8Unorm;
+        let renderer =
+            egui_wgpu::Renderer::new(&gpu.device, format, egui_wgpu::RendererOptions::default());
+        let mut cc = eframe::CreationContext::_new_kittest(egui::Context::default());
+        cc.wgpu_render_state = Some(egui_wgpu::RenderState {
+            adapter: gpu.adapter,
+            available_adapters: Vec::new(),
+            instance: wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle()),
+            device: gpu.device,
+            queue: gpu.queue,
+            target_format: format,
+            renderer: std::sync::Arc::new(egui::mutex::RwLock::new(renderer)),
+        });
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let scratch = std::env::temp_dir().join(format!(
+            "bc-window-source-test-{}-{nanos}",
+            std::process::id()
+        ));
+        let file = scratch.join("joint.ifc");
+        std::fs::create_dir_all(&scratch).unwrap();
+        std::fs::write(&file, b"ISO-10303-21;").unwrap();
+        let source = Source {
+            store: file.clone(),
+            ifc_source: Some(file),
+            cli: scratch.join("no-cli"),
+            workspace: None,
+            published: None,
+            samples: None,
+            actor: None,
+            environment: None,
+            author: None,
+            config_dir: Some(scratch),
+        };
+        let stats = Arc::new(crate::stats::Stats::default());
+        Some(App::new(&cc, source, stats).unwrap())
+    }
+
     /// Shows `app` on its menu with text, as a user who opened the menu sees it: `App::ui` then
     /// draws the menu page and returns before the viewport.
     pub(crate) fn on_the_menu(app: &mut App) {
         app.text = true;
         app.menu_open = true;
+    }
+
+    #[test]
+    fn a_source_window_switches_only_between_display_benches() {
+        use super::workbench;
+        let Some(mut app) = headless_source() else {
+            return;
+        };
+        assert!(app.source.read_only());
+        // Every bench whose forms write to the model refuses to switch.
+        for bench in [
+            workbench::Bench::Beam,
+            workbench::Bench::Column,
+            workbench::Bench::Plate,
+            workbench::Bench::Move,
+            workbench::Bench::Copy,
+            workbench::Bench::Delete,
+            workbench::Bench::Weld,
+            workbench::Bench::Bolt,
+            workbench::Bench::Grid,
+            workbench::Bench::Levels,
+            workbench::Bench::Annotations,
+        ] {
+            app.set_bench(bench);
+            assert_eq!(
+                app.bench,
+                workbench::Bench::Select,
+                "{bench:?} must not switch on a source window"
+            );
+            assert!(
+                app.edit_note
+                    .as_ref()
+                    .is_some_and(|note| matches!(note, Err(text) if text.contains("Read-only"))),
+                "{bench:?} must say the window is read-only"
+            );
+            app.edit_note = None;
+        }
+        // The display benches stay reachable.
+        for bench in [
+            workbench::Bench::View,
+            workbench::Bench::Colour,
+            workbench::Bench::CutPlane,
+        ] {
+            app.set_bench(bench);
+            assert_eq!(app.bench, bench, "{bench:?} is display-only");
+            app.set_bench(workbench::Bench::Select);
+        }
+        // An explicit edit (undo, delete) refuses the same way, before anything is sent.
+        app.start_edit(Some(crate::edit::EditKind::Undo));
+        assert!(
+            app.edit_note
+                .as_ref()
+                .is_some_and(|note| matches!(note, Err(text) if text.contains("Read-only")))
+        );
+        // Reload properties has no store reading to refresh: the pick worker never starts,
+        // even with a selection recorded (issue 614 review).
+        app.props.load(
+            "01990000-0000-7000-8000-000000000001",
+            Err(ToolError::local("FOREIGN_BODY", "read-only")),
+        );
+        assert!(app.props.selected().is_some());
+        app.reread();
+        assert!(
+            app.select_job.is_none(),
+            "no store lookup on a source window"
+        );
+        // A colour set of a store has nothing to be evaluated against.
+        app.start_colour("Some other set", false);
+        let Some(Err(text)) = &app.colour_note else {
+            panic!("expected a colour refusal, got {:?}", app.colour_note);
+        };
+        assert!(text.contains("no store"), "{text}");
+    }
+
+    #[test]
+    fn an_open_source_request_wins_and_opens_read_only() {
+        let Some(mut app) = headless_source() else {
+            return;
+        };
+        app.open_request = Some(std::path::PathBuf::from("/m/Model A"));
+        app.open_source_request = Some(std::path::PathBuf::from("/m/joint.ifc"));
+        let source = app.take_open_request().unwrap();
+        assert_eq!(
+            source.ifc_source.as_deref(),
+            Some(std::path::Path::new("/m/joint.ifc"))
+        );
+        assert!(source.read_only());
+        assert_eq!(source.workspace, None);
+        // Then the plain store request, untouched by the file one.
+        let source = app.take_open_request().unwrap();
+        assert_eq!(source.ifc_source, None);
+        assert_eq!(source.store, std::path::PathBuf::from("/m/Model A"));
+        assert!(!source.read_only());
+        assert!(app.take_open_request().is_none());
+    }
+
+    #[test]
+    fn open_works_in_a_source_window_without_the_library() {
+        let Some(mut app) = headless_source() else {
+            return;
+        };
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        assert!(crate::app::inter(&ctx));
+        // The tooltip delay would hide the row's answer behind a timer no test run has.
+        ctx.all_styles_mut(|style| {
+            style.interaction.tooltip_delay = 0.0;
+            style.interaction.tooltip_grace_time = 0.0;
+        });
+        on_the_menu(&mut app);
+        assert!(app.menu_open_enabled());
+        let labels = app_frame(&mut app, &ctx, vec![]);
+        let open = labels.iter().find(|(l, _)| l == "Open").unwrap().1;
+        // Two hover frames, then read: an enabled entry draws no "Not available yet"
+        // under the pointer — the row is live, not the dead end of issue 617.
+        app_frame(&mut app, &ctx, vec![egui::Event::PointerMoved(open)]);
+        let hovered = app_frame(&mut app, &ctx, vec![egui::Event::PointerMoved(open)]);
+        assert!(
+            !hovered.iter().any(|(l, _)| l == "Not available yet"),
+            "the Open entry must not be disabled in a source window"
+        );
+        // The click itself cannot run here: it opens the same native picker the start page
+        // shows, and what the picker's chosen answer sets is driven end to end by
+        // `a_menu_open_in_a_source_window_replaces_the_file_read_only`.
+        // A store window without the library keeps the entry off, as before.
+        let Some(mut store) = headless() else {
+            return;
+        };
+        on_the_menu(&mut store);
+        store.from_library = false;
+        assert!(!store.menu_open_enabled());
+        store.from_library = true;
+        assert!(store.menu_open_enabled());
+    }
+
+    #[test]
+    fn a_menu_open_in_a_source_window_replaces_the_file_read_only() {
+        use std::time::{Duration, Instant};
+        // The path a Menu → Open click drives in a source window, over the real files and the
+        // real CLI (issue 617): the picker's choice becomes this window's open request, Shell
+        // replaces the window with the same construction `--source FILE` runs, and every fact
+        // the properties panel can name is the new file's own — the old file's are gone. The
+        // native picker dialog cannot be shown headlessly; the test sets what its chosen
+        // answer sets (`open_source_request`), the one line between the dialog and the switch.
+        let executable = std::env::current_exe().unwrap();
+        let cli = executable
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        assert!(
+            cli.is_file(),
+            "build beamcraft-cli before native modelling tests"
+        );
+        let fixture =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/ifc/plate-hole.ifc");
+        // The file the picker chose: the same products renamed and one placement moved, so
+        // the bytes, the display ids and every fact (name, GlobalId, bounds) are its own, and
+        // no fact of the first file survives the switch.
+        let chosen_bytes = String::from_utf8(std::fs::read(&fixture).unwrap())
+            .unwrap()
+            .replace("'PL-A'", "'WEB-A'")
+            .replace("'PL-B'", "'WEB-B'")
+            .replace("'01cdlm001m080000000A01'", "'01cdlm001m080000000B01'")
+            .replace("'01cdlm001m080000000A02'", "'01cdlm001m080000000B02'")
+            .replace(
+                "#51=IFCCARTESIANPOINT((200.,0.,0.));",
+                "#51=IFCCARTESIANPOINT((500.,0.,0.));",
+            );
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let scratch = std::env::temp_dir().join(format!(
+            "bc-menu-open-source-{}-{nanos}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&scratch).unwrap();
+        let chosen = scratch.join("web-plates.ifc");
+        std::fs::write(&chosen, chosen_bytes.as_bytes()).unwrap();
+        let Some(mut app) = headless_source_at(&fixture, &cli) else {
+            let _ = std::fs::remove_dir_all(&scratch);
+            return;
+        };
+        on_the_menu(&mut app);
+        let old = app.texture_id().unwrap();
+        app.open_source_request = Some(chosen.clone());
+        // The request is consumed by Shell, the switch's only reader.
+        let ctx = egui::Context::default();
+        let state = app.render_state().clone();
+        let mut shell = crate::shell::Shell::new(
+            &eframe::CreationContext::_new_kittest(ctx.clone()),
+            cli.clone(),
+            app.source.config_dir.clone(),
+            None,
+            Arc::new(crate::stats::Stats::default()),
+        );
+        shell.app = Some(app);
+        let mut frame = eframe::Frame::_new_kittest();
+        frame.wgpu_render_state = Some(state.clone());
+        // One frame switches; the next frees the replaced window's textures.
+        let run = |shell: &mut crate::shell::Shell, frame: &mut eframe::Frame| {
+            ctx.options_mut(|o| o.max_passes = std::num::NonZeroUsize::MIN);
+            let output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1280.0, 800.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| eframe::App::ui(shell, ui, frame),
+            );
+            output.drop_without_applying_deltas();
+        };
+        run(&mut shell, &mut frame);
+        // The next frame releases the replaced window: its textures are gone.
+        run(&mut shell, &mut frame);
+        assert!(
+            state.renderer.read().texture(&old).is_none(),
+            "the old file's picture is gone"
+        );
+        let next = shell.app.as_ref().unwrap();
+        // The switch is the `--source` construction: a fresh read-only window on the chosen
+        // file, its watcher armed, nothing of the menu it was opened from carried over.
+        assert!(next.from_library);
+        assert!(next.source.read_only());
+        assert_eq!(next.source.ifc_source.as_deref(), Some(chosen.as_path()));
+        assert!(!next.menu_open);
+        assert_eq!(next.open_source_request, None);
+        assert!(next.store_watch.is_some(), "the new file is watched");
+        // The new file's bundle loads through the real CLI.
+        let settled = {
+            let deadline = Instant::now() + Duration::from_secs(30);
+            loop {
+                run(&mut shell, &mut frame);
+                let next = shell.app.as_ref().unwrap();
+                if next.loaded.is_some() || Instant::now() > deadline {
+                    break Instant::now() <= deadline;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        };
+        assert!(settled, "the chosen file's refresh never delivered a scene");
+        let next = shell.app.as_ref().unwrap();
+        assert!(
+            next.error.is_none(),
+            "the chosen file was refused: {:?}",
+            next.error
+        );
+        // The facts are the chosen file's own: the renamed products, their new GlobalIds and
+        // the moved placement — and not one fact of the first file.
+        assert!(
+            !next.foreign.is_empty(),
+            "the chosen file's facts never loaded: {:?}",
+            next.foreign_note
+        );
+        assert_eq!(next.foreign.len(), 2);
+        let names: Vec<_> = next
+            .foreign
+            .values()
+            .filter_map(|body| body.name.clone())
+            .collect();
+        assert_eq!(names.len(), 2);
+        assert!(names.contains(&"WEB-A".to_owned()) && names.contains(&"WEB-B".to_owned()));
+        for body in next.foreign.values() {
+            assert_eq!(body.entity, "IFCPLATE");
+            assert!(
+                body.global_id
+                    .as_deref()
+                    .is_some_and(|id| id.ends_with("B01") || id.ends_with("B02")),
+                "a GlobalId of the old file leaked: {:?}",
+                body.global_id
+            );
+        }
+        let moved = next
+            .foreign
+            .values()
+            .map(|body| body.bounds[0][0])
+            .any(|min_x| min_x == 500.0);
+        assert!(moved, "the moved plate kept the old placement");
+        let _ = std::fs::remove_dir_all(&scratch);
     }
 
     #[test]
@@ -4863,6 +5536,7 @@ pub(crate) mod tests {
             scene,
             definitions: Err(ToolError::local("NOT_FOUND", "no store in this test")),
             grids: Ok(crate::grid::GridScene::default()),
+            foreign: None,
             timing: RefreshTiming::default(),
         }
     }
@@ -8206,6 +8880,49 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_default_view_saved_with_its_own_target_opens_on_it() {
+        // The 584 recheck on master: the window fitted the default view to its first scene even
+        // when it was saved with its own target, so a view saved 10000 mm high opened about
+        // 8100 mm high and orthographic; View properties, which follows the pane's live height,
+        // then marked the height changed, and Apply wrote the fitted one back. A default view
+        // with its own target opens on its own camera, as a double click opens any other view.
+        use beamcraft_engine::views::{ModelView, Projection, orbit_plane};
+        use beamcraft_model::id::Uuid7;
+        let Some(mut app) = headless() else { return };
+        let id = Uuid7::parse("019a7bf0-0000-7000-8000-000000000021").unwrap();
+        let plane = orbit_plane([3000.0, 0.0, 1750.0], -1.0, 0.45).unwrap();
+        let mut elev = ModelView::new(id, "Elev", plane, 10_000.0);
+        elev.projection = Projection::Perspective;
+        elev.is_default = true;
+        app.views.book.insert(elev.clone()).unwrap();
+        assert_eq!(app.default_view_id(), Some(id));
+        app.views.active_pane_mut().unwrap().set_view(Some(&elev));
+        deliver(&mut app, refreshed(2));
+        let origin = app.view_origin();
+        let pane = app.views.active_pane().unwrap();
+        assert!(pane.framed.is_some(), "the first scene was framed");
+        assert!(
+            !pane.camera.is_orthographic(),
+            "the saved perspective is kept"
+        );
+        let (_, span) = pane.camera.frame(origin).unwrap();
+        assert!(
+            (span - 10_000.0).abs() < 0.5,
+            "the pane shows the saved height, which View properties reads, got {span}"
+        );
+        // The window's own "3D View" (a derived anchor) is still fitted to its first scene:
+        // a fresh window frames the whole model, as before.
+        let Some(mut fresh) = headless() else { return };
+        let before = fresh.views.active_pane().unwrap().camera.distance();
+        deliver(&mut fresh, refreshed(2));
+        let after = fresh.views.active_pane().unwrap().camera.distance();
+        assert!(
+            (after - before).abs() > 1.0,
+            "the window's own default view is fitted to the first scene: {before} -> {after}"
+        );
+    }
+
+    #[test]
     fn the_render_target_is_clamped_as_a_whole() {
         // Below the limit the viewport passes through unchanged.
         assert_eq!(target_size([1280.0, 800.0], 1.0), [1280, 800]);
@@ -8336,6 +9053,352 @@ pub(crate) mod tests {
                 modifiers: egui::Modifiers::NONE,
             },
         ]
+    }
+
+    #[test]
+    fn a_failed_facts_note_is_cleared_by_the_facts_that_later_loaded() {
+        use crate::source::ForeignBody;
+        let Some(mut app) = headless_source() else {
+            return;
+        };
+        // The facts read failed once: the panel says why.
+        let failed = Reloaded {
+            foreign: Some(Err("the source file changed while it was being read".into())),
+            ..reloaded(Ok(Refreshed::Unchanged))
+        };
+        deliver(&mut app, failed);
+        assert_eq!(
+            app.foreign_note.as_deref(),
+            Some("the source file changed while it was being read")
+        );
+        // The next refresh read the facts: the note is gone and the bodies are named.
+        let pin = ViewPin::new(Sha256::digest(b"facts").unwrap(), 1);
+        let snapshot =
+            ViewSnapshot::build(pin, plate_scene(2, false).unwrap(), &Limits::default()).unwrap();
+        let mut facts = std::collections::BTreeMap::new();
+        facts.insert(
+            snapshot.elements().first().unwrap().id,
+            ForeignBody {
+                entity: "IFCPLATE".into(),
+                global_id: None,
+                name: Some("Gusset".into()),
+                bounds: [[0.0; 3], [120.0, 80.0, 10.0]],
+            },
+        );
+        let loaded = Reloaded {
+            foreign: Some(Ok(facts)),
+            ..reloaded(Ok(Refreshed::Unchanged))
+        };
+        deliver(&mut app, loaded);
+        assert_eq!(app.foreign_note, None);
+        assert_eq!(app.foreign.len(), 1);
+    }
+
+    #[test]
+    fn a_source_window_run_on_a_real_file_picks_a_body_and_names_it_from_the_reader() {
+        use std::path::Path;
+        use std::time::{Duration, Instant};
+        // The full path a user's click takes, with the real file and the real CLI processes:
+        // the refresh exports the display bundle (`export-view --source`), reads the body
+        // facts (`ifc-shapes`), keys them by the display ids, the click picks through the
+        // bounds the snapshot carries, and the panel names the body from the file itself.
+        let executable = std::env::current_exe().unwrap();
+        let cli = executable
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        assert!(
+            cli.is_file(),
+            "build beamcraft-cli before native modelling tests"
+        );
+        let fixture =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/ifc/plate-hole.ifc");
+        let Some(mut app) = headless_source_at(&fixture, &cli) else {
+            return;
+        };
+        // The refresh of a real file: both CLI processes, the pin check between them.
+        let settled = {
+            let deadline = Instant::now() + Duration::from_secs(30);
+            loop {
+                app.poll_reload();
+                if app.loaded.is_some() || Instant::now() > deadline {
+                    break Instant::now() <= deadline;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        };
+        assert!(settled, "the real source refresh never delivered a scene");
+        assert!(
+            app.error.is_none(),
+            "the real bundle was refused: {:?}",
+            app.error
+        );
+        assert!(
+            !app.foreign.is_empty(),
+            "the real body facts never loaded: {:?}",
+            app.foreign_note
+        );
+        // A click through the first body's own bounds, from above: the engine pick in this
+        // process, no store behind it.
+        let snapshot = Arc::clone(&app.loaded.as_ref().unwrap().snapshot);
+        let picked = snapshot.elements().first().unwrap().id;
+        let facts = app.foreign.get(&picked).cloned().unwrap();
+        let bounds = &snapshot.elements().first().unwrap().full.world_bounds;
+        // A quarter point of the bounds, not the middle: a hole can sit in the middle of a
+        // plate, and a straight ray through it would fall through.
+        let aim: [f64; 3] = std::array::from_fn(|axis| {
+            bounds.min[axis] + (bounds.max[axis] - bounds.min[axis]) * 0.2
+        });
+        app.start_select(crate::edit::Ray {
+            origin: [aim[0], aim[1], aim[2] + 500.0],
+            direction: [0.0, 0.0, -1.0],
+        });
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while app.select_job.is_some() && Instant::now() < deadline {
+            app.poll_select();
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(app.select_job.is_none(), "the real pick never settled");
+        let selected = app.editor.selected().unwrap();
+        assert_eq!(selected.id, picked.to_string());
+        assert_eq!(selected.name, facts.name.clone().unwrap());
+        // The panel draws what the file itself reports for this body: its Name, IFC entity,
+        // GlobalId and placed bounds, exactly as `ifc-shapes` listed them.
+        let ctx = egui::Context::default();
+        super::inter(&ctx);
+        crate::theme::install(&ctx);
+        let output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1400.0, 900.0),
+                )),
+                ..Default::default()
+            },
+            |ui| app.inspector(ui),
+        );
+        let mut output = output;
+        output.textures_delta.clear();
+        let drawn_with = |needle: &str| {
+            output
+                .shapes
+                .iter()
+                .any(|shape| matches!(&shape.shape, egui::Shape::Text(text) if text.galley.job.text.contains(needle)))
+        };
+        assert!(drawn_with(&facts.entity), "the IFC entity {}", facts.entity);
+        if let Some(name) = &facts.name {
+            assert!(drawn_with(name), "the product name {name}");
+        }
+        if let Some(global_id) = &facts.global_id {
+            assert!(drawn_with(global_id), "the GlobalId {global_id}");
+        }
+        let max = facts.bounds[1];
+        assert!(
+            drawn_with(&format!("({:.1}, {:.1}, {:.1}) mm", max[0], max[1], max[2])),
+            "the placed bounds"
+        );
+        assert!(drawn_with("Read-only"));
+        output.drop_without_applying_deltas();
+        // Nothing was written beside the file, and no store was touched.
+        assert!(app.source.read_only());
+    }
+
+    /// A window on the received IFC file `file`, refreshes driven by the real `cli`, on a
+    /// scratch configuration. `None` on a machine without a usable GPU adapter, like
+    /// [`headless`].
+    fn headless_source_at(file: &Path, cli: &Path) -> Option<App> {
+        let gpu = match pollster::block_on(Gpu::headless()) {
+            Ok(gpu) => gpu,
+            Err(Error::NoAdapter) => {
+                eprintln!("SKIP window test: no native wgpu adapter");
+                return None;
+            }
+            Err(e) => panic!("adapter or device failed: {e}"),
+        };
+        let format = wgpu::TextureFormat::Rgba8Unorm;
+        let renderer =
+            egui_wgpu::Renderer::new(&gpu.device, format, egui_wgpu::RendererOptions::default());
+        let mut cc = eframe::CreationContext::_new_kittest(egui::Context::default());
+        cc.wgpu_render_state = Some(egui_wgpu::RenderState {
+            adapter: gpu.adapter,
+            available_adapters: Vec::new(),
+            instance: wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle()),
+            device: gpu.device,
+            queue: gpu.queue,
+            target_format: format,
+            renderer: std::sync::Arc::new(egui::mutex::RwLock::new(renderer)),
+        });
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let scratch =
+            std::env::temp_dir().join(format!("bc-source-real-{}-{nanos}", std::process::id()));
+        std::fs::create_dir_all(&scratch).unwrap();
+        let source = Source {
+            store: file.to_path_buf(),
+            ifc_source: Some(file.to_path_buf()),
+            cli: cli.to_path_buf(),
+            workspace: None,
+            published: None,
+            samples: None,
+            actor: None,
+            environment: None,
+            author: None,
+            config_dir: Some(scratch),
+        };
+        let stats = Arc::new(crate::stats::Stats::default());
+        Some(App::new(&cc, source, stats).unwrap())
+    }
+
+    #[test]
+    fn a_click_picks_a_body_and_names_it_from_the_file_s_facts() {
+        use crate::source::ForeignBody;
+        use std::collections::BTreeMap;
+        let Some(mut app) = headless_source() else {
+            return;
+        };
+        let pin = ViewPin::new(Sha256::digest(b"source-file").unwrap(), 1);
+        let snapshot = Arc::new(
+            ViewSnapshot::build(pin, plate_scene(3, false).unwrap(), &Limits::default()).unwrap(),
+        );
+        let scene = Scene::from_snapshot(&snapshot, Representation::Full).unwrap();
+        let uploaded =
+            crate::render::Uploaded::new(&app.state.device, &app.state.queue, &scene, &app.stats)
+                .unwrap();
+        app.loaded = Some(super::Loaded {
+            snapshot: Arc::clone(&snapshot),
+            summary: scene.summary(),
+            full: scene.summary(),
+            uploaded,
+        });
+        let picked = snapshot.elements().first().unwrap().id;
+        let mut facts = BTreeMap::new();
+        facts.insert(
+            picked,
+            ForeignBody {
+                entity: "IFCPLATE".into(),
+                global_id: None,
+                name: Some("Gusset".into()),
+                bounds: [[0.0, 0.0, 0.0], [120.0, 80.0, 10.0]],
+            },
+        );
+        app.foreign = Arc::new(facts);
+        // A click through the first body's own bounds, from above.
+        let bounds = &snapshot.elements().first().unwrap().full.world_bounds;
+        // A quarter point of the bounds, not the middle: a hole can sit in the middle of a
+        // plate, and a straight ray through it would fall through.
+        let aim: [f64; 3] = std::array::from_fn(|axis| {
+            bounds.min[axis] + (bounds.max[axis] - bounds.min[axis]) * 0.2
+        });
+        app.start_select(crate::edit::Ray {
+            origin: [aim[0], aim[1], aim[2] + 500.0],
+            direction: [0.0, 0.0, -1.0],
+        });
+        for _ in 0..200 {
+            app.poll_select();
+            if app.select_job.is_none() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(app.select_job.is_none(), "the pick never settled");
+        let selected = app.editor.selected().unwrap();
+        assert_eq!(selected.id, picked.to_string());
+        assert_eq!(selected.name, "Gusset");
+        assert_eq!(selected.kind, "reference");
+        // The properties state stays unknown on purpose: a source file reports no editable
+        // properties, and the panel shows the file's own facts instead (covered above).
+        assert!(app.props.details().is_none());
+    }
+
+    #[test]
+    fn a_source_window_shows_the_file_s_own_facts_read_only() {
+        use crate::source::ForeignBody;
+        use std::collections::BTreeMap;
+        let Some(mut app) = headless_source() else {
+            return;
+        };
+        // The scene and the facts a real refresh of a source file delivers: a snapshot, and
+        // the body facts keyed by the display id of its first element.
+        let pin = ViewPin::new(Sha256::digest(b"source-file").unwrap(), 1);
+        let snapshot = Arc::new(
+            ViewSnapshot::build(pin, plate_scene(3, false).unwrap(), &Limits::default()).unwrap(),
+        );
+        let scene = Scene::from_snapshot(&snapshot, Representation::Full).unwrap();
+        let uploaded =
+            crate::render::Uploaded::new(&app.state.device, &app.state.queue, &scene, &app.stats)
+                .unwrap();
+        app.loaded = Some(super::Loaded {
+            snapshot: Arc::clone(&snapshot),
+            summary: scene.summary(),
+            full: scene.summary(),
+            uploaded,
+        });
+        let picked = snapshot.elements().first().unwrap().id;
+        let mut facts = BTreeMap::new();
+        facts.insert(
+            picked,
+            ForeignBody {
+                entity: "IFCPLATE".into(),
+                global_id: Some("1Anr5VMOX0PO8jvHqZabcd".into()),
+                name: Some("Gusset".into()),
+                bounds: [[0.0, 0.0, 0.0], [120.0, 80.0, 10.0]],
+            },
+        );
+        app.foreign = Arc::new(facts);
+        app.editor.select(crate::edit::ElementInfo {
+            id: picked.to_string(),
+            kind: "reference".into(),
+            name: "Gusset".into(),
+            translation_mm: [0.0; 3],
+            contour: None,
+        });
+        let ctx = egui::Context::default();
+        super::inter(&ctx);
+        crate::theme::install(&ctx);
+        let output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1400.0, 900.0),
+                )),
+                ..Default::default()
+            },
+            |ui| app.inspector(ui),
+        );
+        // Cleared before the asserts: a failing assert must not panic inside egui's
+        // texture cleanup (the frame is discarded either way).
+        let mut output = output;
+        output.textures_delta.clear();
+        let drawn = |label: &str| {
+            output
+                .shapes
+                .iter()
+                .any(|shape| matches!(&shape.shape, egui::Shape::Text(text) if text.galley.job.text == label))
+        };
+        let drawn_with = |needle: &str| {
+            output
+                .shapes
+                .iter()
+                .any(|shape| matches!(&shape.shape, egui::Shape::Text(text) if text.galley.job.text.contains(needle)))
+        };
+        // What the file itself reports, under its own labels.
+        assert!(drawn("Gusset"), "the product's Name");
+        assert!(drawn("IFCPLATE"), "the product's IFC entity");
+        assert!(drawn("1Anr5VMOX0PO8jvHqZabcd"), "the GlobalId");
+        assert!(drawn("(120.0, 80.0, 10.0) mm"), "the bounds maximum");
+        assert!(drawn_with("Read-only"), "the read-only statement");
+        // No editable field of the store panel may appear.
+        for absent in ["Thickness, mm", "Profile", "Material", "Level"] {
+            assert!(
+                !drawn(absent),
+                "{absent} must not be drawn for a foreign body"
+            );
+        }
+        output.drop_without_applying_deltas();
     }
 
     #[test]
@@ -9847,6 +10910,65 @@ pub(crate) mod tests {
         assert_eq!(app.tools.plane, Some(free));
     }
 
+    #[test]
+    fn an_inclined_view_keeps_the_model_work_plane() {
+        // The 584 recheck on master: opening a 3D (orbit) view installed its camera plane as
+        // the work plane, so a beam started on a grid crossing floated above the grid and dived
+        // under the slab. An inclined view keeps the model's work plane, like the default view;
+        // a plan or an elevation still installs its own.
+        use beamcraft_engine::views::ModelView;
+        use beamcraft_engine::work_plane::WorkPlane;
+        use beamcraft_model::id::Uuid7;
+        let Some(mut app) = headless() else { return };
+        let free = WorkPlane::parallel("xy", -250.0).unwrap();
+        app.install_plane(Some(free));
+        let orbit_id = Uuid7::parse("019a7bf0-0000-7000-8000-000000000011").unwrap();
+        let orbit = beamcraft_engine::views::orbit_plane([0.0; 3], -0.9, 0.6).unwrap();
+        app.views
+            .book
+            .insert(ModelView::new(orbit_id, "Show grid", orbit, 20_000.0))
+            .unwrap();
+        let elevation_id = Uuid7::parse("019a7bf0-0000-7000-8000-000000000012").unwrap();
+        let elevation = WorkPlane::parallel("xz", 1200.0).unwrap();
+        app.views
+            .book
+            .insert(ModelView::new(elevation_id, "Elevation", elevation, 5000.0))
+            .unwrap();
+        assert_eq!(
+            crate::views::view_kind(app.views.book.get(&orbit_id).unwrap()),
+            crate::views::ViewKind::Inclined
+        );
+        app.open_pane(Some(orbit_id));
+        let orbit_pane = app.views.active_pane().unwrap().key;
+        assert_eq!(
+            app.tools.plane,
+            Some(free),
+            "the 3D view keeps the model's work plane"
+        );
+        app.open_pane(Some(elevation_id));
+        let elevation_pane = app.views.active_pane().unwrap().key;
+        assert_eq!(
+            app.tools.plane,
+            Some(elevation),
+            "an elevation installs its plane"
+        );
+        app.focus_pane(orbit_pane);
+        assert_eq!(
+            app.tools.plane,
+            Some(free),
+            "back on the 3D view, the free work plane comes back"
+        );
+        app.focus_pane(elevation_pane);
+        assert_eq!(app.tools.plane, Some(elevation));
+        app.close_pane(elevation_pane);
+        assert_eq!(app.tools.plane, Some(free));
+        // Switching a pane's view (Ctrl+Tab, the browser) follows the same rule.
+        app.activate_view(Some(elevation_id));
+        assert_eq!(app.tools.plane, Some(elevation));
+        app.activate_view(Some(orbit_id));
+        assert_eq!(app.tools.plane, Some(free));
+    }
+
     /// A window on `config_dir`, opened the way a restart opens one: a fresh window on the
     /// render state of an existing one, on a store with no CLI behind it.
     fn reopened(state: &eframe::egui_wgpu::RenderState, config_dir: std::path::PathBuf) -> App {
@@ -9856,6 +10978,7 @@ pub(crate) mod tests {
             Some(state),
             Source {
                 store: missing.clone(),
+                ifc_source: None,
                 cli: missing,
                 workspace: None,
                 published: None,
@@ -11008,6 +12131,306 @@ mod navigation_tests {
                 .zip([6000., 5000., 0.])
                 .all(|(a, b)| (a - b).abs() < 10.0),
             "the snap lands on the 2/B intersection, got {point:?}"
+        );
+    }
+
+    #[test]
+    fn a_grid_crossing_snapped_in_a_3d_view_lies_on_the_grid() {
+        // The 584 recheck on master: the 3D view "Show grid" (saved by --yaw/--pitch, its plane
+        // through the origin) became the work plane on a double click, and the Beam tool's
+        // grid-intersection snap at 2/B lifted the crossing onto that inclined plane: it read
+        // (6000.0, 5000.0, 273.3), a beam floated above the slab and dived under it. Opened
+        // through the browser, the 3D view keeps the model's work plane and the snap lies on
+        // the grid; a plan still installs its own plane and snaps there.
+        use beamcraft_engine::query::pick::SnapKind;
+        use beamcraft_model::grid::{DrawnGridLine, Grid, GridFamily};
+        use beamcraft_model::id::ElementId;
+        let Some(mut app) = headless() else { return };
+        let executable = std::env::current_exe().unwrap();
+        let cli = executable
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        assert!(cli.is_file(), "build beamcraft-cli before native tests");
+        let root = std::env::temp_dir().join(format!(
+            "bc-recheck-3d-snap-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let store = root.to_str().unwrap().to_owned();
+        let views_file = format!("{store}.views.usda");
+        let run = |command: &str, args: &[&str]| {
+            let out = std::process::Command::new(&cli)
+                .arg(command)
+                .args(["--store", &store])
+                .args(args)
+                .env(
+                    "BEAMCRAFT_CONFIG_DIR",
+                    std::env::temp_dir().join("bc-recheck-cli-config"),
+                )
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "{command}: {}",
+                String::from_utf8_lossy(&out.stdout)
+            );
+        };
+        run(
+            "create-plate",
+            &[
+                "--contour",
+                "-500,-500;12500,-500;12500,5500;-500,5500",
+                "--thickness",
+                "20",
+                "--thickness-side",
+                "bottom",
+                "--name",
+                "SLAB",
+            ],
+        );
+        for (name, plane) in [
+            ("Show grid", &["--yaw", "-0.9", "--pitch", "0.6"][..]),
+            ("Plan", &["--parallel", "xy", "--offset", "0"][..]),
+        ] {
+            let mut args = vec!["--file", &views_file, "--name", name, "--span", "20000"];
+            args.extend_from_slice(plane);
+            run("save-view", &args);
+        }
+        app.source.cli = cli.clone();
+        app.source.store = root.clone();
+        let reloaded = crate::source::reload(
+            &cli,
+            &root,
+            &crate::source::Known::default(),
+            None,
+            &app.stats,
+        );
+        deliver(&mut app, reloaded);
+        let book = crate::views::load(&root).unwrap();
+        app.views.baseline = book.clone();
+        app.views.book = book;
+        let view_named = |app: &App, name: &str| {
+            app.views
+                .book
+                .views()
+                .iter()
+                .find(|view| view.name == name)
+                .cloned()
+                .unwrap_or_else(|| panic!("the saved view {name} was not in the book"))
+        };
+        let show = view_named(&app, "Show grid");
+        assert_eq!(
+            crate::views::view_kind(&show),
+            crate::views::ViewKind::Inclined
+        );
+        // The drawn grid of the repro store, the same lines the window's grid job loads.
+        app.grid_scene.query_grids = vec![Grid {
+            id: ElementId::parse("01990000-0000-7000-8000-000000004001").unwrap(),
+            name: "Main".into(),
+            translation_mm: [0.0, 0.0],
+            orientation_zw: [0.0, 1.0],
+            u: GridFamily::Drawn(vec![DrawnGridLine {
+                axis_id: ElementId::parse("01990000-0000-7000-8000-000000004002").unwrap(),
+                label: "B".into(),
+                start_mm: [-2000.0, 5000.0],
+                end_mm: [14000.0, 5000.0],
+            }]),
+            v: GridFamily::Drawn(vec![
+                DrawnGridLine {
+                    axis_id: ElementId::parse("01990000-0000-7000-8000-000000004003").unwrap(),
+                    label: "2".into(),
+                    start_mm: [6000.0, -2000.0],
+                    end_mm: [6000.0, 7000.0],
+                },
+                DrawnGridLine {
+                    axis_id: ElementId::parse("01990000-0000-7000-8000-000000004004").unwrap(),
+                    label: "3".into(),
+                    start_mm: [9000.0, -2000.0],
+                    end_mm: [9000.0, 7000.0],
+                },
+            ]),
+        }];
+        app.set_bench(super::workbench::Bench::Beam);
+        for kind in SnapKind::ALL {
+            app.selection
+                .set_snap(kind, kind == SnapKind::GridIntersection);
+        }
+        // Aims a click at a world point through the active pane's camera.
+        let snap_ray = |app: &App, target: [f64; 3]| {
+            let origin = app.view_origin();
+            let view = app
+                .views
+                .active_pane()
+                .unwrap()
+                .camera
+                .view(app.aspect())
+                .unwrap();
+            let local = std::array::from_fn(|i| (target[i] - origin[i]) as f32);
+            let [x, y, _] = view.project(local);
+            crate::edit::ray_through(&view, [x, y], origin).unwrap()
+        };
+        // The double click on the 3D view in the browser.
+        app.browser_action(super::view_panel::BrowserAction::Activate(show.id));
+        assert_eq!(app.views.active(), Some(show.id));
+        assert_eq!(
+            app.tools.plane, None,
+            "the 3D view keeps the model's work plane (world XY)"
+        );
+        let (point, kind) = {
+            let ray = snap_ray(&app, [6000., 5000., 0.]);
+            app.creation_hit(ray, false).unwrap()
+        };
+        assert_eq!(
+            kind,
+            Some(SnapKind::GridIntersection),
+            "snapped at {point:?}"
+        );
+        assert!(
+            point
+                .iter()
+                .zip([6000., 5000., 0.])
+                .all(|(a, b)| (a - b).abs() < 1.0),
+            "the 3D view snaps 2/B on the grid, got {point:?}"
+        );
+        // Issue 611: the cursor is the pick ray's hit on the slab's top face, so its z keeps
+        // a ±2⁻³⁹ residue whose sign changes run to run. The crossing snap adopted it, the
+        // saved beam carried it, and the status line printed `-0.0`. The snap must store the
+        // exact height, a positive zero.
+        assert_eq!(
+            point,
+            [6000.0, 5000.0, 0.0],
+            "the snapped 2/B crossing kept the pick's height residue: {point:?}"
+        );
+        assert_eq!(
+            point[2].total_cmp(&0.0),
+            std::cmp::Ordering::Equal,
+            "the stored height must be a positive zero, got {point:?}"
+        );
+        // The real clicks of the issue: start on 2/B, end on 3/B, the member committed to
+        // the store by the real command, its stored axis points inspected by the real CLI.
+        let out = std::process::Command::new(&cli)
+            .arg("define-profile")
+            .args(["--store", &store, "--width", "100", "--height", "200"])
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stdout)
+        );
+        let profile =
+            beamcraft_json::decode(&out.stdout, &beamcraft_json::Limits::DEFAULT).unwrap();
+        app.tools.member.profile = Some(
+            profile
+                .get("definition")
+                .unwrap()
+                .get("digest")
+                .unwrap()
+                .string()
+                .unwrap()
+                .into(),
+        );
+        let start_ray = snap_ray(&app, [6000., 5000., 0.]);
+        app.place_beam(start_ray);
+        assert!(
+            matches!(
+                &app.tool_note,
+                Some(Ok(note))
+                    if note == "Start (6000.0, 5000.0, 0.0) mm. Pick the end point."
+            ),
+            "the status line must read the exact start without a sign on zero: {:?}",
+            app.tool_note
+        );
+        let end_ray = snap_ray(&app, [9000., 5000., 0.]);
+        app.place_beam(end_ray);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while app.job.is_some() && std::time::Instant::now() < deadline {
+            app.poll_commit();
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(app.job.is_none(), "the member commit timed out");
+        assert!(app.last_commit_ok, "{:?}", app.tool_note);
+        let out = std::process::Command::new(&cli)
+            .arg("inspect-elements")
+            .args(["--store", &store])
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stdout)
+        );
+        let inspected =
+            beamcraft_json::decode(&out.stdout, &beamcraft_json::Limits::DEFAULT).unwrap();
+        let members = inspected.get("members").unwrap().array().unwrap();
+        assert_eq!(members.len(), 1);
+        let axis = members[0].get("axis_points_mm").unwrap().array().unwrap();
+        assert_eq!(axis.len(), 2, "{inspected:?}");
+        for (entry, expected) in axis
+            .iter()
+            .zip([[6000.0, 5000.0, 0.0], [9000.0, 5000.0, 0.0]])
+        {
+            let stored = std::array::from_fn(|i| entry.array().unwrap()[i].float().unwrap());
+            assert_eq!(
+                stored, expected,
+                "the stored axis point carries a height residue"
+            );
+            assert_eq!(
+                stored[2].total_cmp(&0.0),
+                std::cmp::Ordering::Equal,
+                "the stored height must be a positive zero, got {stored:?}"
+            );
+        }
+        // The control: a plan still installs its plane, and snaps on it.
+        let plan = view_named(&app, "Plan");
+        app.browser_action(super::view_panel::BrowserAction::Activate(plan.id));
+        assert_eq!(
+            app.tools.plane,
+            Some(plan.plane),
+            "a plan installs its plane"
+        );
+        let (point, kind) = {
+            let ray = snap_ray(&app, [6000., 5000., 0.]);
+            app.creation_hit(ray, false).unwrap()
+        };
+        assert_eq!(
+            kind,
+            Some(SnapKind::GridIntersection),
+            "snapped at {point:?}"
+        );
+        assert!(
+            point
+                .iter()
+                .zip([6000., 5000., 0.])
+                .all(|(a, b)| (a - b).abs() < 1.0),
+            "the plan snaps 2/B on its plane, got {point:?}"
+        );
+    }
+
+    #[test]
+    fn a_point_text_never_prints_a_negative_zero() {
+        // Issue 611: the pick-ray residue -2⁻³⁹ mm, rounded to the status line's one
+        // decimal, printed as `-0.0`. Whatever rounds to that decimal shows without a
+        // sign; a genuinely negative tenth keeps its `-0.1`.
+        use super::PointText;
+        assert_eq!(
+            PointText([6000.0, 5000.0, -1.8189894035458565e-12]).to_string(),
+            "(6000.0, 5000.0, 0.0) mm"
+        );
+        assert_eq!(
+            PointText([0.0, -0.0, 0.04]).to_string(),
+            "(0.0, 0.0, 0.0) mm"
+        );
+        assert_eq!(
+            PointText([0.0, 0.0, -0.06]).to_string(),
+            "(0.0, 0.0, -0.1) mm"
         );
     }
 }

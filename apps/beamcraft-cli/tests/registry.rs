@@ -76,6 +76,16 @@ fn a_command_help_answers_with_help_not_a_refusal() {
 }
 
 #[test]
+fn screenshot_view_help_states_the_zoom_scale() {
+    // Issue 607: the help says what `--zoom` and `--pan` mean, not just that they exist.
+    let (code, out) = run(&["screenshot-view", "--help"]);
+    assert_eq!(code, Some(0));
+    assert!(out.contains("e to the power"), "{out}");
+    assert!(out.contains("-10 to 10"), "{out}");
+    assert!(out.contains("+X to the right and +Y up"), "{out}");
+}
+
+#[test]
 fn early_route_commands_answer_help_before_dispatch() {
     // The early-return routes (commands, session, the batch words, view export/screenshot and
     // export) used to finish before the per-command help block, so `--help` on their words
@@ -322,8 +332,7 @@ fn every_listed_option_is_accepted_by_the_command() {
 fn a_full_documented_option_set_is_parsed_in_one_call() {
     // `main` used to truncate argv at 50 words and the plate/views adapters capped the pair
     // count below the documented option sets, so a fully documented call was refused with a
-    // misleading "options come in name-value pairs" (axisrow/BeamCraft#552). The widest
-    // documented sets
+    // misleading "options come in name-value pairs" (issue 552). The widest documented sets
     // must parse in one call; whatever refuses next is not an option-parsing refusal.
     let (_, listing) = run(&["commands"]);
     for (name, documented) in [
@@ -341,7 +350,7 @@ fn a_full_documented_option_set_is_parsed_in_one_call() {
         let params = field(&entry, "parameters").array().expect("parameters");
         assert!(
             params.len() >= documented,
-            "{name}: only {} options documented, axisrow/BeamCraft#552 pinned {documented}",
+            "{name}: only {} options documented, issue 552 pinned {documented}",
             params.len()
         );
         let (flags, valued): (Vec<_>, Vec<_>) = params

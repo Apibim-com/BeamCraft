@@ -9,21 +9,27 @@
 //! `beamcraft-ui --workspace DIR [--cli PATH]` opens it on a personal workspace (a store made by
 //! `beamcraft create-workspace`), which also enables undo and redo. Adding `--published ROOT`
 //! (the store the workspace was forked from) enables Publish (`beamcraft publish-workspace`).
+//! `beamcraft-ui --source FILE` opens the window on a received IFC file, read-only: the same
+//! display bundle `screenshot-view --source` renders (issue 605), shown like a store's head —
+//! orbit, fit, pick — with the picked body's IFC facts in the properties panel and nothing
+//! written anywhere; `--source FILE --screenshot FILE` renders one headless frame instead.
 //! `beamcraft-ui --store ROOT --metrics FRAMES [--width W] [--height H] [--cli PATH]` renders the
 //! same snapshot offscreen, headless, and prints baseline GPU metrics as one JSON object.
 //! `beamcraft-ui --synthetic COUNT --metrics FRAMES [--width W] [--height H]` measures the engine
 //! snapshot of COUNT synthetic kernel plates instead of a store (labelled `synthetic` in the
 //! output); it exists for scale baselines a store cannot reach yet.
 //! `beamcraft-ui --store ROOT --screenshot FILE [--width W] [--height H] [--yaw RAD]
-//! [--pitch RAD] [--projection perspective|ortho] [--zoom F32] [--pan X,Y]
+//! [--pitch RAD] [--projection perspective|ortho] [--zoom EXP] [--pan MM,MM]
 //! [--colour-set TEXT] [--background light|dark] [--grids true|false] [--cli PATH]` renders the
 //! store's published head once offscreen with the camera fitted over the whole scene and its
-//! project grids, paints the grid lines and labels like the window ( `--grids false`
+//! project grids, paints the grid lines and labels like the window (issue 543; `--grids false`
 //! leaves them out), and writes
 //! `FILE` as a PNG (created new, never overwritten), printing one JSON summary; `--yaw` and
 //! `--pitch` (radians, `pitch` above the horizon) point the fitted camera from another
-//! direction, `--projection ortho` switches to the orthographic projection, `--zoom` is the
-//! logarithmic zoom and `--pan X,Y` shifts the fitted target in screen-plane millimetres;
+//! direction, `--projection ortho` switches to the orthographic projection, `--zoom EXP` is
+//! the logarithmic zoom (frame lengths scale by e to its power, range -10 to 10) and
+//! `--pan MM,MM` shifts the fitted target in screen-plane millimetres, +X to the right and
+//! +Y up;
 //! `--colour-set` names a built-in set (`Catalogue`, the default, or `Part classes`) or a
 //! colour-sets file holding exactly one set of its own, and `--background light` renders over
 //! a light paper tone instead of the dark clear colour (issue 537).
@@ -50,7 +56,7 @@ use std::sync::atomic::AtomicBool;
 
 fn usage() -> Error {
     Error::Input(
-        "usage: beamcraft-ui [--cli PATH] [--config-dir DIR] [--samples 1|4] (start page) | beamcraft-ui (--store ROOT | --workspace DIR [--published ROOT] | --source FILE --screenshot FILE) [--actor-id UUID] [--cli PATH] [--config-dir DIR] [--samples 1|4] [--metrics FRAMES [--width W] [--height H] | --screenshot FILE [--width W] [--height H] [--yaw RAD] [--pitch RAD] [--projection perspective|ortho] [--zoom F32] [--pan X,Y] [--colour-set TEXT] [--background light|dark] [--grids true|false] | --window-shot FILE.png | --perf-run PLAN] | --self-test FILE.json | --synthetic COUNT --metrics FRAMES [--samples 1|4]",
+        "usage: beamcraft-ui [--cli PATH] [--config-dir DIR] [--samples 1|4] (start page) | beamcraft-ui (--store ROOT | --workspace DIR [--published ROOT] | --source FILE [--screenshot FILE]) [--actor-id UUID] [--cli PATH] [--config-dir DIR] [--samples 1|4] [--metrics FRAMES [--width W] [--height H] | --screenshot FILE [--width W] [--height H] [--yaw RAD] [--pitch RAD] [--projection perspective|ortho] [--zoom EXP] [--pan MM,MM] [--colour-set TEXT] [--background light|dark] [--grids true|false] | --window-shot FILE.png | --perf-run PLAN] | --self-test FILE.json | --synthetic COUNT --metrics FRAMES [--samples 1|4]",
     )
 }
 
@@ -187,14 +193,18 @@ fn run() -> Result<Option<(String, u8)>, Error> {
     if published.is_some() && workspace.is_none() {
         return Err(usage());
     }
-    // A received IFC file is only a screenshot input: one read-only display, never a store
-    // the window would open or edit.
+    // A received IFC file is read-only display input: with `--screenshot` one headless frame,
+    // without it the window opens on the file and writes nowhere. It never combines with a
+    // store or a workspace, and the write-carrying options an edit needs are refused: the
+    // window of a source file cannot edit what it shows (issue 614).
     let ifc_source = map.get("--source").map(PathBuf::from);
-    if ifc_source.is_some()
+    if let Some(source) = &ifc_source
         && (map.contains_key("--store")
             || map.contains_key("--workspace")
             || map.contains_key("--published")
-            || !map.contains_key("--screenshot"))
+            || map.contains_key("--actor-id")
+            || map.contains_key("--perf-run")
+            || source.as_os_str().is_empty())
     {
         return Err(usage());
     }
@@ -203,14 +213,15 @@ fn run() -> Result<Option<(String, u8)>, Error> {
         None => source::default_cli()?,
     };
     let config_dir = map.get("--config-dir").map(PathBuf::from);
-    let store = match (map.get("--store"), &workspace) {
-        (Some(store), None) => Some(PathBuf::from(store)),
-        (None, Some(dir)) => Some(dir.clone()),
-        // A --source run has no store: the screenshot branch below consumes it, and every
-        // other path refuses it earlier.
-        (None, None) if map.contains_key("--source") => None,
+    let store = match (map.get("--store"), &workspace, &ifc_source) {
+        (Some(store), None, _) => Some(PathBuf::from(store)),
+        (None, Some(dir), _) => Some(dir.clone()),
+        // A `--source` window sits in front of the file: its path rides `Source` as the
+        // `ifc_source` and never as a store, and the read-only gates keep every store query
+        // away from it.
+        (None, None, Some(file)) => Some(file.clone()),
         // No model named: the window opens on the start page.
-        (None, None)
+        (None, None, None)
             if !map.contains_key("--metrics")
                 && !map.contains_key("--perf-run")
                 && !map.contains_key("--screenshot")
@@ -226,6 +237,15 @@ fn run() -> Result<Option<(String, u8)>, Error> {
         }
         _ => return Err(usage()),
     };
+    // Issue 616: a regular file is not a store root, and the CLI would reject the export
+    // only after the window is up. Failing here, before any window, keeps the launch from
+    // looking successful with the reason buried in the status bar; a `--source` file rides
+    // `ifc_source` and is exempt.
+    if ifc_source.is_none()
+        && let Some(rejected) = store.as_deref().and_then(source::file_store_root)
+    {
+        return Err(rejected);
+    }
     if map.contains_key("--metrics") {
         if map.contains_key("--perf-run")
             || map.contains_key("--screenshot")
@@ -233,6 +253,7 @@ fn run() -> Result<Option<(String, u8)>, Error> {
             || map.contains_key("--pitch")
             || map.contains_key("--grids")
             || config_dir.is_some()
+            || ifc_source.is_some()
         {
             return Err(usage());
         }
@@ -315,7 +336,11 @@ fn run() -> Result<Option<(String, u8)>, Error> {
             }
         };
         if !zoom.is_finite() || zoom.abs() > 10.0 {
-            return Err(usage());
+            // The refusal names the scale and the range itself (issue 607): the whole usage
+            // line says neither.
+            return Err(Error::Input(
+                "--zoom EXP is the logarithmic zoom: lengths in the frame scale by e to the power of EXP; the accepted range is -10 to 10",
+            ));
         }
         let background = match map.get("--background").map(String::as_str) {
             None | Some("dark") => screenshot::Background::Dark,
@@ -449,12 +474,14 @@ fn run() -> Result<Option<(String, u8)>, Error> {
     let plan = map.get("--perf-run").map(|p| perf::parse(p)).transpose()?;
     let (report, reports) = std::sync::mpsc::channel();
     let source = Source {
-        // Every path that reaches the window named a store or a workspace; a --source run
-        // returned in the screenshot branch above.
+        // Every path that reaches the window named a store or a workspace, or a received IFC
+        // file: the file rides `ifc_source` and `store` keeps its path unused, because the
+        // window of a source file writes nowhere and reads nothing through the store.
         store: store.ok_or_else(usage)?,
         cli,
         workspace,
         published,
+        ifc_source,
         samples,
         actor: map.get("--actor-id").cloned(),
         environment: None,
