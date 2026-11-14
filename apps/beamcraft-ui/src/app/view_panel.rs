@@ -3131,7 +3131,122 @@ impl App {
                                 }
                             });
                     }
-                    // Identity Data leads the panel: the name, folder, preset and default flag are what
+                    ui.add_space(2.0);
+                    // Like the part presets of a beam or a column: picking one fills the form,
+                    // every field stays editable, and Apply keeps it.
+                    // Tekla's properties panel starts with its preset row: the list of
+                    // saved presets and the save button, above every section.
+                    ui.horizontal(|ui| {
+                        // Widen the menu button to the row: the menu opens from it.
+                        ui.spacing_mut().button_padding.x =
+                            ((ui.available_width() - 34.0 - FIT - 56.0) / 2.0).max(6.0);
+                        // A menu, not a combo box: it sizes to its rows, so the Export all and
+                        // Import buttons at the bottom are never cut off.
+                        ui.menu_button("Presets…", |ui| {
+                            // The panel is narrow; the list needs room for the name, the
+                            // two icons and the Export all / Import buttons. A right-to-left
+                            // row would take all the width a menu offers, so it is fixed.
+                            ui.set_width(240.0);
+                            ui.horizontal(|ui| {
+                                ui.label(egui::RichText::new("Saved presets").strong());
+                                count_pill(ui, presets.len());
+                            });
+                            if presets.is_empty() {
+                                ui.label(
+                                    "No view presets yet. Press + to save this view's display.",
+                                );
+                            }
+                            for preset in &presets {
+                                let own = own_presets.contains(&preset.name.to_lowercase());
+                                ui.horizontal(|ui| {
+                                    if ui
+                                        .button(&preset.name)
+                                        .on_hover_text("Fill the form from this preset")
+                                        .clicked()
+                                    {
+                                        chosen_preset = Some(preset.clone());
+                                    }
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| {
+                                            if own {
+                                                if small_icon(
+                                                    ui,
+                                                    theme::Icon::Delete,
+                                                    "Delete this preset",
+                                                )
+                                                .clicked()
+                                                {
+                                                    delete_preset = Some(preset.name.clone());
+                                                }
+                                                if small_icon(
+                                                    ui,
+                                                    theme::Icon::Rename,
+                                                    "Rename this preset",
+                                                )
+                                                .clicked()
+                                                {
+                                                    rename_preset_from = Some(preset.name.clone());
+                                                }
+                                            } else {
+                                                ui.small("environment");
+                                            }
+                                        },
+                                    );
+                                });
+                            }
+                            ui.separator();
+                            ui.horizontal(|ui| {
+                                if ui
+                                    .button("Export all")
+                                    .on_hover_text("Write your presets to a file in a folder")
+                                    .clicked()
+                                {
+                                    export_presets_all = true;
+                                }
+                                if ui
+                                    .button("Import…")
+                                    .on_hover_text("Add the presets of a file")
+                                    .clicked()
+                                {
+                                    import_presets_file = true;
+                                }
+                            });
+                        });
+                        if theme::icon_toggle(
+                            ui,
+                            theme::Icon::Plus,
+                            "Save this view's display as a view preset",
+                            preset_field,
+                        )
+                        .clicked()
+                        {
+                            toggle_preset_field = true;
+                        }
+                    });
+                    if let Some(name) = preset_name.as_mut() {
+                        // The field takes the whole value column and Save sits under it: the
+                        // two on one line left the name a few letters wide.
+                        let renaming = self.views.preset_rename.is_some();
+                        row(ui, "Preset name", |ui| {
+                            ui.add(
+                                egui::TextEdit::singleline(name)
+                                    .hint_text("Name of the preset")
+                                    .desired_width((ui.available_width() - FIT).max(40.0))
+                                    .char_limit(64),
+                            );
+                        });
+                        row(ui, "", |ui| {
+                            if ui
+                                .button(if renaming { "Rename" } else { "Save preset" })
+                                .clicked()
+                            {
+                                save_preset = Some(name.clone());
+                            }
+                        });
+                    }
+                    ui.add_space(4.0);
+                    // Identity Data leads the panel: the name, folder and default flag are what
                     // a user sets first and looks for most (as in Tekla's view properties).
                     section(ui, "Identity Data", true, |ui| {
                         crate::kit::mark_next_changed(
@@ -3175,115 +3290,6 @@ impl App {
                                     }
                                 });
                         });
-                        // Like the part presets of a beam or a column: picking one fills the form,
-                        // every field stays editable, and Apply keeps it.
-                        row(ui, "View preset", |ui| {
-                            // A menu, not a combo box: it sizes to its rows, so the Export all and
-                            // Import buttons at the bottom are never cut off.
-                            ui.menu_button("Presets…", |ui| {
-                                // The panel is narrow; the list needs room for the name, the
-                                // two icons and the Export all / Import buttons. A right-to-left
-                                // row would take all the width a menu offers, so it is fixed.
-                                ui.set_width(240.0);
-                                ui.horizontal(|ui| {
-                                    ui.label(egui::RichText::new("Saved presets").strong());
-                                    count_pill(ui, presets.len());
-                                });
-                                if presets.is_empty() {
-                                    ui.label(
-                                        "No view presets yet. Press + to save this view's display.",
-                                    );
-                                }
-                                for preset in &presets {
-                                    let own = own_presets.contains(&preset.name.to_lowercase());
-                                    ui.horizontal(|ui| {
-                                        if ui
-                                            .button(&preset.name)
-                                            .on_hover_text("Fill the form from this preset")
-                                            .clicked()
-                                        {
-                                            chosen_preset = Some(preset.clone());
-                                        }
-                                        ui.with_layout(
-                                            egui::Layout::right_to_left(egui::Align::Center),
-                                            |ui| {
-                                                if own {
-                                                    if small_icon(
-                                                        ui,
-                                                        theme::Icon::Delete,
-                                                        "Delete this preset",
-                                                    )
-                                                    .clicked()
-                                                    {
-                                                        delete_preset = Some(preset.name.clone());
-                                                    }
-                                                    if small_icon(
-                                                        ui,
-                                                        theme::Icon::Rename,
-                                                        "Rename this preset",
-                                                    )
-                                                    .clicked()
-                                                    {
-                                                        rename_preset_from =
-                                                            Some(preset.name.clone());
-                                                    }
-                                                } else {
-                                                    ui.small("environment");
-                                                }
-                                            },
-                                        );
-                                    });
-                                }
-                                ui.separator();
-                                ui.horizontal(|ui| {
-                                    if ui
-                                        .button("Export all")
-                                        .on_hover_text("Write your presets to a file in a folder")
-                                        .clicked()
-                                    {
-                                        export_presets_all = true;
-                                    }
-                                    if ui
-                                        .button("Import…")
-                                        .on_hover_text("Add the presets of a file")
-                                        .clicked()
-                                    {
-                                        import_presets_file = true;
-                                    }
-                                });
-                            });
-                            if theme::icon_toggle(
-                                ui,
-                                theme::Icon::Plus,
-                                "Save this view's display as a view preset",
-                                preset_field,
-                            )
-                            .clicked()
-                            {
-                                toggle_preset_field = true;
-                            }
-                        });
-                        if let Some(name) = preset_name.as_mut() {
-                            // The field takes the whole value column and Save sits under it: the
-                            // two on one line left the name a few letters wide.
-                            let renaming = self.views.preset_rename.is_some();
-                            row(ui, "Preset name", |ui| {
-                                ui.add(
-                                    egui::TextEdit::singleline(name)
-                                        .hint_text("Name of the preset")
-                                        .desired_width((ui.available_width() - FIT).max(40.0))
-                                        .char_limit(64),
-                                );
-                            });
-                            row(ui, "", |ui| {
-                                if ui
-                                    .button(if renaming { "Rename" } else { "Save preset" })
-                                    .clicked()
-                                {
-                                    save_preset = Some(name.clone());
-                                }
-                            });
-                        }
                         crate::kit::mark_next_changed(
                             ui,
                             saved.as_ref().is_some_and(|o| o.favorite != form.favorite),
