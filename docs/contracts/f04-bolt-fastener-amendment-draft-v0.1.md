@@ -101,8 +101,9 @@ the position values. One group is one straight row. A rectangular pattern is sev
 (owner decision 2026-10-23); circular and free-point patterns are not planned for the MVP. Group
 size is 1 to 512 fasteners (the cap of A05).
 
-**Connected parts.** A group lists two or more plates, beams or columns (the `connects` record of
-A05 allows 2 to 1024; A05 limited it to two). The first is the main part. Every listed part must be
+**Connected parts.** A group lists one or more plates, beams or columns, up to 1024; A05 limited
+it to two. One part is a group placed in a single part, as anchor or erection holes are (owner
+decision 2026-11-14). The first is the main part. Every listed part must be
 crossed by the axis of at least one fastener, else `INVALID_ARGUMENT` (`GEO_OP_NO_EFFECT`).
 
 **Length.** `length_mode` is `auto` (default) or `fixed` with a value from the definition's list.

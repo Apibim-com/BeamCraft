@@ -1312,7 +1312,7 @@ pub const COMMANDS: &[Command] = &[
         &[
             req("--store", "ROOT"),
             req("--name", "TEXT"),
-            req("--parts", "UUID,UUID,..."),
+            req("--parts", "UUID[,UUID...]"),
             req("--fastener-library", "FILE"),
             req("--designation", "TEXT"),
             req("--point1", "X,Y,Z"),
@@ -1345,7 +1345,7 @@ pub const COMMANDS: &[Command] = &[
             req("--store", "ROOT"),
             req("--target", "UUID"),
             opt("--name", "TEXT"),
-            opt("--parts", "UUID,UUID,..."),
+            opt("--parts", "UUID[,UUID...]"),
             opt("--fastener-library", "FILE"),
             opt("--designation", "TEXT"),
             opt("--point1", "X,Y,Z"),

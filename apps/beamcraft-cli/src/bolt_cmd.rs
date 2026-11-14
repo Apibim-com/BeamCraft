@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 
 //! A14.3 headless commands: `create-bolt-group` and `update-bolt-group` place a row of
-//! identical fasteners of a pinned library definition between two or more parts and edit one
+//! identical fasteners of a pinned library definition in one or more parts and edit one
 //! group as one atomic edit (`--repin` follows the current library; an A05 group is upgraded
 //! by supplying the placement inputs and a fastener). With `--hole-mode generate` the group
 //! also writes one group-owned hole record per crossing fastener on every connected plate
@@ -379,14 +379,14 @@ fn run(args: &[OsString]) -> Run<Json> {
     let parts = |options: &BTreeMap<&str, &str>| -> Run<Vec<ElementId>> {
         let text = options
             .get("--parts")
-            .ok_or_else(|| invalid("--parts is two or more comma-separated part identities"))?;
+            .ok_or_else(|| invalid("--parts is one or more comma-separated part identities"))?;
         let parsed = text
             .split(',')
             .map(|p| ElementId::parse(p.trim()).map_err(id_error))
             .collect::<Run<Vec<_>>>()?;
-        if parsed.len() < 2 {
+        if parsed.is_empty() {
             return Err(invalid(
-                "--parts is two or more comma-separated part identities",
+                "--parts is one or more comma-separated part identities",
             ));
         }
         Ok(parsed)

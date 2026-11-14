@@ -12,7 +12,7 @@ lookup) and A14.2 (the prototype frame) and nothing else.
 ## What is implemented
 
 ```text
-beamcraft create-bolt-group --store ROOT --name TEXT --parts UUID,UUID[,...]
+beamcraft create-bolt-group --store ROOT --name TEXT --parts UUID[,...]
     --fastener-library FILE --designation TEXT
     --point1 X,Y,Z --point2 X,Y,Z --plane-normal X,Y,Z [--rotation-deg DEG]
     [--on-plane MM] [--depth MM] --offset-start MM
@@ -116,7 +116,7 @@ beamcraft bolts --store ROOT        # A05 groups as annotations, A14.3 groups wi
 
 ## Tests
 
-`steel::model::command`: the inputs admit two parts, generators and a listed fixed length;
+`steel::model::command`: the inputs admit one or more parts (one since the owner decision of 2026-11-14), generators and a listed fixed length;
 refusals name their field; every input and the part order enters the fingerprint.
 `steel::engine::bolt`: the frame under rotation, `on_plane`/`depth`, the bearing points,
 the generator expansions and the offset-end re-expansion, the auto boundary (grip + head
@@ -142,5 +142,5 @@ washer cases (a switch the definition lacks, a screw under the nut, a fixed leng
 or not covering the joint); pinning (a deleted library file changes nothing), `repin`
 following the library, and the A05 upgrade; the amendment's negative cases (unknown
 designation, missing library, coincident points, a parallel normal, a negative offset, an
-uncrossed part, an assembly part, one part, a taken identity, exclusive spacing forms) write
+uncrossed part, an assembly part, no part, a taken identity, exclusive spacing forms) write
 no revision.

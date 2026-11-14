@@ -4,6 +4,16 @@ Decisions that shape the plan, newest first. Each names its date and, where one 
 document that records it in detail. A later decision overrides an earlier one where they differ.
 Open questions are at the end.
 
+## 2026-11-14
+
+- **A bolt group may be placed in one part.** Owner decision: as in Tekla Structures, a bolt
+  group need not join two parts. One plate, beam or column is a whole group (anchor holes,
+  erection holes, a bolt on a cleat), so an A14.3 group lists 1 to 1024 parts. Welds and A05
+  groups still connect exactly two. In the window, a middle click or Enter after the main
+  part ends part picking, and a new group's axis runs from the first point into the main part
+  (points snapped onto a plate's top face send the bolts down through it). Recorded in the domain vocabulary (`connects`), the bolt amendment
+  draft and the A14.3 note; the authored-layer schema descriptor changes with it.
+
 ## 2026-11-10
 
 - **D08 closes with CUPS-only printer submission.** Owner decision ("закрыть с границами"):

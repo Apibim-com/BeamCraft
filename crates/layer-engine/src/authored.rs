@@ -116,7 +116,7 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "the seventeen steel:bolt:fastener attributes or none,",
     "never mixed with the five A05 attributes;spacings give 2..=512 fasteners\n",
     "bim:connects=rel(2 distinct ordered element targets of kind plate|beam|column, main part first;",
-    "2..=1024 for an A14.3 bolt group;source connection)\n",
+    "1..=1024 for an A14.3 bolt group;source connection)\n",
     "grid=/World/Grids/GRD_<uuid7-32>;bim:discipline=token(steel);bim:grid:u|v:mode=token(regular|drawn);expression=string;spanMm=double[];ids=string[];labels=string[];shapes=token[];pointsMm=double[];no authored Geometry or material\n",
     "level=element;bim:elementKind=level;kind=component;bim:elevationMm=double(finite,abs<=1e9);no material or Geometry;placement=identity\n",
     "construction=/World/Construction/CNS_<uuid7-32>;bim:elementKind=construction;kind=component;bim:discipline=token(steel);",

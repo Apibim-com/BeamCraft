@@ -121,7 +121,8 @@ that still has parts cannot be deleted. Undefined: assembly types, multi-element
 
 **`connection`** (owner steel, path `/World/Steel/Connections/CON_<uuid>`). An element with no
 body that joins parts with one ordered `connects` record: exactly two distinct parts (plate, beam
-or column), the main part first. The parts are only read. A connected part cannot be deleted while
+or column), the main part first. An A14.3 bolt group lists 1 to 1024 distinct parts: one part is
+a group placed in a single part (owner decision 2026-11-14). The parts are only read. A connected part cannot be deleted while
 the connection exists. Required `steel:connection:type`: `weld` or `bolt_group`, which also
 names its attribute group:
 
@@ -318,7 +319,8 @@ and are not covered here.
 - `part-of` (`bim:partOf`). Source: member kinds, see below. Target: `assembly`. Per source: 0
   or 1.
 - `connects` (`bim:connects`). Source: `connection`. Target: `plate`, `beam`, `column`. Per
-  source: exactly 2 distinct targets, ordered, the main part first.
+  source: exactly 2 distinct targets for a weld and an A05 group, 1 to 1024 for an A14.3 bolt
+  group; ordered, the main part first.
 - `level` (`bim:level`). Source: `plate`, `beam`, `column`. Target: `level`. Per source: 0 or 1.
 
 For `part-of` the source may be `plate`, `beam`, `column`, `pipe`, `duct`, `support`,

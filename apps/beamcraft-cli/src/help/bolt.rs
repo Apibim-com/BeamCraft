@@ -5,12 +5,12 @@
 
 pub(super) const HELP: &str = concat!(
     "Bolt groups (experimental). create-bolt-group --store ROOT --name TEXT --parts ",
-    "UUID,UUID[,UUID...] --fastener-library FILE --designation TEXT --point1 X,Y,Z --point2 ",
+    "UUID[,UUID...] --fastener-library FILE --designation TEXT --point1 X,Y,Z --point2 ",
     "X,Y,Z --plane-normal X,Y,Z [--rotation-deg DEG] [--on-plane MM] [--depth MM] ",
     "--offset-start MM (--spacings a,b,c | --count N --pitch MM | --count N --offset-end MM) ",
     "[--washer-under-head true|false] [--washer-under-nut true|false] [--length-mode ",
     "auto|fixed --length MM] [--hole-mode generate|none] [--hole-clearance MM] [--new-id UUID] ",
-    "(A14.3: one row of identical fasteners of the pinned definition between 2 to 1024 parts; ",
+    "(A14.3: one row of identical fasteners of the pinned definition in 1 to 1024 parts (one part is a group in a single part); ",
     "the definition is pinned in the same transaction; the lengths list of the definition ",
     "decides --length-mode auto: the smallest length covering the grip plus the washers the ",
     "shank passes through (under the head and under the nut, when placed), the nut and the ",

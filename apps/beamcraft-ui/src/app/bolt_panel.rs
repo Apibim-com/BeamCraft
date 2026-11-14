@@ -97,8 +97,11 @@ impl Spacing {
 
 /// The Bolt bench's state between frames; everything else is on [`App`].
 pub(crate) struct Panel {
-    /// The picked parts, main first (`--parts`); create needs two, edit keeps the stored ones.
+    /// The picked parts, main first (`--parts`); create needs one, edit keeps the stored ones.
     pub(crate) parts: Vec<String>,
+    /// Whether part picking is over before a second part: a group in one part, ended by a
+    /// middle click or Enter as Tekla does. Two picked parts end it on their own.
+    pub(crate) parts_done: bool,
     /// The first point on the work plane: the first fastener's spot.
     pub(crate) point1: Option<[f64; 3]>,
     /// The second point on the work plane: the row runs from point 1 towards it.
@@ -164,6 +167,7 @@ impl Default for Panel {
     fn default() -> Self {
         Self {
             parts: Vec::new(),
+            parts_done: false,
             point1: None,
             point2: None,
             name: "Bolt group".into(),
@@ -271,9 +275,27 @@ impl Panel {
         self.commit_job.is_some()
     }
 
+    /// Whether part picking is over and the next clicks pick the points: two parts, or one part
+    /// the user ended with a middle click or Enter.
+    pub(crate) fn parts_ready(&self) -> bool {
+        self.parts.len() >= 2 || (self.parts_done && !self.parts.is_empty())
+    }
+
+    /// Ends part picking with the parts picked so far: a group in one part. Nothing happens
+    /// before the main part is picked or once picking is already over.
+    pub(crate) fn finish_parts(&mut self) -> bool {
+        if self.parts.is_empty() || self.parts_ready() {
+            return false;
+        }
+        self.parts_done = true;
+        self.note = None;
+        true
+    }
+
     /// Forgets the picked parts and points; the form keeps its typed values.
     fn clear_placement(&mut self) {
         self.parts.clear();
+        self.parts_done = false;
         self.point1 = None;
         self.point2 = None;
     }
@@ -308,6 +330,7 @@ impl Panel {
     pub(crate) fn load_group(&mut self, listing: &Listing) {
         self.edit_target = Some(listing.id.clone());
         self.parts = listing.parts.clone();
+        self.parts_done = true;
         self.point1 = Some(listing.point1);
         self.point2 = Some(listing.point2);
         self.normal = Some(listing.normal);
@@ -432,8 +455,8 @@ fn checked_placement(panel: &Panel) -> Result<Placement, String> {
     if name.len() > MAX_TEXT {
         return Err(format!("Name: at most {MAX_TEXT} bytes"));
     }
-    if panel.parts.len() < 2 {
-        return Err("Pick the main part, then the secondary part, in the model view.".into());
+    if panel.parts.is_empty() {
+        return Err("Pick the main part in the model view.".into());
     }
     if panel
         .parts
@@ -1159,7 +1182,7 @@ impl App {
         let Some(loaded) = &self.loaded else {
             return;
         };
-        if self.bolt.parts.len() < 2 {
+        if !self.bolt.parts_ready() {
             let view = self.views.active_view().cloned();
             let picked = match view.as_ref() {
                 Some(view) => beamcraft_engine::views::pick_visible(
@@ -1272,13 +1295,53 @@ impl App {
     }
 
     /// The plane normal the bolt commit and the preview share: the loaded group's stored one
-    /// in edit mode, else the active work plane's, else world up.
+    /// in edit mode, else the active work plane's, else world up. A new group's normal points
+    /// from the first point into the main part, as Tekla runs the bolts through the parts: points
+    /// snapped onto a plate's top face, with the work plane facing up, would otherwise send every
+    /// shank away from the plate.
     pub(crate) fn bolt_plane_normal(&self) -> [f64; 3] {
-        self.bolt.normal.unwrap_or_else(|| {
-            self.tools
-                .plane
-                .map_or([0.0, 0.0, 1.0], |plane| plane.normal())
-        })
+        if let Some(stored) = self.bolt.normal {
+            return stored;
+        }
+        let normal = self
+            .tools
+            .plane
+            .map_or([0.0, 0.0, 1.0], |plane| plane.normal());
+        if self.main_part_behind(normal) {
+            normal.map(|v| -v)
+        } else {
+            normal
+        }
+    }
+
+    /// Whether the main part's centre lies on the far side of point 1 against `normal`.
+    fn main_part_behind(&self, normal: [f64; 3]) -> bool {
+        let (Some(point), Some(main), Some(loaded)) = (
+            self.bolt.point1,
+            self.bolt.parts.first(),
+            self.loaded.as_ref(),
+        ) else {
+            return false;
+        };
+        let Some(element) = loaded
+            .snapshot
+            .elements()
+            .iter()
+            .find(|e| e.id.to_string() == *main)
+        else {
+            return false;
+        };
+        let bounds = element.full.world_bounds;
+        let towards: f64 = (0..3)
+            .map(|axis| {
+                let low = bounds.min.get(axis).copied().map_or(0.0, f64::from);
+                let high = bounds.max.get(axis).copied().map_or(0.0, f64::from);
+                let at = point.get(axis).copied().unwrap_or(0.0);
+                let n = normal.get(axis).copied().unwrap_or(0.0);
+                ((low + high) / 2.0 - at) * n
+            })
+            .sum();
+        towards < 0.0
     }
 
     /// Starts the definition fetch on a worker: the read-only `show-library` a user types. The
@@ -1622,12 +1685,16 @@ impl App {
             for (index, part) in parts.iter().enumerate() {
                 kit::prop_info(ui, &format!("Part {}", index + 1), Some(part), "");
             }
-            if parts.len() < 2 {
+            if !self.bolt.parts_ready() {
                 kit::prop_info(
                     ui,
                     &format!("Part {}", parts.len() + 1),
                     None,
-                    "Click a part",
+                    if parts.is_empty() {
+                        "Click a part"
+                    } else {
+                        "Click a part (optional)"
+                    },
                 );
             }
             let point1 = self.bolt.point1.map(|p| PointText(p).to_string());
@@ -1643,7 +1710,9 @@ impl App {
                             self.bolt.point2.is_some(),
                         ) {
                             (0..=0, _, _) => "Click the main part in the model view.",
-                            (1, _, _) => "Click the secondary part in the model view.",
+                            (1, _, _) if !self.bolt.parts_ready() => {
+                                "Click another part, or middle-click / Enter to bolt this part alone."
+                            }
                             (_, false, _) => "Click the first point on the work plane.",
                             (_, true, false) => "Click the second point: the row runs towards it.",
                             _ => "Parts and points are picked.",
@@ -1849,6 +1918,31 @@ mod tests {
     }
 
     #[test]
+    fn one_part_ends_picking_only_by_the_finish_gesture() {
+        let mut panel = Panel::default();
+        // Nothing to finish before the main part.
+        assert!(!panel.finish_parts());
+        panel.parts.push(MAIN.to_owned());
+        assert!(
+            !panel.parts_ready(),
+            "one part waits for another or the finish gesture"
+        );
+        assert!(panel.finish_parts());
+        assert!(panel.parts_ready(), "the next clicks pick the points");
+        assert!(!panel.finish_parts(), "finishing twice does nothing");
+        // Two parts end picking on their own, as before.
+        let mut pair = Panel {
+            parts: vec![MAIN.to_owned(), OTHER.to_owned()],
+            ..Panel::default()
+        };
+        assert!(pair.parts_ready());
+        assert!(!pair.finish_parts());
+        // A new group starts picking parts again.
+        panel.clear_placement();
+        assert!(!panel.parts_ready());
+    }
+
+    #[test]
     fn an_incomplete_or_malformed_form_refuses_without_a_command() {
         let refused = |change: &dyn Fn(&mut Panel)| {
             let mut panel = form();
@@ -1860,7 +1954,10 @@ mod tests {
         assert!(refused(&|p| p.name = "  ".into()).contains("Name"));
         assert!(refused(&|p| p.name = "x".repeat(MAX_TEXT + 1)).contains("Name"));
         assert!(refused(&|p| p.parts.clear()).contains("Pick the main part"));
-        assert!(refused(&|p| p.parts.truncate(1)).contains("Pick the main part"));
+        // One part is a group placed in a single part.
+        let mut single = form();
+        single.parts.truncate(1);
+        assert!(create_args(&single, [0.0, 0.0, 1.0], Path::new("S"), None).is_ok());
         assert!(
             refused(&|p| p.parts = vec![MAIN.to_owned(), MAIN.to_owned()])
                 .contains("distinct parts")

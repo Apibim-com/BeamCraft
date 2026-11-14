@@ -3136,19 +3136,20 @@ impl BoltGroupInputs {
             .unwrap_or(self.fastener.hole_clearance_mm)
     }
 
-    /// Admits the request: the definition re-admitted (`F04` codes), 2 to
-    /// [`MAX_RELATIONSHIP_TARGETS`] distinct parts, two distinct points within the coordinate
+    /// Admits the request: the definition re-admitted (`F04` codes), 1 to
+    /// [`MAX_RELATIONSHIP_TARGETS`] distinct parts (one part is a group placed in a single part,
+    /// as anchor or erection holes are), two distinct points within the coordinate
     /// cap, a finite unit plane normal, finite position values and spacings of up to
     /// [`MAX_BOLT_GROUP_SIZE`] fasteners, and a fixed length the definition lists. Whether the
     /// parts exist, are supported and are crossed, and which standard length `auto` picks, are
     /// the engine's decisions.
     pub fn validate_arguments(&self) -> Result<(), CommandError> {
         self.fastener.validate()?;
-        if self.parts.len() < 2 || self.parts.len() > MAX_RELATIONSHIP_TARGETS {
+        if self.parts.is_empty() || self.parts.len() > MAX_RELATIONSHIP_TARGETS {
             return Err(CommandError::new(
                 ErrorCode::InvalidArgument,
                 "parts",
-                "a bolt group connects 2 to 1024 parts",
+                "a bolt group holds 1 to 1024 parts",
             )
             .with_rule("DV-REL-004"));
         }
@@ -6270,10 +6271,14 @@ mod tests {
             v.validate_arguments().unwrap_err().field
         };
         assert_eq!(
-            field(&|v| v.parts = vec![id(2)]),
+            field(&|v| v.parts = Vec::new()),
             "parts",
-            "one part is no group"
+            "a group holds at least one part"
         );
+        // One part is a group placed in a single part (anchor or erection holes).
+        let mut single = bolt_group_inputs();
+        single.parts = vec![id(2)];
+        assert!(single.validate_arguments().is_ok());
         assert_eq!(
             field(&|v| v.parts = vec![id(2), id(2)]),
             "parts",

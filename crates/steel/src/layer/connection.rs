@@ -83,7 +83,7 @@ pub struct Bolt {
 /// (crossing, length) has already run; this library stores, bounds and re-reads the record.
 #[derive(Debug, Clone, PartialEq)]
 pub struct BoltGroup {
-    /// Full UUIDv7 of every connected part, main part first: 2 to 1024 distinct plates, beams
+    /// Full UUIDv7 of every connected part, main part first: 1 to 1024 distinct plates, beams
     /// or columns.
     pub connects: Vec<String>,
     /// Content digest of the pinned fastener definition the group places.

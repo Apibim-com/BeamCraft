@@ -718,7 +718,7 @@ welds --store ROOT
 write.
 
 ```text
-create-bolt-group --store ROOT --name TEXT --parts UUID,UUID,... --fastener-library FILE
+create-bolt-group --store ROOT --name TEXT --parts UUID[,UUID...] --fastener-library FILE
     --designation TEXT --point1 X,Y,Z --point2 X,Y,Z --plane-normal X,Y,Z --offset-start MM
     [--rotation-deg DEG] [--on-plane MM] [--depth MM] [--spacings MM,MM,...] [--count N]
     [--pitch MM] [--offset-end MM] [--washer-under-head true|false]
@@ -732,7 +732,7 @@ create-bolt-group --store ROOT --name TEXT --parts UUID,UUID,... --fastener-libr
 write.
 
 ```text
-update-bolt-group --store ROOT --target UUID [--name TEXT] [--parts UUID,UUID,...]
+update-bolt-group --store ROOT --target UUID [--name TEXT] [--parts UUID[,UUID...]]
     [--fastener-library FILE] [--designation TEXT] [--point1 X,Y,Z] [--point2 X,Y,Z]
     [--plane-normal X,Y,Z] [--rotation-deg DEG] [--on-plane MM] [--depth MM] [--offset-start MM]
     [--spacings MM,MM,...] [--count N] [--pitch MM] [--offset-end MM]

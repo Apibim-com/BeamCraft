@@ -134,6 +134,15 @@ impl App {
             self.set_bench(Bench::Select);
             return true;
         }
+        // The Bolt bench: a middle click or Enter after the main part ends part picking, so the
+        // group is placed in that part alone (Tekla's way of bolting a single part).
+        if self.bench == Bench::Bolt
+            && (response.clicked_by(egui::PointerButton::Middle)
+                || response.ctx.input(|i| i.key_pressed(egui::Key::Enter)))
+            && self.bolt.finish_parts()
+        {
+            return true;
+        }
         if !self.plate_mode {
             return false;
         }

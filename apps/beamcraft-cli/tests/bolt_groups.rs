@@ -702,7 +702,8 @@ fn wrong_rows_and_parts_are_refused_with_nothing_written() {
         "INVALID_ARGUMENT"
     );
 
-    // An assembly part, one part alone, a taken identity, and exclusive spacing forms.
+    // An assembly part, no part at all, a taken identity, and exclusive spacing forms. One
+    // part alone is a group placed in a single part (a_group_in_one_part_holes_only_that_part).
     let assembly = f.ok(&owned("create-assembly", &["--name", "Frame"]));
     let assembly = text(&assembly, "element_id");
     let args = f.group_args(
@@ -715,16 +716,9 @@ fn wrong_rows_and_parts_are_refused_with_nothing_written() {
         f.rejected(&strs("create-bolt-group", &args)),
         "UNSUPPORTED_GEOMETRY"
     );
-    let args = f.group_args(
-        GROUP2,
-        &[parts[0].clone()],
-        WASHERED,
-        &["--spacings", "150"],
-    );
-    assert_eq!(
-        f.rejected(&strs("create-bolt-group", &args)),
-        "INVALID_ARGUMENT"
-    );
+    // An empty --parts is no identity at all.
+    let args = f.group_args(GROUP2, &[], WASHERED, &["--spacings", "150"]);
+    assert_eq!(f.rejected(&strs("create-bolt-group", &args)), "INVALID_ID");
     let args = f.group_args(GROUP, &parts, WASHERED, &["--spacings", "150"]);
     assert_eq!(
         f.rejected(&strs("create-bolt-group", &args)),
@@ -1219,5 +1213,35 @@ fn a_framed_plate_in_a_bolt_group_refuses_instead_of_reading_a_wrong_slab() {
             ),
         )),
         "UNSUPPORTED_GEOMETRY"
+    );
+}
+
+#[test]
+fn a_group_in_one_part_holes_only_that_part() {
+    // Tekla places a bolt group in a single part too (anchor or erection holes): one plate
+    // is a whole group, its length covers that plate's grip alone, and only it gets holes.
+    let mut f = Fixture::new();
+    let parts = f.parts();
+    let single = vec![parts[0].clone()];
+    let created = f.group(GROUP, &single);
+    assert_eq!(text(&created, "outcome"), "bolt_group_committed");
+    let groups = f.groups();
+    assert_eq!(groups.len(), 1);
+    assert_eq!(strings(&groups[0], "parts"), single);
+    // Grip 10 instead of the stacked pair's 20: a shorter standard length than the pair's 50.
+    let length: f64 = text(&groups[0], "length_mm").parse().unwrap();
+    assert!(length < 50.0, "{length}");
+    assert_eq!(holes_of(&f, &parts[0]).len(), 2, "one hole per fastener");
+    assert!(
+        holes_of(&f, &parts[1]).is_empty(),
+        "the other plate is not in the group"
+    );
+    // The single part cannot be deleted while the group holds it.
+    assert_eq!(
+        f.rejected(&strs(
+            "delete-element",
+            &["--id".to_owned(), parts[0].clone()]
+        )),
+        "DEPENDENCY_CONFLICT"
     );
 }

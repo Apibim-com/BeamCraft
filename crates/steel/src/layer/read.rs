@@ -642,13 +642,14 @@ fn bolt_f64s(p: &Prim, name: &str) -> Result<Vec<f64>, Diagnostic> {
         .collect()
 }
 
-/// The `connects` identities of an A14.3 group: 2 to 1024 full UUIDv7s, distinct, never the
+/// The `connects` identities of an A14.3 group: 1 to 1024 full UUIDv7s (one is a group placed
+/// in a single part), distinct, never the
 /// group itself (`DV-REL-004`, `DV-REL-006`, `DV-REL-007`).
 pub(super) fn bolt_group_connects(connects: &[String], self_id: &str) -> Result<(), Diagnostic> {
-    if connects.len() < 2 || connects.len() > MAX_RELATIONSHIP_TARGETS {
+    if connects.is_empty() || connects.len() > MAX_RELATIONSHIP_TARGETS {
         return Err(fail(
             ErrorCode::DependencyConflict,
-            "a bolt group connects 2 to 1024 parts",
+            "a bolt group holds 1 to 1024 parts",
         )
         .with_rule("DV-REL-004"));
     }
@@ -1176,17 +1177,22 @@ pub(super) fn connects(prims: &[Prim]) -> Result<(), Diagnostic> {
             )
             .with_rule("DV-REL-003"));
         }
-        // An A14.3 bolt group carries 2 to 1024 targets (the vocabulary's own range); a weld
-        // and an A05 group carry exactly two.
-        let target_cap = if p.properties.iter().any(|v| v.name == "steel:bolt:fastener") {
-            MAX_RELATIONSHIP_TARGETS
-        } else {
-            2
-        };
-        if r.targets.len() < 2 || r.targets.len() > target_cap {
+        // An A14.3 bolt group carries 1 to 1024 targets (one is a group placed in a single
+        // part); a weld and an A05 group connect exactly two.
+        let (target_floor, target_cap) =
+            if p.properties.iter().any(|v| v.name == "steel:bolt:fastener") {
+                (1, MAX_RELATIONSHIP_TARGETS)
+            } else {
+                (2, 2)
+            };
+        if r.targets.len() < target_floor || r.targets.len() > target_cap {
             return Err(fail(
                 ErrorCode::DependencyConflict,
-                "a connection connects exactly two parts",
+                if target_floor == 1 {
+                    "a bolt group holds 1 to 1024 parts"
+                } else {
+                    "a connection connects exactly two parts"
+                },
             )
             .with_rule("DV-REL-004"));
         }
