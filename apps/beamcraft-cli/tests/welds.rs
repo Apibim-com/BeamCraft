@@ -449,3 +449,37 @@ fn a_path_weld_keeps_its_symbol_data_and_reports_the_analytic_volume() {
 fn as_strs(v: &[String]) -> Vec<&str> {
     v.iter().map(String::as_str).collect()
 }
+
+#[test]
+fn a_welded_part_deletes_with_its_weld_only_when_asked() {
+    // Owner decision 2026-11-14: the cascade is explicit. The preview lists the weld, a plain
+    // delete still refuses, and --with-dependents deletes the part and its weld in one revision.
+    let f = Fixture::new();
+    let plate = f.plate();
+    let beam = f.beam();
+    f.weld(WELD, &plate, &beam);
+    let preview = f.ok("delete-element", &["--id", &plate, "--dry-run", "true"]);
+    assert_eq!(text(&preview, "outcome"), "delete_preview");
+    let dependents = list(&preview, "dependents");
+    assert_eq!(dependents.len(), 1);
+    assert_eq!(text(&dependents[0], "id"), WELD);
+    assert_eq!(text(&dependents[0], "kind"), "weld");
+    assert!(list(&preview, "blockers").is_empty());
+    assert_eq!(
+        f.rejected("delete-element", &["--id", &plate]),
+        "DEPENDENCY_CONFLICT"
+    );
+    let head = f.head();
+    let deleted = f.ok(
+        "delete-element",
+        &["--id", &plate, "--with-dependents", "true"],
+    );
+    assert_eq!(text(&deleted, "outcome"), "element_deleted");
+    assert_eq!(text(&list(&deleted, "dependents")[0], "id"), WELD);
+    assert_ne!(f.head(), head);
+    assert!(f.welds().is_empty(), "the weld went with its part");
+    // The other part stays.
+    let inspected = f.ok("inspect-elements", &[]);
+    assert!(list(&inspected, "plates").is_empty());
+    assert_eq!(list(&inspected, "members").len(), 1);
+}

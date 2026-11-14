@@ -9,8 +9,10 @@
 //! layer is touched the layer engine's element index decides whether something still links to the
 //! element (`beamcraft_layer_engine::authored::Author::check_delete`): an incoming relationship is
 //! `DEPENDENCY_CONFLICT`, an index
-//! that cannot prove the links complete is `DEPENDENCY_UNAVAILABLE`, and there is no cascade and no
-//! dangling link. The layer engine's write set is checked against the footprint the engine declares.
+//! that cannot prove the links complete is `DEPENDENCY_UNAVAILABLE`, and there is no implicit
+//! cascade and no dangling link. The one cascade is explicit: `with_dependents` deletes a plate's
+//! or member's welds and bolt groups with it, in the same revision and undo unit, after the user
+//! confirmed the list [`delete_preview`] showed (owner decision 2026-11-14). The layer engine's write set is checked against the footprint the engine declares.
 //!
 //! Honesty limits: replay of an `op_id` is decided from the head model (the delete is a replay when
 //! the element is already absent and the ledger proves the operation committed), not from a stored
@@ -29,7 +31,7 @@ use beamcraft_layer_engine::authored::{Change, schema_identity};
 use beamcraft_layer_engine::index::ElementId as LayerElementId;
 use beamcraft_model::command::{CommandError, DeleteElement};
 use beamcraft_model::error::ErrorCode;
-use beamcraft_model::id::{OpId, ProjectId, RevisionId, WorkspaceId};
+use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
 use session::Refusal;
 use session::pipeline::{
     Base, RevisionSummary, control, digest_of, host_uuid, load_base, open_base, summarize,
@@ -90,6 +92,18 @@ pub struct Deleted {
     pub footprint: Option<Footprint>,
     /// Names of the layers whose bytes changed (empty for a replay).
     pub changed_layers: Vec<String>,
+    /// The welds and bolt groups deleted with the part (`with_dependents`), in index order.
+    pub dependents: Vec<(ElementId, DeletedKind)>,
+}
+
+/// What deleting a part would take with it: the read-only answer the confirmation shows.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DeletePreview {
+    /// The welds and bolt groups a `with_dependents` delete removes with the part.
+    pub dependents: Vec<(ElementId, DeletedKind)>,
+    /// Elements whose links no cascade removes (an assembly whose main part it is, a
+    /// penetration, a grid binding, a foreign source): while any is listed the delete refuses.
+    pub blockers: Vec<String>,
 }
 
 fn not_found() -> Refusal {
@@ -184,6 +198,7 @@ pub fn delete_element(
                 revision: replay_summary(&head, recorded)?,
                 footprint: None,
                 changed_layers: Vec::new(),
+                dependents: Vec::new(),
             });
         }
         PriorOp::Accepted { .. } => {
@@ -239,33 +254,52 @@ pub fn delete_element(
         .into());
     }
 
+    // The explicit cascade: a part's welds and bolt groups go with it. Anything else that links
+    // to the part stays a blocker, and the set check below refuses it.
+    let dependents =
+        if command.with_dependents && matches!(kind, DeletedKind::Plate | DeletedKind::Member) {
+            cascade_dependents(&base_request, &command.target_id, &control)?.dependents
+        } else {
+            Vec::new()
+        };
     let mut footprint = Footprint::for_delete(command.target_id)?;
     let schema = schema_identity()?;
     let id_text = command.target_id.to_string();
     let mut changes = vec![Change::Delete {
         id: id_text.clone(),
     }];
+    for (dependent, _) in &dependents {
+        changes.push(Change::Delete {
+            id: dependent.to_string(),
+        });
+        footprint = footprint.union(Footprint::for_delete(*dependent)?)?;
+    }
+    // The bolt groups whose generated holes go with them: the deleted group itself, or the
+    // groups the cascade deletes. The part being deleted takes its own holes with it.
+    let groups: std::collections::BTreeSet<ElementId> = dependents
+        .iter()
+        .filter(|(_, k)| *k == DeletedKind::Bolt)
+        .map(|(id, _)| *id)
+        .chain((kind == DeletedKind::Bolt).then_some(command.target_id))
+        .collect();
     // A14.4: deleting a generating bolt group removes its hole records from every plate in the
     // same revision and undo unit (bolt amendment section 5); the parts themselves stay. An
     // A05 annotation group and a quiet A14.3 group touch no part.
-    if kind == DeletedKind::Bolt {
+    if !groups.is_empty() {
         let mut reader = Reader::default();
         let opened = reader.open(base_request.clone(), &control)?;
         let decoded = decode(&reader, &opened, &control)?;
         let (plates, _) = evaluate_decoded(&decoded)?;
         let materials = material_lookup(&decoded.definitions);
+        let owned = |owner: Option<ElementId>| owner.is_some_and(|o| groups.contains(&o));
         for plate in &plates {
-            if !plate
-                .authored
-                .hole_records
-                .iter()
-                .any(|r| r.owner == Some(command.target_id))
+            if plate.authored.id == command.target_id
+                || !plate.authored.hole_records.iter().any(|r| owned(r.owner))
             {
                 continue;
             }
             let mut next = plate.authored.clone();
-            next.hole_records
-                .retain(|r| r.owner != Some(command.target_id));
+            next.hole_records.retain(|r| !owned(r.owner));
             let body = steel::engine::command::evaluate_plate(&next)?;
             let quantities =
                 body.quantities_for(next.material.as_ref().map(&materials).transpose()?)?;
@@ -287,7 +321,15 @@ pub fn delete_element(
     let (mut author, opened) =
         crate::scope::open_author(store, base_request, shared, schema, &control)?;
     let index = author.element_index(&opened.context, &control)?;
-    author.check_delete(&index, &LayerElementId::parse(&id_text)?, &control)?;
+    if dependents.is_empty() {
+        author.check_delete(&index, &LayerElementId::parse(&id_text)?, &control)?;
+    } else {
+        let mut set = vec![LayerElementId::parse(&id_text)?];
+        for (dependent, _) in &dependents {
+            set.push(LayerElementId::parse(&dependent.to_string())?);
+        }
+        author.check_delete_set(&index, &set, &control)?;
+    }
     let (committed, changed_layers) = prepare_and_publish(
         &mut author,
         &opened,
@@ -316,5 +358,78 @@ pub fn delete_element(
         revision: summarize(&committed.info),
         footprint: Some(footprint),
         changed_layers,
+        dependents,
     })
+}
+
+/// The welds and bolt groups that link to `target` and that an explicit cascade deletes with it,
+/// and the identities of every other element that links to it (no cascade removes those).
+fn cascade_dependents(
+    request: &beamcraft_layer_engine::OpenRequest,
+    target: &ElementId,
+    control: &beamcraft_layer_engine::Control,
+) -> Result<DeletePreview, Refusal> {
+    let mut reader = Reader::default();
+    let opened = reader.open(request.clone(), control)?;
+    let index = reader.element_index(&opened.context, control)?;
+    let id = LayerElementId::parse(&target.to_string())?;
+    let mut cascade = Vec::new();
+    let mut blockers = Vec::new();
+    for link in index.delete_blockers(&id)? {
+        let Some(owner) = link.owner else {
+            blockers.push(link.source_path.clone());
+            continue;
+        };
+        let text = owner.to_string();
+        if !link.source_owned {
+            blockers.push(text);
+            continue;
+        }
+        let dependent = ElementId::parse(&text).map_err(|_| Refusal {
+            rule_id: Some("DV-BASE-001"),
+            code: ErrorCode::InvalidId,
+            message: "a dependent has no valid element identity",
+        })?;
+        let kind = if crate::weld::is_weld(request, &dependent, control)? {
+            DeletedKind::Weld
+        } else if crate::bolt::is_bolt(request, &dependent, control)? {
+            DeletedKind::Bolt
+        } else {
+            blockers.push(text);
+            continue;
+        };
+        if !cascade.iter().any(|(d, _)| *d == dependent) {
+            cascade.push((dependent, kind));
+        }
+    }
+    blockers.sort();
+    blockers.dedup();
+    Ok(DeletePreview {
+        dependents: cascade,
+        blockers,
+    })
+}
+
+/// Lists what deleting `target` with its dependents would remove and what would still refuse,
+/// without writing anything: the confirmation's content. A part that is its assembly's main part
+/// is a blocker, as the delete itself refuses it.
+pub fn delete_preview(
+    store: &RevisionStore,
+    project: &ProjectId,
+    workspace: &WorkspaceId,
+    target: &ElementId,
+) -> Result<DeletePreview, Refusal> {
+    let control = control();
+    let (head, base) = load_base(store, project, workspace)?;
+    if head.is_none() {
+        return Err(not_found());
+    }
+    let request = open_base(&base)?;
+    let mut preview = cascade_dependents(&request, target, &control)?;
+    if crate::assembly::is_main_part(&request, target, &control)? {
+        preview
+            .blockers
+            .push("the assembly whose main part it is".to_owned());
+    }
+    Ok(preview)
 }

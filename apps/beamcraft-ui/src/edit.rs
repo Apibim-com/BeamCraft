@@ -518,6 +518,9 @@ pub struct Editor {
     pub copy_offset: [String; 3],
     /// Copy as a linked instance of the shared definition.
     pub copy_instance: bool,
+    /// The next delete takes the part's welds and bolt groups with it (`--with-dependents
+    /// true`): set only after the user confirmed the dependents the preview listed.
+    pub with_dependents: bool,
     /// The author recorded as `--actor-id` of a move, copy or delete, when the window has one.
     pub actor: Option<String>,
     staged: Option<Edit>,
@@ -534,6 +537,7 @@ impl Default for Editor {
             move_to: Default::default(),
             copy_offset: Default::default(),
             copy_instance: false,
+            with_dependents: false,
             actor: None,
             staged: None,
             busy: false,
@@ -837,13 +841,19 @@ impl Editor {
                 "--offset".into(),
                 point("Offset", &self.copy_offset)?,
             ],
-            EditKind::Delete => vec![
-                "delete-element".to_owned(),
-                "--store".into(),
-                store,
-                "--id".into(),
-                id()?,
-            ],
+            EditKind::Delete => {
+                let mut args = vec![
+                    "delete-element".to_owned(),
+                    "--store".into(),
+                    store,
+                    "--id".into(),
+                    id()?,
+                ];
+                if self.with_dependents {
+                    args.extend(["--with-dependents".into(), "true".into()]);
+                }
+                args
+            }
             EditKind::Undo | EditKind::Redo => {
                 let workspace = target.workspace.ok_or_else(|| FormError {
                     field: "Workspace",
@@ -965,6 +975,102 @@ pub(crate) fn sequence_of(revision: &Json) -> Option<u64> {
         .ok()
         .and_then(|s| s.parse().ok())
         .or_else(|| value.unsigned().ok())
+}
+
+/// What a delete would take with it, as the read-only `delete-element --dry-run true` lists it:
+/// the confirmation's content.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DeletePreview {
+    /// The element the preview is for.
+    pub id: String,
+    /// Welds that would be deleted with the part.
+    pub welds: usize,
+    /// Bolt groups that would be deleted with the part.
+    pub bolts: usize,
+    /// Links no cascade removes; while any is listed the delete still refuses.
+    pub blockers: usize,
+}
+
+impl DeletePreview {
+    /// Whether a delete with the dependents can go ahead after a confirmation.
+    pub fn confirmable(&self) -> bool {
+        self.blockers == 0 && self.welds + self.bolts > 0
+    }
+
+    /// The confirmation's question, as Tekla asks it.
+    pub fn question(&self) -> String {
+        let mut parts = Vec::new();
+        if self.welds > 0 {
+            parts.push(format!(
+                "{} weld{}",
+                self.welds,
+                if self.welds == 1 { "" } else { "s" }
+            ));
+        }
+        if self.bolts > 0 {
+            parts.push(format!(
+                "{} bolt group{}",
+                self.bolts,
+                if self.bolts == 1 { "" } else { "s" }
+            ));
+        }
+        format!(
+            "There are dependent elements ({}). They will be deleted too, with the holes their bolts made in other parts. Are you sure?",
+            parts.join(", ")
+        )
+    }
+}
+
+/// The arguments of the read-only preview of deleting `id`.
+pub fn delete_preview_args(store: &Path, id: &str) -> Vec<String> {
+    vec![
+        "delete-element".to_owned(),
+        "--store".into(),
+        store.to_string_lossy().into_owned(),
+        "--id".into(),
+        id.to_owned(),
+        "--dry-run".into(),
+        "true".into(),
+    ]
+}
+
+/// Reads a `delete-element --dry-run true` reply.
+pub fn parse_delete_preview(
+    id: &str,
+    exit_code: Option<i32>,
+    stdout: &[u8],
+) -> Result<DeletePreview, ToolError> {
+    let reply = decode(stdout)?;
+    if let Some(error) = rejection(&reply, exit_code) {
+        return Err(error);
+    }
+    let unreadable = || ToolError {
+        code: "UNREADABLE_REPLY".into(),
+        message: "the delete preview could not be read".into(),
+    };
+    if text(&reply, "outcome").as_deref() != Some("delete_preview") {
+        return Err(unreadable());
+    }
+    let dependents = reply
+        .get("dependents")
+        .and_then(Json::array)
+        .map_err(|_| unreadable())?;
+    let blockers = reply
+        .get("blockers")
+        .and_then(Json::array)
+        .map_err(|_| unreadable())?;
+    let count = |kind: &str| {
+        dependents
+            .iter()
+            .filter(|d| text(d, "kind").as_deref() == Some(kind))
+            .count()
+    };
+    Ok(DeletePreview {
+        id: id.to_owned(),
+        welds: count("weld"),
+        bolts: count("bolt"),
+        blockers: blockers.len(),
+    })
 }
 
 /// Reads the reply of an edit command: the accepted revision or the CLI's refusal.
@@ -1215,6 +1321,42 @@ pub fn parse_contour_edited(
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_delete_preview_reads_the_dependents_and_asks_only_when_it_can() {
+        let reply = br#"{"outcome":"delete_preview","element_id":"x","dependents":[{"id":"a","kind":"weld"},{"id":"b","kind":"bolt"},{"id":"c","kind":"bolt"}],"blockers":[],"deletable":true}"#;
+        let preview = parse_delete_preview("x", Some(0), reply).unwrap();
+        assert_eq!((preview.welds, preview.bolts, preview.blockers), (1, 2, 0));
+        assert!(preview.confirmable());
+        let question = preview.question();
+        assert!(question.contains("1 weld, 2 bolt groups"), "{question}");
+        assert!(question.contains("Are you sure?"));
+        // A blocker no cascade removes: no confirmation, the refusal stands.
+        let blocked = br#"{"outcome":"delete_preview","element_id":"x","dependents":[{"id":"a","kind":"weld"}],"blockers":["y"],"deletable":false}"#;
+        assert!(
+            !parse_delete_preview("x", Some(0), blocked)
+                .unwrap()
+                .confirmable()
+        );
+        // Nothing depends on it: nothing to confirm.
+        let empty = br#"{"outcome":"delete_preview","element_id":"x","dependents":[],"blockers":[],"deletable":true}"#;
+        assert!(
+            !parse_delete_preview("x", Some(0), empty)
+                .unwrap()
+                .confirmable()
+        );
+        // A refusal or another reply is an error, never an empty preview.
+        let refused = br#"{"outcome":"rejected","code":"NOT_FOUND","message":"no"}"#;
+        assert!(parse_delete_preview("x", Some(2), refused).is_err());
+        assert!(parse_delete_preview("x", Some(0), br#"{"outcome":"element_deleted"}"#).is_err());
+        let args = delete_preview_args(Path::new("S"), "x");
+        assert_eq!(args[0], "delete-element");
+        assert!(
+            args.windows(2)
+                .any(|w| w[0] == "--dry-run" && w[1] == "true")
+        );
+    }
+
     use super::*;
     use crate::camera::Camera;
 

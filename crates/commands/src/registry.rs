@@ -967,7 +967,12 @@ pub const COMMANDS: &[Command] = &[
         "delete-element",
         Access::Write,
         Ids::Common,
-        &[req("--store", "ROOT"), req("--id", "UUID")],
+        &[
+            req("--store", "ROOT"),
+            req("--id", "UUID"),
+            opt("--with-dependents", "true|false"),
+            opt("--dry-run", "true|false"),
+        ],
     ),
     entry(
         Route::Plate,

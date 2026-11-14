@@ -342,7 +342,7 @@ metadata.
 | `CreateStraightMember`: new_id, element_kind, name, axis_points_mm, profile_digest, placement, optional roll_rad, optional material_digest, optional on_invalid_shape | Validate a nonzero axis and a pinned profile; beam or column is an explicit kind |
 | `UpdateElement`: target_id, changes | Typed patch of name, contour_points_mm, thickness_mm, axis_points_mm, roll_rad, profile_digest, material_digest, placement; no raw USD attribute or path setter |
 | `CopyElement`: source_id, new_id, name | An independent element with a fresh ID; immutable definitions and shape shared until an edit |
-| `DeleteElement`: target_id | Refused while incoming dependencies remain; no implicit cascade, no foreign-source mutation |
+| `DeleteElement`: target_id, with_dependents | Refused while incoming dependencies remain; no implicit cascade, no foreign-source mutation. `with_dependents` is the one explicit cascade: a part's welds and bolt groups (and their generated holes on other parts) are deleted with it in one revision; any other dependency still refuses (owner decision 2026-11-14) |
 | `AddHole`: target_id, operation_id, hole (`polygon_points_mm`, or a `round` or `rectangle` generator) | On a valid plate: validate a clockwise simple polygon and an unused operation_id, assign the next ordinal, check capacity, replay the base shape and all records; on success append the record and update derived data in one transaction |
 | `UpdateHole`: target_id, operation_id, changes | Replace the parameters of one hole record, keeping its ordinal and operation_id; the whole replay succeeds or nothing changes |
 | `RemoveHole`: target_id, operation_id | Remove one hole record; its ordinal is retired and its FeatureIds become dangling; the rest is replayed |

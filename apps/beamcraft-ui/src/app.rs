@@ -168,6 +168,12 @@ pub struct App {
     refresh_error: Option<String>,
     editor: Editor,
     edit_job: Option<Receiver<Result<Edited, ToolError>>>,
+    /// The element a running delete targets, so a refusal can be followed by the preview.
+    pending_delete: Option<String>,
+    /// The read-only preview of what a refused delete would take with it.
+    delete_preview_job: Option<Receiver<Result<crate::edit::DeletePreview, ToolError>>>,
+    /// The confirmation shown before a part is deleted with its welds and bolt groups.
+    cascade_confirm: Option<crate::edit::DeletePreview>,
     select_job: Option<SelectJob>,
     select_epoch: Epoch,
     /// The result of the last select, edit, undo or redo.
@@ -1163,6 +1169,9 @@ impl App {
             refresh_error: None,
             editor: Editor::default(),
             edit_job: None,
+            pending_delete: None,
+            delete_preview_job: None,
+            cascade_confirm: None,
             select_job: None,
             select_epoch: Epoch::default(),
             edit_note: None,
@@ -1904,6 +1913,11 @@ impl App {
             None => self.editor.begin_commit(target),
         };
         let Some(edit) = edit else { return };
+        // A refused delete is followed by the preview of its dependents, whichever control
+        // started it.
+        if edit.kind == EditKind::Delete {
+            self.pending_delete = self.editor.selected().map(|s| s.id.clone());
+        }
         self.spawn_edit(edit);
     }
 
@@ -1939,10 +1953,92 @@ impl App {
         }
     }
 
+    /// Asks the engine what deleting `id` would take with it, on a worker: a refused delete of a
+    /// part with welds or bolt groups then asks the user instead of only saying no.
+    fn start_delete_preview(&mut self, id: String) {
+        let cli = self.source.cli.clone();
+        let args = crate::edit::delete_preview_args(&self.source.store, &id);
+        let stats = Arc::clone(&self.stats);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let spawned = std::thread::Builder::new()
+            .name("beamcraft-delete-preview".into())
+            .spawn(move || {
+                let result =
+                    command::run(&cli, &args, command::DEADLINE, &stats).and_then(|output| {
+                        crate::edit::parse_delete_preview(&id, output.code, &output.stdout)
+                    });
+                let _ = tx.send(result);
+            });
+        if spawned.is_ok() {
+            self.delete_preview_job = Some(rx);
+        }
+    }
+
+    fn poll_delete_preview(&mut self) {
+        let Some(rx) = &self.delete_preview_job else {
+            return;
+        };
+        let result = match rx.try_recv() {
+            Ok(result) => result,
+            Err(TryRecvError::Empty) => return,
+            Err(TryRecvError::Disconnected) => return self.delete_preview_job = None,
+        };
+        self.delete_preview_job = None;
+        match result {
+            Ok(preview) if preview.confirmable() => {
+                // The question replaces the refusal: nothing went wrong yet.
+                self.edit_note = None;
+                self.cascade_confirm = Some(preview);
+            }
+            Ok(preview) if preview.blockers > 0 => {
+                self.edit_note = Some(Err(
+                    "The part cannot be deleted: another element that is not a weld or a bolt group links to it (for example the assembly whose main part it is)."
+                        .into(),
+                ));
+            }
+            // Nothing to cascade: the refusal already shown stands.
+            Ok(_) => {}
+            Err(e) => self.edit_note = Some(Err(e.to_string())),
+        }
+    }
+
+    /// The confirmation before a part is deleted with its dependent welds and bolt groups.
+    fn cascade_dialog(&mut self, ctx: &egui::Context) {
+        let Some(preview) = self.cascade_confirm.clone() else {
+            return;
+        };
+        let (mut confirm, mut cancel) = (false, false);
+        egui::Window::new("Delete dependents too?")
+            .collapsible(false)
+            .resizable(false)
+            .min_width(380.0)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.label(preview.question());
+                ui.horizontal(|ui| {
+                    confirm = ui.button("Delete all").clicked();
+                    cancel = ui.button("Cancel").clicked();
+                });
+            });
+        if confirm {
+            self.cascade_confirm = None;
+            // The selection normally still is the part; reselect it only when it moved on.
+            if self.editor.selected().map(|s| s.id.as_str()) != Some(preview.id.as_str()) {
+                self.editor.select_id(preview.id.clone());
+            }
+            self.editor.with_dependents = true;
+            self.start_edit(Some(EditKind::Delete));
+        } else if cancel {
+            self.cascade_confirm = None;
+            self.edit_note = Some(Ok("Nothing was deleted.".into()));
+        }
+    }
+
     fn selection_shortcuts(&mut self, ctx: &egui::Context) {
         if !ctx.egui_wants_keyboard_input()
             && !self.menu_open
             && self.publisher.phase() != Phase::Confirming
+            && self.cascade_confirm.is_none()
             && ctx.input(|input| input.key_pressed(egui::Key::Delete))
         {
             self.delete_selection();
@@ -1974,6 +2070,9 @@ impl App {
         };
         self.edit_job = None;
         self.editor.finish();
+        // The cascade flag holds for the one confirmed delete only.
+        let cascaded = std::mem::take(&mut self.editor.with_dependents);
+        let deleted = self.pending_delete.take();
         match result {
             Ok(done) => {
                 // A lookup that started before this edit describes the element as it was.
@@ -2011,6 +2110,14 @@ impl App {
                     self.refresh_status();
                 }
                 self.edit_note = Some(Err(e.to_string()));
+                // A part that welds or bolt groups link to: ask, as Tekla does, instead of only
+                // refusing. A refused confirmed cascade is final.
+                if e.code == "DEPENDENCY_CONFLICT"
+                    && !cascaded
+                    && let Some(id) = deleted
+                {
+                    self.start_delete_preview(id);
+                }
             }
         }
     }
@@ -3102,7 +3209,7 @@ impl App {
                 point_fields(ui, &mut self.editor.copy_offset);
             }
             _ => {
-                ui.label("Deletes the element (refused while another element links to it).");
+                ui.label("Deletes the element. A part with welds or bolt groups asks first and deletes them with it; any other link refuses.");
             }
         });
         let busy = self.editor.busy();
@@ -3721,6 +3828,7 @@ impl eframe::App for App {
         self.poll_bolt();
         self.poll_contour();
         self.poll_edit();
+        self.poll_delete_preview();
         self.poll_props();
         self.poll_publish();
         self.poll_status();
@@ -3790,6 +3898,7 @@ impl eframe::App for App {
             self.project_browser(ui);
             self.details_window(&ctx);
             self.publish_dialog(&ctx);
+            self.cascade_dialog(&ctx);
             self.sheet_editor.window(
                 &ctx,
                 &self.source.cli,

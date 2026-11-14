@@ -162,11 +162,16 @@ pub fn label_is_valid(name: &str) -> bool {
 }
 
 /// F04 section 7 `DeleteElement` (P08): removes one owned element. It is refused while another
-/// element still links to it (`DEPENDENCY_CONFLICT`); there is no cascade.
+/// element still links to it (`DEPENDENCY_CONFLICT`), unless the request names the cascade
+/// explicitly: `with_dependents` deletes a part's welds and bolt groups with it after the user
+/// confirmed them (owner decision 2026-11-14). There is never an implicit cascade.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DeleteElement {
     /// The element to delete.
     pub target_id: ElementId,
+    /// Whether the welds and bolt groups that connect a part are deleted with it. Any other
+    /// incoming relationship still refuses.
+    pub with_dependents: bool,
 }
 
 impl DeleteElement {
@@ -174,7 +179,13 @@ impl DeleteElement {
     /// something links to it are the engine's and the layer engine's decisions.
     pub fn content_fingerprint(&self) -> Result<ContentDigest, CommandError> {
         let mut bytes = Vec::with_capacity(64);
-        bytes.extend_from_slice(b"BeamCraft/P08/DeleteElement/v1\0");
+        // A plain delete keeps its v1 encoding; the explicit cascade is another request, so a
+        // replay of one never answers for the other.
+        if self.with_dependents {
+            bytes.extend_from_slice(b"BeamCraft/P08/DeleteElement/v2-with-dependents\0");
+        } else {
+            bytes.extend_from_slice(b"BeamCraft/P08/DeleteElement/v1\0");
+        }
         bytes.extend_from_slice(self.target_id.as_bytes());
         Sha256::digest(&bytes).map_err(|_| {
             CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
@@ -515,8 +526,23 @@ mod tests {
 
     #[test]
     fn the_delete_fingerprint_names_the_target() {
-        let a = DeleteElement { target_id: id(5) };
-        let b = DeleteElement { target_id: id(6) };
+        let a = DeleteElement {
+            target_id: id(5),
+            with_dependents: false,
+        };
+        let b = DeleteElement {
+            target_id: id(6),
+            with_dependents: false,
+        };
+        // The explicit cascade is another request than the plain delete of the same element.
+        let cascade = DeleteElement {
+            with_dependents: true,
+            ..a.clone()
+        };
+        assert_ne!(
+            a.content_fingerprint().unwrap(),
+            cascade.content_fingerprint().unwrap()
+        );
         assert_eq!(
             a.content_fingerprint().unwrap(),
             a.clone().content_fingerprint().unwrap()

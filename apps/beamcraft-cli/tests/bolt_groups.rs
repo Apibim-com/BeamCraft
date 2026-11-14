@@ -1221,3 +1221,53 @@ fn a_framed_plate_in_a_bolt_group_refuses_instead_of_reading_a_wrong_slab() {
         "UNSUPPORTED_GEOMETRY"
     );
 }
+
+#[test]
+fn a_bolted_plate_deletes_with_its_group_and_frees_the_other_plate() {
+    // Owner decision 2026-11-14: --with-dependents deletes a part's bolt groups with it, and the
+    // holes those groups generated leave the parts that stay, in one revision and undo unit.
+    let mut f = Fixture::new();
+    let parts = f.parts();
+    f.group(GROUP, &parts);
+    assert_eq!(holes_of(&f, &parts[1]).len(), 2);
+    let preview = f.ok(&strs(
+        "delete-element",
+        &[
+            "--id".to_owned(),
+            parts[0].clone(),
+            "--dry-run".to_owned(),
+            "true".to_owned(),
+        ],
+    ));
+    let dependents = list(&preview, "dependents");
+    assert_eq!(dependents.len(), 1);
+    assert_eq!(text(&dependents[0], "id"), GROUP);
+    assert_eq!(text(&dependents[0], "kind"), "bolt");
+    // The preview wrote nothing, and a plain delete still refuses.
+    assert_eq!(
+        f.rejected(&strs(
+            "delete-element",
+            &["--id".to_owned(), parts[0].clone()]
+        )),
+        "DEPENDENCY_CONFLICT"
+    );
+    let deleted = f.ok(&strs(
+        "delete-element",
+        &[
+            "--id".to_owned(),
+            parts[0].clone(),
+            "--with-dependents".to_owned(),
+            "true".to_owned(),
+        ],
+    ));
+    assert_eq!(text(&deleted, "outcome"), "element_deleted");
+    assert!(f.groups().is_empty(), "the group went with the plate");
+    assert!(
+        holes_of(&f, &parts[1]).is_empty(),
+        "the other plate lost the group's holes"
+    );
+    // One undo brings the plate, the group and the holes back together.
+    f.undo();
+    assert_eq!(f.groups().len(), 1);
+    assert_eq!(holes_of(&f, &parts[1]).len(), 2);
+}

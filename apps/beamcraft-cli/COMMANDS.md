@@ -453,8 +453,9 @@ bend-plate --store ROOT --id UUID --operation-id UUID --kind fold|roll --point-a
 write.
 
 ```text
-delete-element --store ROOT --id UUID [--op-id UUID] [--revision-id UUID] [--actor-id UUID]
-    [--project-id UUID] [--workspace-id UUID]
+delete-element --store ROOT --id UUID [--with-dependents true|false] [--dry-run true|false]
+    [--op-id UUID] [--revision-id UUID] [--actor-id UUID] [--project-id UUID]
+    [--workspace-id UUID]
 ```
 
 ## copy

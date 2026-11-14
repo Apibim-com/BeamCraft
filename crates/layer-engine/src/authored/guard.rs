@@ -77,6 +77,31 @@ impl Author {
             .with_rule("DV-REL-009"))
         }
     }
+    /// Checks that deleting every element of `ids` together leaves no dangling link: each one is
+    /// owned and writable, and every incoming relationship of each one comes from an owned
+    /// source that is itself in the set (the explicit cascade of a part and its connections).
+    /// Incomplete evidence is `DEPENDENCY_UNAVAILABLE`, never "no links".
+    pub fn check_delete_set(
+        &self,
+        index: &ElementIndex,
+        ids: &[ElementId],
+        control: &Control,
+    ) -> Result<(), Diagnostic> {
+        for id in ids {
+            self.authorize_write(index, id, control)?;
+            let outside = index.delete_blockers(id)?.into_iter().any(|link| {
+                !link.source_owned || link.owner.as_ref().is_none_or(|o| !ids.contains(o))
+            });
+            if outside {
+                return Err(fail(
+                    ErrorCode::DependencyConflict,
+                    "element has incoming relationships",
+                )
+                .with_rule("DV-REL-009"));
+            }
+        }
+        Ok(())
+    }
     /// Certifies that lifecycle writes (delete, deactivate, create) do not collide with reads of
     /// the written ID, even when absent, or of elements that depend on it. `writes` and `reads`
     /// must come from different operations: one operation's own reads of an ID it writes would

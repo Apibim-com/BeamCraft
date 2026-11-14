@@ -648,7 +648,11 @@ Rule text:
 - **DV-REL-009** A delete targets an element that has an incoming live record. Only historical
   `penetrates` records from `rejected` or `withdrawn` penetrations are nonblocking; they remain
   with their sources and keep the host ID after deletion. Other incoming records still block.
-  No cascade or cross-discipline record edit is implicit.
+  No cascade or cross-discipline record edit is implicit. The one explicit cascade is a delete
+  of a plate, beam or column that names it (`with_dependents`): the welds and bolt groups that
+  connect the part are deleted with it in the same revision, after the user confirmed the list a
+  read-only preview showed (owner decision 2026-11-14). Every other incoming record still
+  blocks it.
 - **DV-REL-010** The incoming-relationship index needed to decide a delete is incomplete or
   unavailable.
 - **DV-REL-011** A duplicate copies a relationship other than `level`: it never joins the source's

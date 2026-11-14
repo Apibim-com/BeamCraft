@@ -364,8 +364,10 @@ A move is the placement patch of `UpdateElement`: the footprint writes the place
 derived invalidation group only, the derived layer is byte for byte unchanged and the stored
 volume and mass stay `current`. `delete-element` removes one plate or member from both layers and
 nothing else (the other elements, the unknown content and the definitions it pinned stay). It is
-refused with `DEPENDENCY_CONFLICT` while another element links to it (no cascade, no dangling
-link), `NOT_FOUND` for an unknown element, and the same `--op-id` is a replay or `OP_ID_REUSE`.
+refused with `DEPENDENCY_CONFLICT` while another element links to it (no implicit cascade, no
+dangling link); `--with-dependents true` is the explicit cascade that deletes a part's welds and
+bolt groups with it, and `--dry-run true` lists them first without writing. `NOT_FOUND` answers
+an unknown element, and the same `--op-id` is a replay or `OP_ID_REUSE`.
 See the [design note](../../docs/design/p08-move-delete.md).
 
 ## P05 copy-element

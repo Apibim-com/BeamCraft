@@ -16,7 +16,7 @@ use beamcraft_commands::definition::{
     DefineRequest, Defined, DefinitionRecord, NameResolution, define, definition_path,
     head_definitions, resolve_name,
 };
-use beamcraft_commands::delete::{DeleteRequest, DeletedKind, delete_element};
+use beamcraft_commands::delete::{DeleteRequest, DeletedKind, delete_element, delete_preview};
 use beamcraft_commands::edit::{UpdateRequest, UpdatedPart, update_element};
 use beamcraft_commands::history::{Direction, Step, step, timeline};
 use beamcraft_commands::hole::{AddHoleRequest, add_hole_command};
@@ -439,6 +439,8 @@ contour_edit_options!(SET_CORNER_OPTIONS, "--vertex", "--corner");
 const DELETE_OPTIONS: &[&str] = &[
     "--store",
     "--id",
+    "--with-dependents",
+    "--dry-run",
     "--op-id",
     "--revision-id",
     "--actor-id",
@@ -2556,6 +2558,53 @@ fn delete_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<
         Some(text) => WorkspaceId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
         None => WorkspaceId::from_uuid(fresh()?),
     };
+    let switch = |key: &str| -> Run<bool> {
+        match given(key) {
+            None | Some("false") => Ok(false),
+            Some("true") => Ok(true),
+            Some(_) => Err(invalid("--with-dependents and --dry-run are true or false")),
+        }
+    };
+    let with_dependents = switch("--with-dependents")?;
+    let kind_text = |k: DeletedKind| match k {
+        DeletedKind::Plate => "plate",
+        DeletedKind::Member => "member",
+        DeletedKind::Assembly => "assembly",
+        DeletedKind::Weld => "weld",
+        DeletedKind::Bolt => "bolt",
+        DeletedKind::Level => "level",
+        DeletedKind::Grid => "grid",
+        DeletedKind::Construction => "construction",
+        DeletedKind::Annotation => "annotation",
+    };
+    let listed = |dependents: &[(ElementId, DeletedKind)]| {
+        Json::Array(
+            dependents
+                .iter()
+                .map(|(id, kind)| {
+                    Json::object([
+                        ("id", Json::text(id.to_string())),
+                        ("kind", Json::text(kind_text(*kind))),
+                    ])
+                })
+                .collect(),
+        )
+    };
+    // The confirmation's content: what a delete with its dependents would remove and what would
+    // still refuse. Nothing is written.
+    if switch("--dry-run")? {
+        let preview = delete_preview(store, &project, &workspace, &target_id)?;
+        return Ok(Json::object([
+            ("outcome", Json::text("delete_preview")),
+            ("element_id", Json::text(target_id.to_string())),
+            ("dependents", listed(&preview.dependents)),
+            (
+                "blockers",
+                Json::Array(preview.blockers.iter().map(Json::text).collect()),
+            ),
+            ("deletable", Json::Bool(preview.blockers.is_empty())),
+        ]));
+    }
     let deleted = delete_element(
         store,
         &DeleteRequest {
@@ -2564,7 +2613,10 @@ fn delete_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<
             actor,
             project,
             workspace,
-            command: DeleteElement { target_id },
+            command: DeleteElement {
+                target_id,
+                with_dependents,
+            },
         },
         &mut NoFault,
     )?;
@@ -2581,20 +2633,11 @@ fn delete_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<
         ("element_id", Json::text(target_id.to_string())),
         (
             "kind",
-            deleted.kind.map_or(Json::Null, |k| {
-                Json::text(match k {
-                    DeletedKind::Plate => "plate",
-                    DeletedKind::Member => "member",
-                    DeletedKind::Assembly => "assembly",
-                    DeletedKind::Weld => "weld",
-                    DeletedKind::Bolt => "bolt",
-                    DeletedKind::Level => "level",
-                    DeletedKind::Grid => "grid",
-                    DeletedKind::Construction => "construction",
-                    DeletedKind::Annotation => "annotation",
-                })
-            }),
+            deleted
+                .kind
+                .map_or(Json::Null, |k| Json::text(kind_text(k))),
         ),
+        ("dependents", listed(&deleted.dependents)),
         (
             "changed_layers",
             Json::Array(deleted.changed_layers.iter().map(Json::text).collect()),

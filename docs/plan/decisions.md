@@ -4,6 +4,16 @@ Decisions that shape the plan, newest first. Each names its date and, where one 
 document that records it in detail. A later decision overrides an earlier one where they differ.
 Open questions are at the end.
 
+## 2026-11-14
+
+- **A part can be deleted with its welds and bolt groups, after a confirmation.** Owner
+  decision: as in Tekla Structures, deleting a plate, beam or column that welds or bolt groups
+  connect is not simply refused. The window asks "there are dependent elements; they will be
+  deleted too, are you sure?", and on yes the part, those welds and bolt groups and the holes
+  the groups made in other parts go in one revision and one undo unit. The cascade is always
+  explicit (`delete-element --with-dependents true`, previewed read-only with `--dry-run true`);
+  any other dependency, such as the assembly whose main part it is, still refuses.
+
 ## 2026-11-10
 
 - **D08 closes with CUPS-only printer submission.** Owner decision ("закрыть с границами"):
