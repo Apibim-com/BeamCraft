@@ -152,6 +152,11 @@ pub struct App {
     snap_hover: Option<beamcraft_engine::query::pick::SnapKind>,
     /// Where the pointer resolves while placing a beam or column, snapped when a snap applies.
     member_cursor: Option<[f64; 3]>,
+    /// The working coordinate under the pointer, in millimetres, with the frame it was read on:
+    /// where the pointer meets the view's plane (a plan or a section), else the work plane,
+    /// else the ground. Shown at the bottom right like Tekla's coordinate readout, in the work
+    /// plane's own axes when one is set. Display only, never an edit.
+    pointer_world: Option<(u64, [f64; 3])>,
     distance_input: String,
     distance_aim: Option<[f64; 3]>,
     plate_input: [String; 2],
@@ -1144,6 +1149,7 @@ impl App {
             plate_hover: None,
             snap_hover: None,
             member_cursor: None,
+            pointer_world: None,
             distance_input: String::new(),
             distance_aim: None,
             plate_input: ["0".into(), "0".into()],
