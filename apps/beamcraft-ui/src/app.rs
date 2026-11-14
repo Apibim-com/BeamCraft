@@ -4190,13 +4190,7 @@ pub(crate) mod tests {
         // the properties panel can name is the new file's own — the old file's are gone. The
         // native picker dialog cannot be shown headlessly; the test sets what its chosen
         // answer sets (`open_source_request`), the one line between the dialog and the switch.
-        let executable = std::env::current_exe().unwrap();
-        let cli = executable
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        let cli = workspace_cli();
         assert!(
             cli.is_file(),
             "build beamcraft-cli before native modelling tests"
@@ -9102,13 +9096,7 @@ pub(crate) mod tests {
         // the refresh exports the display bundle (`export-view --source`), reads the body
         // facts (`ifc-shapes`), keys them by the display ids, the click picks through the
         // bounds the snapshot carries, and the panel names the body from the file itself.
-        let executable = std::env::current_exe().unwrap();
-        let cli = executable
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        let cli = workspace_cli();
         assert!(
             cli.is_file(),
             "build beamcraft-cli before native modelling tests"
@@ -12146,13 +12134,7 @@ mod navigation_tests {
         use beamcraft_model::grid::{DrawnGridLine, Grid, GridFamily};
         use beamcraft_model::id::ElementId;
         let Some(mut app) = headless() else { return };
-        let executable = std::env::current_exe().unwrap();
-        let cli = executable
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        let cli = super::tests::workspace_cli();
         assert!(cli.is_file(), "build beamcraft-cli before native tests");
         let root = std::env::temp_dir().join(format!(
             "bc-recheck-3d-snap-{}-{}",
