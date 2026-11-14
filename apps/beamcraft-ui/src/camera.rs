@@ -341,6 +341,16 @@ impl Camera {
         // 1e7 mm), so hidden parts showed through; one percent of the distance keeps
         // precision where the orbit camera can be anyway.
         let near = (self.distance * 0.01).clamp(0.1, 1e5);
+        // The orthographic depth is linear over `far - near`, so its resolution is that range
+        // over the buffer's mantissa. A far plane at 1e7 mm left a fraction of a millimetre per
+        // step and a bolt's shank drew over its own nut. The perspective depth is hyperbolic and
+        // keeps its precision near the camera, so only the orthographic range is tightened: the
+        // eye already stands in front of the whole scene, and the range reaches well behind it.
+        let far = if self.orthographic {
+            eye * 4.0 + 1e4
+        } else {
+            eye * 5.0 + 1e7
+        };
         Ok(View {
             right,
             up,
@@ -356,7 +366,7 @@ impl Camera {
                 },
                 aspect,
                 near,
-                eye * 5.0 + 1e7,
+                far,
             ],
             mode: [u8::from(self.orthographic) as f32, 0.0, 0.0, 0.0],
             tint: NO_TINT,
@@ -682,6 +692,21 @@ mod tests {
         assert!(c.cursor_zoom_pan([f32::NAN, 0.0], aspect, 1.0).is_err());
         assert!(c.cursor_zoom_pan([2.0, 0.0], aspect, 1.0).is_err());
         assert!(c.cursor_zoom_pan([0.0, 0.0], aspect, f32::NAN).is_err());
+    }
+    #[test]
+    fn the_orthographic_depth_range_is_tight_enough_to_order_parts_a_few_millimetres_apart() {
+        // A bolt's shank and its nut differ by about 2.5 mm in depth. The orthographic depth is
+        // linear, so a far plane at 1e7 mm gave steps of a fraction of a millimetre and the
+        // shank drew over the nut. The range must stay near the scene, not near 1e7.
+        let mut c = Camera::new([0.0; 3], 400.0, 1.6).unwrap();
+        c.set_projection(true);
+        let v = c.view(1.6).unwrap();
+        let range = v.params[3] - v.params[2];
+        assert!(range < 5e4, "orthographic depth range {range}");
+        // Two points 2.5 mm apart along the view get depths that differ by far more than the
+        // 24-bit step of the range.
+        let at = |dz: f32| v.project([v.back[0] * dz, v.back[1] * dz, v.back[2] * dz])[2];
+        assert!((at(0.0) - at(2.5)).abs() > range.recip() * 2.0, "{range}");
     }
     #[test]
     fn the_near_plane_follows_the_distance_and_stays_inside_the_depth_range() {
