@@ -993,7 +993,8 @@ impl GridScene {
     /// (the 584 recheck: a level plan at 2000 with a ±500 depth lost every line). The work
     /// area is not part of the test: its box may lie strictly inside the spans while grid
     /// endpoints sit at the model limits, so requiring the endpoints inside would drop every
-    /// guide from a work-area view (PR 587 review).
+    /// guide from a work-area view (PR 587 review). Returns the screen rectangles of the
+    /// bubbles it drew.
     pub fn paint(
         &self,
         ui: &egui::Ui,
@@ -1002,7 +1003,7 @@ impl GridScene {
         origin: [f64; 3],
         selected: Option<&str>,
         shown: Option<&beamcraft_engine::views::ModelView>,
-    ) {
+    ) -> Vec<egui::Rect> {
         let in_view = |points: &[[f64; 3]; 2]| line_in_view(shown, points);
         let painter = ui.painter_at(rect);
         let palette = theme::Palette::current(ui);
@@ -1115,6 +1116,9 @@ impl GridScene {
                 painter.galley(centre - galley.size() / 2.0, galley.clone(), palette.text);
             }
         }
+        // The bubbles drawn, so what paints after the grid (the level captions of a section)
+        // can keep clear of them.
+        placed
     }
 }
 
@@ -1196,7 +1200,9 @@ mod form_tests {
                 screen_rect: Some(rect),
                 ..Default::default()
             },
-            |ui| scene.paint(ui, rect, &view, [0.0; 3], None, None),
+            |ui| {
+                scene.paint(ui, rect, &view, [0.0; 3], None, None);
+            },
         );
         output.textures_delta.clear();
         output
@@ -1278,7 +1284,9 @@ mod form_tests {
                 screen_rect: Some(rect),
                 ..Default::default()
             },
-            |ui| scene.paint(ui, rect, &view, [0.0; 3], None, shown),
+            |ui| {
+                scene.paint(ui, rect, &view, [0.0; 3], None, shown);
+            },
         );
         output.textures_delta.clear();
         output
@@ -1517,7 +1525,9 @@ mod form_tests {
                 screen_rect: Some(rect),
                 ..Default::default()
             },
-            |ui| scene.paint(ui, rect, &view, [0.0; 3], None, None),
+            |ui| {
+                scene.paint(ui, rect, &view, [0.0; 3], None, None);
+            },
         );
         output.textures_delta.clear();
         assert!(

@@ -227,17 +227,15 @@ impl Camera {
         }
         let [ox, oy] = orbit;
         let [px, py] = pan;
-        // The 3D view and a view plane orbit alike: yaw about the up axis of their frame (the
-        // world Z, or the plane's normal) and pitch from that frame's ground. A view plane tilts
-        // up to looking straight at it, where it opened; the 3D view stops just short of the
-        // top so its turntable keeps a heading.
-        let top = if self.basis.is_some() {
-            std::f32::consts::FRAC_PI_2
-        } else {
-            1.52
-        };
-        self.yaw = (self.yaw + ox).rem_euclid(std::f32::consts::TAU);
-        self.pitch = (self.pitch + oy).clamp(0.0, top);
+        // A view plane (a plan, an elevation or a section) never orbits: it stays on its plane
+        // with its X to the right and its Y up, as a plan does in Tekla and Revit, and is turned
+        // only by the view's own Rotation setting. Pan and zoom still work. The 3D view orbits
+        // by yaw about the world Z and pitch from the ground, and stops just short of the top
+        // so its turntable keeps a heading.
+        if self.basis.is_none() {
+            self.yaw = (self.yaw + ox).rem_euclid(std::f32::consts::TAU);
+            self.pitch = (self.pitch + oy).clamp(0.0, 1.52);
+        }
         self.distance = (self.distance * (-zoom.clamp(-10.0, 10.0)).exp()).clamp(10.0, 2e7);
         let view = self.view(1.0)?;
         let [rx, ry, rz, _] = view.right;
@@ -493,38 +491,23 @@ mod tests {
         );
         assert!(dot(r, u).abs() < 1e-4 && dot(r, b).abs() < 1e-4 && dot(u, b).abs() < 1e-4);
         assert!((dot(b, b) - 1.0).abs() < 1e-4);
-        // A plan turns like the 3D view about its plane: a sideways drag spins it about Z
-        // (the eye stays straight above), a tilt leans the eye towards the plane, and no tilt
-        // takes the eye below it.
+        // A plan never orbits: neither a sideways drag nor a tilt moves its basis. X stays to
+        // the right and Y up, the eye stays straight above, and only the pan and the zoom act.
         let plan_plane = WorkPlane::new([0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]).unwrap();
         let plan = Camera::aligned_to(plan_plane, [0.0; 3], 4000.0, 500.0).unwrap();
-        let mut spun = plan;
-        spun.navigate([0.7, 0.0], [0.0; 2], 0.0).unwrap();
-        let s = spun.view(1.0).unwrap();
-        assert!(
-            (s.back[2] - 1.0).abs() < 1e-5,
-            "still looking down: {:?}",
-            s.back
-        );
-        assert!(
-            s.right[2].abs() < 1e-5 && s.up[2].abs() < 1e-5,
-            "spun in plan"
-        );
-        let mut tilted = plan;
-        tilted.navigate([0.0, -0.5], [0.0; 2], 0.0).unwrap();
-        let t = tilted.view(1.0).unwrap();
-        assert!(t.back[2] > 0.5 && t.back[2] < 0.99, "leaned: {:?}", t.back);
-        assert!(
-            t.right[2].abs() < 1e-5,
-            "the horizon of the plan stays level"
-        );
-        for _ in 0..20 {
-            tilted.navigate([0.4, -0.5], [0.0; 2], 0.0).unwrap();
+        let before = plan.view(1.0).unwrap();
+        let mut dragged = plan;
+        for orbit in [[0.7, 0.0], [0.0, -0.5], [0.4, -0.5]] {
+            dragged.navigate(orbit, [0.0; 2], 0.0).unwrap();
         }
-        assert!(
-            tilted.view(1.0).unwrap().back[2] >= -1e-5,
-            "never below the plane"
-        );
+        let after = dragged.view(1.0).unwrap();
+        assert_eq!(after.right, before.right, "X stays to the right");
+        assert_eq!(after.up, before.up, "Y stays up");
+        assert_eq!(after.back, before.back, "the eye stays above the plane");
+        assert!((after.back[2] - 1.0).abs() < 1e-5, "{:?}", after.back);
+        let mut panned = plan;
+        panned.navigate([0.0; 2], [100.0, 50.0], 0.0).unwrap();
+        assert_ne!(panned.view(1.0).unwrap().eye, before.eye, "pan still works");
         assert!(Camera::aligned_to(plane, origin, 0.0, 1.0).is_err());
         let mut moved = c;
         moved.rebase(origin, [0.0; 3]);
