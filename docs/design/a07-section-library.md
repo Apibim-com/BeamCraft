@@ -67,6 +67,8 @@ sees a point.
 | `rectangle` | `h`, `b` | Existing; solid bar. Stays byte-compatible. |
 | `i_shape` | `h`, `b`, `tw`, `tf`, `r` | Doubly symmetric I/H (wide flange, IPE/HE style). |
 | `channel` | `h`, `b`, `tw`, `tf`, `r` | Hot-rolled parallel-flange channel. |
+| `tapered_i` | `h`, `b`, `s`, `t`, `r`, `r1`, `k` | Tapered-flange I (GB/T 706 工字钢, GOST 8239, ASTM S style): inclined inner faces, `t` the mean thickness at the middle of the leg, `r1` the toe radius, `k` the slope as rise over run (1:6 is `k = 1/6`; zero is parallel). |
+| `tapered_c` | `h`, `b`, `s`, `t`, `r`, `r1`, `k` | Tapered-flange channel, web on the `-X` side (GB/T 706 槽钢, GOST 8240, EN 10365 UPN style). |
 | `angle` | `h`, `b`, `t`, `r` | Equal or unequal leg. |
 | `rhs` | `h`, `b`, `t`, `r_out` | Rectangular/square hollow section (one cavity). |
 | `chs` | `d`, `t` | Circular hollow section (one cavity). |
@@ -80,7 +82,11 @@ Rules:
 
 * Admission per family: finite, inside the F04 dimension cap, above the geometric floor, and the
   family's own consistency (`2*tf < h`, `tw < b`, `r` fits between web and flange, `2*t < d`,
-  lips shorter than the flange, ...). A violation is `INVALID_ARGUMENT` naming the parameter.
+  lips shorter than the flange, ...; a tapered family also refuses a slope that consumes the
+  toe thickness and a toe radius that does not fit it). A violation is `INVALID_ARGUMENT`
+  naming the parameter. The stored slope `k` is dimensionless and is written as
+  `steel:profile:k` (no `Mm` suffix); every other parameter stores as
+  `steel:profile:<parameter>Mm`.
 * **Two representations (owner decision D2).** Every member body is generated twice from the one
   definition: a **detailed** outline with every root and corner radius, and a **simplified**
   outline with sharp corners. This is the full/simplified pair of `docs/architecture.md` ("Part
@@ -197,9 +203,12 @@ library is refused when the library is loaded, and a shadowed designation is rep
 paths are local and contained (the U01 resolution rules); a network path is refused before any
 I/O, as for R01 references.
 
-**Where files live.** The application data directory holds `environments/` and `libraries/`;
-the active environment is a user setting. The CLI takes `--environment FILE` explicitly, never a
-hidden global, so tests and scripts are reproducible.
+**Where files live.** The application data directory (the settings directory) holds the user's
+`environments/` and `libraries/` folders beside `settings.json`; the built-in environments ship
+with the program. The active environment is the `environment` field of the settings, chosen in
+the start window; `create-project` seeds it when `--environment` is absent and the option stays
+the override. The inspection commands still name library and environment files explicitly, so
+tests and scripts are reproducible.
 
 **Untrusted input.** A library file is untrusted (`AGENTS.md` section 4): it is opened with the
 U01 bounded read (size, prim and stage budgets), every entry is admitted by its family rules, a
@@ -419,10 +428,11 @@ beamcraft add-library    --library FILE [--library-id ID [--title TEXT]] --desig
 
 | Area | What exists |
 |---|---|
-| Environment file | A USD layer in millimetres, Z up, read by the same bounded loader as a library (one self-contained layer, 1 MiB at most). `customLayerData` carries `bim:environment:id`, an optional `bim:environment:title` and `bim:environment:libraries`: a `string[]` of 1 to 32 relative paths, **strongest first**, resolved against the directory of the environment file. A path that is absolute, has a drive or scheme (`:`), a backslash, an empty, `.` or `..` segment or a control character is `PERMISSION_DENIED` (lexical containment, as for R01 sublayer names); more than 32 is `LIMIT_EXCEEDED`; an empty list, a non-string item or a repeated path is `INVALID_ARGUMENT`. |
+| Environment file | A USD layer in millimetres, Z up, read by the same bounded loader as a library (one self-contained layer, 1 MiB at most). `customLayerData` carries `bim:environment:id`, an optional `bim:environment:title`, `bim:environment:libraries`: a `string[]` of 1 to 32 relative profile-library paths, **strongest first**, resolved against the directory of the environment file, (since BC-ENV-002, #635) an optional `bim:environment:fastener-libraries`, and (since #636) an optional `bim:environment:material-libraries` — the same kind of list for the environment's fastener and material libraries; the same path may not serve in two lists. A path that is absolute, has a drive or scheme (`:`), a backslash, an empty, `.` or `..` segment or a control character is `PERMISSION_DENIED` (lexical containment, as for R01 sublayer names); more than 32 in one list is `LIMIT_EXCEEDED`; an empty list, a non-string item or a repeated path is `INVALID_ARGUMENT`. Every library an environment lists — profile, fastener or material — must declare `bim:library:source` and `bim:library:licence` (empty is undeclared): a missing record is `INVALID_ARGUMENT`, at the environment's edge only, so a single-file `--library` stays free of it. |
 | Lookup | `beamcraft_commands::library::Lookup` holds the libraries in order: the optional `--user-library`, then the environment's libraries (or the single `--library`). The first library that declares a designation answers it. A **refused** entry of a stronger library answers with its refusal; a weaker library is never consulted for that designation, so a corrupted override cannot silently turn into another section. `list-library` lists the effective entries (one per designation, designation order, each with its `library_id`), the refused entries of every library, `libraries` (path, id, counts) and `shadowed` (designation, used and shadowed library id). The shadow records are paged on their own with `--shadow-offset` and `--limit`, and the reply carries `shadowed_count` and `shadowed_next_offset` (null on the last page), because a few overlapping libraries of thousands of entries make tens of thousands of records that must not decide whether the entries fit the 1 MiB output budget. `show-library` names the library and path that answer and reports only the shadow records of the designation it shows. |
 | Whole-library failures | A listed library that cannot be loaded (missing file, duplicate designation, over a budget, wrong units) refuses the whole environment with that library's code, because a silently missing library would change which section a designation selects. Two libraries of one lookup with the same `bim:library:id` (inside an environment, or the user library against a single `--library` or an environment library) are `INVALID_ARGUMENT`, so the library id of an entry and of a shadow record is never ambiguous. `--library` and `--environment` are alternatives; `--user-library` needs one of them; with none the command is `INVALID_ARGUMENT`. |
 | `define-profile` | `--environment` (and `--user-library`) take the place of `--library`; the definition takes every value from the answering entry and stores them itself, exactly as in A07.2, so the model never depends on any library file. Explicit dimensions do not combine with them. |
+| Material libraries | The same layer format under `/Library/Materials` (#636): each entry is a prim with `steel:material:grade` (string, required — the entry's designation), `steel:material:densityKgM3` (double, required) and optional `steel:material:standard` and `steel:material:displayName` (the display name is the grade when not declared), admitted by the F04 material rules (`MaterialSpec`: finite, capped, not negative; labels valid) — no density is inferred from a grade, and a missing or negative one refuses the entry, never substitutes. An environment lists its material libraries in `bim:environment:material-libraries` with the same provenance edge and the same whole-environment refusal; the namespaces stay separate (a profile library never answers a grade, a material library never answers a profile designation). `define-material --library/--environment --designation` pins an entry into a model (nothing combines with the entry's own values); in a project created with an environment that lists materials, `--material GRADE` on an element command is defined from the catalogue entry on first use — the same `selected` fallback as profile designations — and `definitions` lists the grades the model does not define yet as `environment_materials`. The seeded `Steel` and `Steel_Undefined` constants stay the neutral fallback: a project whose environment has no material library behaves exactly as before. |
 | `add-library` | Adds one profile entry (rectangle, any of the nine families, or a custom outline with cavities) to the library file named by `--library`, through the same option parsing and the same F04 admission as `define-profile` (`profile_record`). A missing file is created only when `--library-id` is given (`--title` optional); an identity for a file that exists, a duplicate designation, a library that holds refused entries (a rewrite would lose them), an invalid section, a material, or more than 4096 entries is refused. The designation and the display name of the entry are the one given designation. The prim name is the designation with every character outside `[A-Za-z0-9_]` replaced by `_` (prefixed `E_` when it would start with a digit or be empty) and made unique with a numeric suffix; existing prim names are kept. |
 | Writer | The whole library is rendered again, entries in designation order, from what the loader understood. The text is read back with the loader before anything is written, and the identity, the optional metadata and every entry must come back equal (`INTEGRITY_ERROR` otherwise, nothing written). A `.usdc` destination, and an existing library whose content is binary USD, are refused (`INVALID_ARGUMENT`): the writer produces USDA text only, and the read-back check cannot see the encoding of the destination. The file is written to a temporary file beside it, synced and installed atomically, and a replacement keeps the permissions of the file it replaces (a private `0600` library stays private): a new file is hard-linked into place (it never replaces a file that appeared meanwhile) and an existing one is renamed over. Numbers are written in Rust's shortest round-trip form, so values read back bit for bit. |
 
@@ -435,9 +445,13 @@ beamcraft add-library    --library FILE [--library-id ID [--title TEXT]] --desig
   `customLayerData` keeps the "strongest first" meaning, needs no engine change and stays an
   ordinary USD layer that any USD reader opens. If the owner prefers real sublayers, only
   `parse_environment` changes.
-* **No hidden global, no settings yet.** The active environment and the user library are command
-  line options. An application data directory, the "active environment" setting and the lookup of
-  a project-level library are V06 work; the UI picker (V05) will call the same functions.
+* **The active environment is a setting; the user library is still an option.** `settings.json`
+  names the active environment (the start window sets it); `create-project` seeds it when
+  `--environment` is absent, the option stays the override, and a setting whose environment is
+  not installed refuses the creation (missing record fails validation). The application data
+  directory holds the user's `environments/` (read by every listing since A07.3) and a
+  `libraries/` folder the programs never write and no lookup reads yet — the user-owned layer
+  above the environment of the Layering work will. `--user-library FILE` stays explicit.
 * **`add-library` rewrites the file.** Comments, `doc` text and attributes the loader does not
   read are not kept, and two writers of one file at once are not supported (the last rename
   wins). Refusing a library with refused entries and the read-back check keep it from losing or

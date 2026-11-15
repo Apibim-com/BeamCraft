@@ -1,0 +1,11 @@
+#usda 1.0
+(
+    metersPerUnit = 0.001
+    upAxis = "Z"
+    customLayerData = {
+        string "bim:environment:id" = "russia"
+        string "bim:environment:title" = "Russia (GOST 26020-83, GOST 30245-2003, GOST 7798-70)"
+        string[] "bim:environment:libraries" = ["profiles-gost-26020.usda", "profiles-gost-30245.usda"]
+        string[] "bim:environment:fastener-libraries" = ["gost-fasteners.usda"]
+    }
+)

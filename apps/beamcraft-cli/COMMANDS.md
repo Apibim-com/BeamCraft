@@ -135,7 +135,7 @@ remove-hole --store ROOT --id UUID --operation-id UUID [--op-id UUID] [--revisio
 read.
 
 ```text
-inspect-elements --store ROOT [--element UUID]
+inspect-elements --store ROOT [--element UUID] [--offset N] [--limit N]
 ```
 
 ## definitions
@@ -146,7 +146,8 @@ write.
 
 ```text
 define-material --store ROOT [--density N] [--grade TEXT] [--standard TEXT] [--name TEXT]
-    [--revision-id UUID] [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
+    [--library FILE] [--environment FILE] [--designation TEXT] [--revision-id UUID]
+    [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
 ```
 
 ### define-profile
@@ -155,12 +156,12 @@ write.
 
 ```text
 define-profile --store ROOT [--width MM] [--height MM]
-    [--family i_shape|channel|angle|rhs|chs|lipped_c|plain_c|lipped_z|omega|custom] [--h MM]
-    [--b MM] [--tw MM] [--tf MM] [--t MM] [--r MM] [--c MM] [--d MM] [--outer X,Y;X,Y;...]
-    [--cavity X,Y;...|X,Y;...] [--library FILE] [--environment FILE] [--user-library FILE]
-    [--designation TEXT] [--standard TEXT] [--area-mm2 N] [--mass-per-meter-kg N]
-    [--surface-per-meter-m2 N] [--name TEXT] [--revision-id UUID] [--actor-id UUID]
-    [--project-id UUID] [--workspace-id UUID]
+    [--family i_shape|channel|tapered_i|tapered_c|angle|rhs|chs|lipped_c|plain_c|lipped_z|omega|custom]
+    [--h MM] [--b MM] [--tw MM] [--tf MM] [--t MM] [--r MM] [--r1 MM] [--c MM] [--d MM] [--s MM]
+    [--k N] [--outer X,Y;X,Y;...] [--cavity X,Y;...|X,Y;...] [--library FILE] [--environment FILE]
+    [--user-library FILE] [--designation TEXT] [--standard TEXT] [--area-mm2 N]
+    [--mass-per-meter-kg N] [--surface-per-meter-m2 N] [--name TEXT] [--revision-id UUID]
+    [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
 ```
 
 ### define-fastener
@@ -187,8 +188,9 @@ definitions --store ROOT [--name TEXT] [--offset N] [--limit N]
 read.
 
 ```text
-list-library (--library FILE | --environment FILE | --fastener-library FILE) [--user-library FILE]
-    [--family TEXT] [--filter TEXT] [--offset N] [--limit N] [--shadow-offset N]
+list-library (--library FILE | --environment FILE | --fastener-library FILE | --project ROOT)
+    [--user-library FILE] [--family TEXT] [--filter TEXT] [--offset N] [--limit N]
+    [--shadow-offset N]
 ```
 
 ### show-library
@@ -196,7 +198,8 @@ list-library (--library FILE | --environment FILE | --fastener-library FILE) [--
 read.
 
 ```text
-show-library --designation TEXT (--library FILE | --environment FILE | --fastener-library FILE)
+show-library --designation TEXT
+    (--library FILE | --environment FILE | --fastener-library FILE | --project ROOT)
     [--user-library FILE]
 ```
 
@@ -206,10 +209,11 @@ write.
 
 ```text
 add-library --library FILE --designation TEXT [--library-id TEXT] [--title TEXT] [--width MM]
-    [--height MM] [--family i_shape|channel|angle|rhs|chs|lipped_c|plain_c|lipped_z|omega|custom]
-    [--h MM] [--b MM] [--tw MM] [--tf MM] [--t MM] [--r MM] [--c MM] [--d MM]
-    [--outer X,Y;X,Y;...] [--cavity X,Y;X,Y;...|X,Y;X,Y;...] [--standard TEXT] [--area-mm2 N]
-    [--mass-per-meter-kg N] [--surface-per-meter-m2 N]
+    [--height MM]
+    [--family i_shape|channel|tapered_i|tapered_c|angle|rhs|chs|lipped_c|plain_c|lipped_z|omega|custom]
+    [--h MM] [--b MM] [--tw MM] [--tf MM] [--t MM] [--r MM] [--r1 MM] [--c MM] [--d MM] [--s MM]
+    [--k N] [--outer X,Y;X,Y;...] [--cavity X,Y;X,Y;...|X,Y;X,Y;...] [--standard TEXT]
+    [--area-mm2 N] [--mass-per-meter-kg N] [--surface-per-meter-m2 N]
 ```
 
 ## member
@@ -724,7 +728,7 @@ create-weld --store ROOT --name TEXT --main UUID --secondary UUID --size MM
 read.
 
 ```text
-welds --store ROOT
+welds --store ROOT [--offset N] [--limit N]
 ```
 
 ## bolt
@@ -734,8 +738,8 @@ welds --store ROOT
 write.
 
 ```text
-create-bolt-group --store ROOT --name TEXT --parts UUID,UUID,... --fastener-library FILE
-    --designation TEXT --point1 X,Y,Z --point2 X,Y,Z --plane-normal X,Y,Z --offset-start MM
+create-bolt-group --store ROOT --name TEXT --parts UUID,UUID,... --designation TEXT --point1 X,Y,Z
+    --point2 X,Y,Z --plane-normal X,Y,Z --offset-start MM [--fastener-library FILE]
     [--rotation-deg DEG] [--on-plane MM] [--depth MM] [--spacings MM,MM,...] [--count N]
     [--pitch MM] [--offset-end MM] [--washer-under-head true|false]
     [--washer-under-nut true|false] [--length-mode auto|fixed] [--length MM]
@@ -762,7 +766,7 @@ update-bolt-group --store ROOT --target UUID [--name TEXT] [--parts UUID,UUID,..
 read.
 
 ```text
-bolts --store ROOT
+bolts --store ROOT [--offset N] [--limit N]
 ```
 
 ### fastener-geometry
@@ -991,7 +995,7 @@ update-grid --store ROOT --id UUID [--name TEXT] [--origin X,Y] [--rotation DEG]
 read.
 
 ```text
-list-grids --store ROOT [--connection UUID]
+list-grids --store ROOT [--connection UUID] [--offset N] [--limit N]
 ```
 
 ### resolve-grid-point
@@ -1473,7 +1477,7 @@ lookup-feature --store ROOT --feature-id TEXT
 read.
 
 ```text
-list-feature --store ROOT --id UUID
+list-feature --store ROOT --id UUID [--offset N] [--limit N]
 ```
 
 ### element-edges
@@ -1513,6 +1517,16 @@ write.
 
 ```text
 export-bom --store ROOT --out FILE [--summary FILE]
+```
+
+## checks
+
+### check-model
+
+read.
+
+```text
+check-model --store ROOT [--element UUID] [--offset N] [--limit N]
 ```
 
 ## schedules

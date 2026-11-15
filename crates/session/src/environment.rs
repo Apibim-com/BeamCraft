@@ -27,9 +27,16 @@ use std::path::{Path, PathBuf};
 pub const ENVIRONMENT_FILE: &str = "environment.usda";
 /// Name of the folder of environments, next to the program and in the user's settings directory.
 pub const ENVIRONMENTS_DIR: &str = "environments";
+/// Name of the folder of the user's own libraries, in the user's settings directory beside its
+/// [`ENVIRONMENTS_DIR`].
+pub const LIBRARIES_DIR: &str = "libraries";
+/// The id of the shipped neutral environment: the built-in fallback layer every lookup reaches
+/// when no stronger layer declares a designation.
+pub const NEUTRAL_ENVIRONMENT_ID: &str = "blank";
 /// Largest environment file, in bytes.
 pub const MAX_ENVIRONMENT_BYTES: usize = 1024 * 1024;
-/// Most libraries one environment may list; more is `LIMIT_EXCEEDED`.
+/// Most libraries one environment may list, per list (profile, fastener and material); more is
+/// `LIMIT_EXCEEDED`.
 pub const MAX_ENVIRONMENT_LIBRARIES: usize = 32;
 /// Most directory entries [`list_environments`] looks at in one folder.
 pub const MAX_SCANNED: usize = 4_096;
@@ -48,6 +55,12 @@ pub struct EnvironmentInfo {
     pub bytes: u64,
     /// `bim:environment:libraries`, strongest first, exactly as written.
     pub libraries: Vec<String>,
+    /// `bim:environment:fastener-libraries`, strongest first, exactly as written; empty when the
+    /// environment names none.
+    pub fastener_libraries: Vec<String>,
+    /// `bim:environment:material-libraries`, strongest first, exactly as written; empty when the
+    /// environment names none.
+    pub material_libraries: Vec<String>,
     /// `bim:environment:presets`, the contained relative path of the part presets, when declared.
     pub presets: Option<String>,
 }
@@ -83,15 +96,51 @@ fn contained_reference(reference: &str) -> bool {
             .all(|segment| !segment.is_empty() && segment != "." && segment != "..")
 }
 
+/// One `bim:environment:*-libraries` array: a non-empty ordered list of contained relative
+/// paths, none of them twice (`seen` spans every list, so the same file cannot serve as a
+/// profile, a fastener and a material library of one environment).
+fn library_list(items: &[Value], seen: &mut Vec<String>) -> Result<Vec<String>, Refusal> {
+    if items.is_empty() {
+        return Err(invalid("the environment lists no libraries"));
+    }
+    if items.len() > MAX_ENVIRONMENT_LIBRARIES {
+        return Err(refuse(
+            ErrorCode::LimitExceeded,
+            "the environment lists more than 32 libraries",
+        ));
+    }
+    let mut references = Vec::with_capacity(items.len());
+    for item in items {
+        let Value::Text(reference) = item else {
+            return Err(invalid("an environment library is not a string"));
+        };
+        if !contained_reference(reference) {
+            return Err(refuse(
+                ErrorCode::PermissionDenied,
+                "an environment library is not a relative path inside the environment directory",
+            ));
+        }
+        if seen.contains(reference) {
+            return Err(invalid("the environment lists a library twice"));
+        }
+        seen.push(reference.clone());
+        references.push(reference.clone());
+    }
+    Ok(references)
+}
+
 /// Reads the declarations of an environment layer without touching any library.
 ///
 /// The environment is a USD layer whose `customLayerData` carries `bim:environment:id`, an
-/// optional `bim:environment:title` and `bim:environment:libraries`, a non-empty ordered list of
-/// contained relative paths, strongest first. A list entry that is not contained is
-/// `PERMISSION_DENIED` and more than 32 libraries is `LIMIT_EXCEEDED`; anything else malformed is
-/// `INVALID_ARGUMENT`. (The layer engine does not expose composition arcs, and composing the
-/// libraries as sublayers would merge entries instead of letting the strongest library answer, so
-/// the order is an explicit list; see the A07 design note.)
+/// optional `bim:environment:title`, `bim:environment:libraries`, a non-empty ordered list of
+/// contained relative profile-library paths, and optionally
+/// `bim:environment:fastener-libraries` and `bim:environment:material-libraries`, the same kind
+/// of list for the environment's fastener and material libraries; all are strongest first. A list
+/// entry that is not contained is `PERMISSION_DENIED` and more than 32 libraries in one list is
+/// `LIMIT_EXCEEDED`; anything else malformed is `INVALID_ARGUMENT`. (The layer engine does not
+/// expose composition arcs, and composing the libraries as sublayers would merge entries instead
+/// of letting the strongest library answer, so the order is an explicit list; see the A07 design
+/// note.)
 ///
 /// # Errors
 /// A typed [`Refusal`] as described above.
@@ -118,34 +167,29 @@ pub fn parse_environment(bytes: Vec<u8>) -> Result<EnvironmentInfo, Refusal> {
     let id = get("bim:environment:id")?
         .ok_or_else(|| invalid("the environment declares no bim:environment:id"))?;
     let title = get("bim:environment:title")?;
-    let Some(Value::Array(items)) = data.get("bim:environment:libraries") else {
-        return Err(invalid("the environment lists no libraries"));
+    let mut seen = Vec::new();
+    let libraries = match data.get("bim:environment:libraries") {
+        Some(Value::Array(items)) => library_list(items, &mut seen)?,
+        _ => return Err(invalid("the environment lists no libraries")),
     };
-    if items.is_empty() {
-        return Err(invalid("the environment lists no libraries"));
-    }
-    if items.len() > MAX_ENVIRONMENT_LIBRARIES {
-        return Err(refuse(
-            ErrorCode::LimitExceeded,
-            "the environment lists more than 32 libraries",
-        ));
-    }
-    let mut libraries = Vec::with_capacity(items.len());
-    for item in items {
-        let Value::Text(reference) = item else {
-            return Err(invalid("an environment library is not a string"));
-        };
-        if !contained_reference(reference) {
-            return Err(refuse(
-                ErrorCode::PermissionDenied,
-                "an environment library is not a relative path inside the environment directory",
+    let fastener_libraries = match data.get("bim:environment:fastener-libraries") {
+        None => Vec::new(),
+        Some(Value::Array(items)) => library_list(items, &mut seen)?,
+        Some(_) => {
+            return Err(invalid(
+                "the environment fastener libraries are not a string list",
             ));
         }
-        if libraries.contains(reference) {
-            return Err(invalid("the environment lists a library twice"));
+    };
+    let material_libraries = match data.get("bim:environment:material-libraries") {
+        None => Vec::new(),
+        Some(Value::Array(items)) => library_list(items, &mut seen)?,
+        Some(_) => {
+            return Err(invalid(
+                "the environment material libraries are not a string list",
+            ));
         }
-        libraries.push(reference.clone());
-    }
+    };
     let presets = match data.get("bim:environment:presets") {
         None => None,
         Some(Value::Text(reference)) if contained_reference(reference) => Some(reference.clone()),
@@ -163,6 +207,8 @@ pub fn parse_environment(bytes: Vec<u8>) -> Result<EnvironmentInfo, Refusal> {
         digest: layer.digest,
         bytes: layer.bytes,
         libraries,
+        fastener_libraries,
+        material_libraries,
         presets,
     })
 }
@@ -232,6 +278,63 @@ pub fn environment_folders(
         folders.push((user.clone(), "user"));
     }
     (folders, user)
+}
+
+/// The folder of the user's own libraries: `libraries/` under the application data directory
+/// (`config_dir`, or the settings directory of the current user when `config_dir` is `None`),
+/// beside its [`ENVIRONMENTS_DIR`]. The folder is where a person keeps library files of their
+/// own; the programs never create or write it, and no environment update ever touches it — it
+/// is the user-owned firm layer of the lookup.
+#[must_use]
+pub fn libraries_dir(config_dir: Option<&Path>) -> Option<PathBuf> {
+    config_dir
+        .map(Path::to_path_buf)
+        .or_else(settings::default_dir)
+        .map(|dir| dir.join(LIBRARIES_DIR))
+}
+
+/// The library files of the firm layer, in file-name order: every regular file of
+/// [`libraries_dir`] whose name ends in `.usda` or `.usdc` (case-insensitive), at most
+/// [`MAX_SCANNED`] of them. A missing or unreadable folder is no files; every other file there
+/// (a note, a backup copy) is ignored by the scan and never reported.
+#[must_use]
+pub fn firm_library_files(config_dir: Option<&Path>) -> Vec<PathBuf> {
+    let Some(dir) = libraries_dir(config_dir) else {
+        return Vec::new();
+    };
+    let Ok(entries) = fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+    let mut files: Vec<PathBuf> = entries
+        .take(MAX_SCANNED)
+        .filter_map(Result::ok)
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
+        .map(|e| e.path())
+        .filter(|p| {
+            p.extension()
+                .is_some_and(|e| e.eq_ignore_ascii_case("usda") || e.eq_ignore_ascii_case("usdc"))
+        })
+        .collect();
+    files.sort();
+    files
+}
+
+/// The file of the environment `id` among `folders`: the first ready one that no earlier
+/// environment of the same id shadows, the answer [`list_environments`] reports for it. `None`
+/// when no folder holds an environment of that id, or every one of that id is shadowed or
+/// refused.
+#[must_use]
+pub fn find_environment(folders: &[(PathBuf, &'static str)], id: &str) -> Option<PathBuf> {
+    list_environments(folders)
+        .into_iter()
+        .find_map(|entry| match entry.state {
+            EnvironmentState::Ready {
+                id: ready,
+                shadowed: false,
+                ..
+            } if ready == id => Some(entry.path),
+            _ => None,
+        })
 }
 
 /// The environments of the given folders (each `(folder, origin)`), in folder order and by folder
@@ -332,6 +435,12 @@ mod tests {
         )
     }
 
+    /// The header of a layer whose `customLayerData` is still open, with the required profile
+    /// list already in place; entries append before the closing braces.
+    fn layer_head(id: &str) -> String {
+        layer(id, "[\"a.usda\"]").replace("    }\n)\n", "")
+    }
+
     fn scratch(tag: &str) -> PathBuf {
         let dir =
             std::env::temp_dir().join(format!("session-environment-{tag}-{}", std::process::id()));
@@ -365,6 +474,102 @@ mod tests {
         assert_eq!(info.id, "steel");
         assert_eq!(info.libraries, ["a.usda", "sub/b.usda"]);
         assert_eq!(info.title, None);
+    }
+
+    #[test]
+    fn an_environment_may_declare_fastener_libraries() {
+        let declared = format!(
+            "{}        string[] \"bim:environment:fastener-libraries\" = [\"bolts.usda\", \"sub/nuts.usda\"]\n    }}\n)\n",
+            layer_head("e")
+        );
+        let info = parse_environment(declared.into_bytes()).unwrap();
+        assert_eq!(info.fastener_libraries, ["bolts.usda", "sub/nuts.usda"]);
+        assert_eq!(info.libraries, ["a.usda"]);
+        let none = parse_environment(layer("e", "[\"a.usda\"]").into_bytes()).unwrap();
+        assert_eq!(none.fastener_libraries, Vec::<String>::new());
+        // The same containment rules as the profile list.
+        let escaped = parse_environment(
+            format!(
+                "{}        string[] \"bim:environment:fastener-libraries\" = [\"../b.usda\"]\n    }}\n)\n",
+                layer_head("e")
+            )
+            .into_bytes(),
+        )
+        .unwrap_err();
+        assert_eq!(escaped.code, ErrorCode::PermissionDenied);
+        // The same file cannot serve as a profile and a fastener library of one environment.
+        let twice = parse_environment(
+            format!(
+                "{}        string[] \"bim:environment:fastener-libraries\" = [\"a.usda\"]\n    }}\n)\n",
+                layer_head("e")
+            )
+            .into_bytes(),
+        )
+        .unwrap_err();
+        assert_eq!(twice.code, ErrorCode::InvalidArgument);
+        // An empty list is no list.
+        let empty = parse_environment(
+            format!(
+                "{}        string[] \"bim:environment:fastener-libraries\" = []\n    }}\n)\n",
+                layer_head("e")
+            )
+            .into_bytes(),
+        )
+        .unwrap_err();
+        assert_eq!(empty.code, ErrorCode::InvalidArgument);
+        // A non-string entry is refused for the material list too, and the same file cannot
+        // serve as a profile and a material library of one environment.
+        let mistyped = parse_environment(
+            format!(
+                "{}        string \"bim:environment:material-libraries\" = \"a.usda\"\n    }}\n)\n",
+                layer_head("e")
+            )
+            .into_bytes(),
+        )
+        .unwrap_err();
+        assert_eq!(mistyped.code, ErrorCode::InvalidArgument);
+        let twice = parse_environment(
+            format!(
+                "{}        string[] \"bim:environment:material-libraries\" = [\"a.usda\"]\n    }}\n)\n",
+                layer_head("e")
+            )
+            .into_bytes(),
+        )
+        .unwrap_err();
+        assert_eq!(twice.code, ErrorCode::InvalidArgument);
+    }
+
+    #[test]
+    fn an_environment_may_declare_material_libraries() {
+        let declared = format!(
+            "{}        string[] \"bim:environment:material-libraries\" = [\"grades.usda\", \"sub/more.usda\"]\n    }}\n)\n",
+            layer_head("e")
+        );
+        let info = parse_environment(declared.into_bytes()).unwrap();
+        assert_eq!(info.material_libraries, ["grades.usda", "sub/more.usda"]);
+        assert_eq!(info.libraries, ["a.usda"]);
+        let none = parse_environment(layer("e", "[\"a.usda\"]").into_bytes()).unwrap();
+        assert_eq!(none.material_libraries, Vec::<String>::new());
+        // The same containment rules as the other lists.
+        let escaped = parse_environment(
+            format!(
+                "{}        string[] \"bim:environment:material-libraries\" = [\"../m.usda\"]\n    }}\n)\n",
+                layer_head("e")
+            )
+            .into_bytes(),
+        )
+        .unwrap_err();
+        assert_eq!(escaped.code, ErrorCode::PermissionDenied);
+        // One file cannot serve as a fastener and a material library of one environment.
+        let shared = parse_environment(
+            format!(
+                "{}        string[] \"bim:environment:fastener-libraries\" = [\"g.usda\"]\n        string[] \"bim:environment:material-libraries\" = [\"g.usda\"]\n    }}\n)\n",
+                layer_head("e")
+            )
+            .into_bytes(),
+        )
+        .unwrap_err();
+        assert_eq!(shared.code, ErrorCode::InvalidArgument);
     }
 
     #[test]
@@ -471,6 +676,95 @@ mod tests {
     }
 
     #[test]
+    fn the_libraries_folder_sits_beside_the_environments_folder() {
+        let dir = scratch("libraries");
+        assert_eq!(
+            libraries_dir(Some(&dir)),
+            Some(dir.join(LIBRARIES_DIR)),
+            "libraries/ under the given application data directory"
+        );
+        assert_eq!(
+            libraries_dir(None),
+            settings::default_dir().map(|d| d.join(LIBRARIES_DIR))
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn firm_library_files_are_sorted_library_files_only() {
+        let dir = scratch("firm-files");
+        let libraries = dir.join(LIBRARIES_DIR);
+        fs::create_dir_all(libraries.join("nested")).unwrap();
+        fs::write(libraries.join("b.usda"), "x").unwrap();
+        fs::write(libraries.join("a.USDA"), "x").unwrap();
+        fs::write(libraries.join("c.usdc"), "x").unwrap();
+        fs::write(libraries.join("notes.txt"), "x").unwrap();
+        fs::write(libraries.join("d.partial.usda"), "x").unwrap();
+        fs::write(libraries.join("nested/e.usda"), "x").unwrap();
+        let found = firm_library_files(Some(&dir));
+        let names: Vec<String> = found
+            .iter()
+            .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+            .collect();
+        assert_eq!(
+            names,
+            ["a.USDA", "b.usda", "c.usdc", "d.partial.usda"],
+            "sorted by name, library extensions only, no subfolder descent"
+        );
+        assert!(found.iter().all(|p| p.starts_with(&libraries)));
+        // A missing folder is no files, and the scan never creates anything.
+        assert_eq!(
+            firm_library_files(Some(&dir.join("absent"))),
+            Vec::<PathBuf>::new()
+        );
+        assert_eq!(
+            fs::read_dir(&dir).unwrap().count(),
+            1,
+            "only libraries/ was made by the test"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn find_environment_answers_the_first_ready_one_of_its_id() {
+        let builtin = scratch("find-builtin");
+        let user = scratch("find-user");
+        put(&builtin, "one", &layer("shared", "[\"p.usda\"]"));
+        put(&user, "again", &layer("shared", "[\"p.usda\"]"));
+        put(&user, "other", &layer("other", "[\"p.usda\"]"));
+        put(&user, "broken", "not a layer");
+        let folders = [(builtin.clone(), "builtin"), (user.clone(), "user")];
+        let shared = find_environment(&folders, "shared");
+        assert!(
+            shared
+                .as_ref()
+                .is_some_and(|p| p.ends_with("one/environment.usda")),
+            "the first folder's environment answers: {shared:?}"
+        );
+        let other = find_environment(&folders, "other");
+        assert!(
+            other
+                .as_ref()
+                .is_some_and(|p| p.ends_with("other/environment.usda")),
+            "a later folder's own id is found: {other:?}"
+        );
+        assert!(shared.is_some_and(|p| p.is_file()) && other.is_some_and(|p| p.is_file()));
+        assert_eq!(
+            find_environment(&folders, "missing"),
+            None,
+            "no folder holds that id"
+        );
+        let user_only = [(user.clone(), "user")];
+        assert!(
+            find_environment(&user_only, "shared")
+                .is_some_and(|p| p.ends_with("again/environment.usda")),
+            "with the first folder gone the user's copy answers"
+        );
+        let _ = fs::remove_dir_all(&builtin);
+        let _ = fs::remove_dir_all(&user);
+    }
+
+    #[test]
     fn the_shipped_environments_read() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../..")
@@ -488,6 +782,41 @@ mod tests {
                 EnvironmentState::Ready { id, .. } if id == "blank"
             )),
             "the base blank environment ships with the program"
+        );
+        assert!(
+            entries.iter().any(|e| matches!(
+                &e.state,
+                EnvironmentState::Ready { id, .. } if id == "europe"
+            )),
+            "the shipped regional europe environment reads"
+        );
+        assert!(
+            entries.iter().any(|e| matches!(
+                &e.state,
+                EnvironmentState::Ready { id, .. } if id == "russia"
+            )),
+            "the shipped regional russia environment reads"
+        );
+        assert!(
+            entries.iter().any(|e| matches!(
+                &e.state,
+                EnvironmentState::Ready { id, .. } if id == "australia"
+            )),
+            "the shipped regional australia environment reads"
+        );
+        assert!(
+            entries.iter().any(|e| matches!(
+                &e.state,
+                EnvironmentState::Ready { id, .. } if id == "india"
+            )),
+            "the shipped regional india environment reads"
+        );
+        assert!(
+            entries.iter().any(|e| matches!(
+                &e.state,
+                EnvironmentState::Ready { id, .. } if id == "china"
+            )),
+            "the shipped regional china environment reads"
         );
     }
 }

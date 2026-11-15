@@ -68,6 +68,8 @@ pub enum Route {
     Bolt,
     /// `export-bom`.
     Bom,
+    /// `check-model`.
+    Check,
     /// `schedule-export`.
     Schedule,
     /// The library commands.
@@ -430,7 +432,12 @@ pub const COMMANDS: &[Command] = &[
         "inspect-elements",
         Access::Read,
         Ids::None,
-        &[req("--store", "ROOT"), opt("--element", "UUID")],
+        &[
+            req("--store", "ROOT"),
+            opt("--element", "UUID"),
+            opt("--offset", "N"),
+            opt("--limit", "N"),
+        ],
     ),
     entry(
         Route::Plate,
@@ -444,6 +451,9 @@ pub const COMMANDS: &[Command] = &[
             opt("--grade", "TEXT"),
             opt("--standard", "TEXT"),
             opt("--name", "TEXT"),
+            opt("--library", "FILE"),
+            opt("--environment", "FILE"),
+            opt("--designation", "TEXT"),
             opt("--revision-id", "UUID"),
             opt("--actor-id", "UUID"),
             opt("--project-id", "UUID"),
@@ -462,7 +472,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--height", "MM"),
             opt(
                 "--family",
-                "i_shape|channel|angle|rhs|chs|lipped_c|plain_c|lipped_z|omega|custom",
+                "i_shape|channel|tapered_i|tapered_c|angle|rhs|chs|lipped_c|plain_c|lipped_z|omega|custom",
             ),
             opt("--h", "MM"),
             opt("--b", "MM"),
@@ -470,8 +480,11 @@ pub const COMMANDS: &[Command] = &[
             opt("--tf", "MM"),
             opt("--t", "MM"),
             opt("--r", "MM"),
+            opt("--r1", "MM"),
             opt("--c", "MM"),
             opt("--d", "MM"),
+            opt("--s", "MM"),
+            opt("--k", "N"),
             opt("--outer", "X,Y;X,Y;..."),
             opt("--cavity", "X,Y;...|X,Y;..."),
             opt("--library", "FILE"),
@@ -529,6 +542,7 @@ pub const COMMANDS: &[Command] = &[
             one(1, "--library", "FILE"),
             one(1, "--environment", "FILE"),
             one(1, "--fastener-library", "FILE"),
+            one(1, "--project", "ROOT"),
             opt("--user-library", "FILE"),
             opt("--family", "TEXT"),
             opt("--filter", "TEXT"),
@@ -548,6 +562,7 @@ pub const COMMANDS: &[Command] = &[
             one(1, "--library", "FILE"),
             one(1, "--environment", "FILE"),
             one(1, "--fastener-library", "FILE"),
+            one(1, "--project", "ROOT"),
             opt("--user-library", "FILE"),
         ],
     ),
@@ -566,7 +581,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--height", "MM"),
             opt(
                 "--family",
-                "i_shape|channel|angle|rhs|chs|lipped_c|plain_c|lipped_z|omega|custom",
+                "i_shape|channel|tapered_i|tapered_c|angle|rhs|chs|lipped_c|plain_c|lipped_z|omega|custom",
             ),
             opt("--h", "MM"),
             opt("--b", "MM"),
@@ -574,8 +589,11 @@ pub const COMMANDS: &[Command] = &[
             opt("--tf", "MM"),
             opt("--t", "MM"),
             opt("--r", "MM"),
+            opt("--r1", "MM"),
             opt("--c", "MM"),
             opt("--d", "MM"),
+            opt("--s", "MM"),
+            opt("--k", "N"),
             opt("--outer", "X,Y;X,Y;..."),
             opt("--cavity", "X,Y;X,Y;...|X,Y;X,Y;..."),
             opt("--standard", "TEXT"),
@@ -1325,7 +1343,11 @@ pub const COMMANDS: &[Command] = &[
         "welds",
         Access::Read,
         Ids::None,
-        &[req("--store", "ROOT")],
+        &[
+            req("--store", "ROOT"),
+            opt("--offset", "N"),
+            opt("--limit", "N"),
+        ],
     ),
     entry(
         Route::Bolt,
@@ -1337,7 +1359,7 @@ pub const COMMANDS: &[Command] = &[
             req("--store", "ROOT"),
             req("--name", "TEXT"),
             req("--parts", "UUID,UUID,..."),
-            req("--fastener-library", "FILE"),
+            opt("--fastener-library", "FILE"),
             req("--designation", "TEXT"),
             req("--point1", "X,Y,Z"),
             req("--point2", "X,Y,Z"),
@@ -1398,7 +1420,11 @@ pub const COMMANDS: &[Command] = &[
         "bolts",
         Access::Read,
         Ids::None,
-        &[req("--store", "ROOT")],
+        &[
+            req("--store", "ROOT"),
+            opt("--offset", "N"),
+            opt("--limit", "N"),
+        ],
     ),
     entry(
         Route::Fastener,
@@ -1709,7 +1735,12 @@ pub const COMMANDS: &[Command] = &[
         "list-grids",
         Access::Read,
         Ids::None,
-        &[req("--store", "ROOT"), opt("--connection", "UUID")],
+        &[
+            req("--store", "ROOT"),
+            opt("--connection", "UUID"),
+            opt("--offset", "N"),
+            opt("--limit", "N"),
+        ],
     ),
     entry(
         Route::Grid,
@@ -2444,7 +2475,12 @@ pub const COMMANDS: &[Command] = &[
         "list-feature",
         Access::Read,
         Ids::None,
-        &[req("--store", "ROOT"), req("--id", "UUID")],
+        &[
+            req("--store", "ROOT"),
+            req("--id", "UUID"),
+            opt("--offset", "N"),
+            opt("--limit", "N"),
+        ],
     ),
     entry(
         Route::Pick,
@@ -2502,6 +2538,19 @@ pub const COMMANDS: &[Command] = &[
             req("--store", "ROOT"),
             req("--out", "FILE"),
             opt("--summary", "FILE"),
+        ],
+    ),
+    entry(
+        Route::Check,
+        "checks",
+        "check-model",
+        Access::Read,
+        Ids::None,
+        &[
+            req("--store", "ROOT"),
+            opt("--element", "UUID"),
+            opt("--offset", "N"),
+            opt("--limit", "N"),
         ],
     ),
     entry(

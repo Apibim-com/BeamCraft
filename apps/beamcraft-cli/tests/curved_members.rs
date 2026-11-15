@@ -294,3 +294,115 @@ fn curved_creation_and_point_replacement_each_undo_as_one_command() {
         text(at(&updated, &["element"]), "mesh_digest")
     );
 }
+
+#[test]
+fn a_large_radius_arc_is_built_and_an_over_budget_arc_names_its_limit() {
+    let f = Fixture::new();
+    // A rolled I section with root fillets: about forty outline points per ring.
+    let i_section = text(
+        at(
+            &f.ok(
+                "define-profile",
+                &[
+                    "--family", "i_shape", "--h", "300", "--b", "150", "--tw", "7", "--tf", "10",
+                    "--r", "15",
+                ],
+            ),
+            &["definition"],
+        ),
+        "digest",
+    );
+    // A 30 m radius needs more edges per full turn than the profile-curve cap at 0.05 mm; the
+    // 5 m arc itself needs far fewer facets. It used to be refused as LIMIT_EXCEEDED.
+    let created = f.ok(
+        "create-curved-beam",
+        &[
+            "--start",
+            "0,0,0",
+            "--end",
+            "5000,0,0",
+            "--radius",
+            "30000",
+            "--normal",
+            "0,0,1",
+            "--profile-digest",
+            &i_section,
+        ],
+    );
+    let member = at(&created, &["member"]);
+    let deviation = num(member, &["arc_deviation_mm"]);
+    assert!(deviation > 0.0 && deviation <= 0.05, "{deviation}");
+    // Arc length of the minor arc over a 5000 mm chord at R = 30000: 2 R asin(c / 2R).
+    let length = 2.0 * 30000.0 * (5000.0_f64 / 60000.0).asin();
+    assert!((num(member, &["axis_length_mm"]) - length).abs() < 1e-6);
+
+    // A long arc of the same section needs more rings than one member's mesh budget: still
+    // refused, now with the budget and the way out named.
+    let head = f.ok("open-revision", &[]);
+    let (code, refused) = f.run(
+        "create-curved-beam",
+        &[
+            "--start",
+            "0,0,0",
+            "--end",
+            "10000,0,0",
+            "--radius",
+            "12000",
+            "--normal",
+            "0,0,1",
+            "--profile-digest",
+            &i_section,
+        ],
+    );
+    assert_eq!(code, 2, "{refused:?}");
+    assert_eq!(text(&refused, "code"), "LIMIT_EXCEEDED");
+    assert!(text(&refused, "message").contains("4096-vertex budget"));
+    assert_eq!(f.ok("open-revision", &[]), head);
+
+    // The way out the refusal names (P13): split the arc into members of the same circle.
+    // The split point is the refused arc's own mid-arc point (x = 5000, the sagitta top of
+    // the R 12 m circle over the 10 m chord), so both pieces are minor arcs of that circle.
+    let theta_half = (10000.0_f64 / 24000.0).asin();
+    let mid_y = 12000.0 * (1.0 - theta_half.cos());
+    let mid = format!("5000,{mid_y},0");
+    let first_created = f.ok(
+        "create-curved-beam",
+        &[
+            "--start",
+            "0,0,0",
+            "--end",
+            mid.as_str(),
+            "--radius",
+            "12000",
+            "--normal",
+            "0,0,1",
+            "--profile-digest",
+            &i_section,
+        ],
+    );
+    let first = at(&first_created, &["member"]);
+    let second_created = f.ok(
+        "create-curved-beam",
+        &[
+            "--start",
+            mid.as_str(),
+            "--end",
+            "10000,0,0",
+            "--radius",
+            "12000",
+            "--normal",
+            "0,0,1",
+            "--profile-digest",
+            &i_section,
+        ],
+    );
+    let second = at(&second_created, &["member"]);
+    for part in [first, second] {
+        let deviation = num(part, &["arc_deviation_mm"]);
+        assert!(deviation > 0.0 && deviation <= 0.05, "{deviation}");
+    }
+    // The piece lengths add up to the refused arc's true length (R * angle, both halves).
+    let full = 2.0 * 12000.0 * theta_half;
+    let split = num(first, &["axis_length_mm"]) + num(second, &["axis_length_mm"]);
+    assert!((split - full).abs() < 1e-6, "{split} != {full}");
+}

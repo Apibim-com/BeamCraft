@@ -11,12 +11,26 @@ saved setting.
 
 ## What changed
 
-* `environments/blank/` is the one built-in A07.3 environment and the base for other
-  environments. Its library has nineteen generic profiles (I, H, channel, angle, RHS, SHS, CHS,
-  bar and one cold-formed C). Every value is invented and rounded; none follows a standard or
-  catalogue (`AGENTS.md` 1.2). The start window prefers it when no environment is saved. These
-  profiles first shipped as a separate `starter` environment next to an empty `blank`; the two
-  were merged on 2026-11-01 so that the base environment is usable on its own.
+* `environments/blank/` is the built-in A07.3 base environment. Its library has nineteen generic
+  profiles (I, H, channel, angle, RHS, SHS, CHS, bar and one cold-formed C). Every value is
+  invented and rounded; none follows a standard or catalogue (`AGENTS.md` 1.2). The start window
+  prefers it when no environment is saved. These profiles first shipped as a separate `starter`
+  environment next to an empty `blank`; the two were merged on 2026-11-01 so that the base
+  environment is usable on its own. Regional environments ship beside it since 2026-11-14:
+  `environments/europe/` holds the real EN 10365:2022 IPE, HEA and HEB nominal dimensions, the
+  parallel-flange UPE channel series and, since 2026-11-15, a second profile library with the
+  EN 10219-2:2006 cold-formed hollow sections (SHS, RHS and CHS common sizes, validated against
+  the hollow closed-form area); `environments/russia/` holds the GOST 26020-83 parallel-flange
+  beam (Б), wide-flange (Ш) and column (К) series and, since 2026-11-15, a second profile
+  library with the GOST 30245-2003 cold-bent square hollow sections (the complete square
+  series, sizes 40x40 to 300x300; validated against the hollow closed-form area) and the
+  GOST 7798-70 hex-bolt fastener set (M12/16/20/24, the environment's fastener library,
+  BC-ENV-002); `environments/australia/` (2026-11-15) holds the
+  AS/NZS 3679.1:2016 UB and UC series and the AS/NZS 1163:2016 Appendix D hollow series,
+  `environments/india/` holds the IS 808:2021
+  narrow (NPB) and wide (WPB) parallel flange beam series, and `environments/china/`
+  (2026-11-15) holds the GB/T 706-2016 tapered-flange I-beam and channel series through the
+  `tapered_i` and `tapered_c` section families (see `ATTRIBUTION.md`).
 * `create-project --environment ID` looks the environment up (built-in, then the user's), reads
   and admits it, then copies it into the project folder (`environment/`) and publishes the two
   default materials. The project therefore carries its environment: closing and reopening it, or
