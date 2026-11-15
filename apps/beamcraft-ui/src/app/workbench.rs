@@ -514,24 +514,10 @@ impl App {
                     theme::logo(ui, self.logo.as_ref(), 20.0);
                     let free = !self.other_command_running() && !self.editor.busy();
                     if !self.menu_open {
-                        if theme::icon_button(
-                            ui,
-                            Icon::Undo,
-                            "Undo",
-                            self.source.workspace.is_some() && free,
-                        )
-                        .clicked()
-                        {
+                        if theme::icon_button(ui, Icon::Undo, "Undo", free).clicked() {
                             self.start_edit(Some(EditKind::Undo));
                         }
-                        if theme::icon_button(
-                            ui,
-                            Icon::Redo,
-                            "Redo",
-                            self.source.workspace.is_some() && free,
-                        )
-                        .clicked()
-                        {
+                        if theme::icon_button(ui, Icon::Redo, "Redo", free).clicked() {
                             self.start_edit(Some(EditKind::Redo));
                         }
                         ui.separator();
@@ -718,7 +704,6 @@ impl App {
                 // The benches a source window can reach: display-only ones. Everything that
                 // writes stays on its button, greyed out (issue 614).
                 let store_free = !self.source.read_only();
-                let has_workspace = self.source.workspace.is_some();
                 // Every viewport command needs a pane to act on.
                 let has_pane = self.views.active_pane().is_some();
                 let mut pick = None;
@@ -803,7 +788,7 @@ impl App {
                         }
                     });
                     group(ui, "History", &mut |ui| {
-                        let can = has_workspace && edits_free;
+                        let can = edits_free;
                         undo = tool_button(ui, Icon::Undo, "Undo", false, can).clicked();
                         redo = tool_button(ui, Icon::Redo, "Redo", false, can).clicked();
                     });

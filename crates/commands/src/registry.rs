@@ -1083,6 +1083,30 @@ pub const COMMANDS: &[Command] = &[
     entry(
         Route::Plate,
         "workspace",
+        "undo-revision",
+        Access::Write,
+        Ids::None,
+        &[
+            req("--store", "ROOT"),
+            opt("--revision-id", "UUID"),
+            opt("--op-id", "UUID"),
+        ],
+    ),
+    entry(
+        Route::Plate,
+        "workspace",
+        "redo-revision",
+        Access::Write,
+        Ids::None,
+        &[
+            req("--store", "ROOT"),
+            opt("--revision-id", "UUID"),
+            opt("--op-id", "UUID"),
+        ],
+    ),
+    entry(
+        Route::Plate,
+        "workspace",
         "undo-workspace",
         Access::Write,
         Ids::None,

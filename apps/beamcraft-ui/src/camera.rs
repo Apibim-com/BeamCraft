@@ -248,6 +248,47 @@ impl Camera {
         ];
         Ok(())
     }
+    /// Orbits (radians, as [`Self::navigate`] takes them) rigidly about `pivot`, a point in scene
+    /// coordinates: the pivot keeps its place on screen and the distance and zoom stay, as Tekla
+    /// turns the view about its rotation point. A view plane never orbits, as in `navigate`.
+    pub fn orbit_about(&mut self, pivot: [f32; 3], orbit: [f32; 2]) -> Result<(), Error> {
+        if !pivot
+            .into_iter()
+            .chain(orbit)
+            .all(|x| x.is_finite() && x.abs() <= 1e7)
+        {
+            return Err(Error::Input("camera navigation"));
+        }
+        if self.basis.is_some() || orbit == [0.0, 0.0] {
+            return Ok(());
+        }
+        let frame = |camera: &Self| -> Result<[[f32; 3]; 3], Error> {
+            let view = camera.view(1.0)?;
+            let [rx, ry, rz, _] = view.right;
+            let [ux, uy, uz, _] = view.up;
+            let [bx, by, bz, _] = view.back;
+            Ok([[rx, ry, rz], [ux, uy, uz], [bx, by, bz]])
+        };
+        let [r, u, b] = frame(self)?;
+        let [tx, ty, tz] = self.target;
+        let [px, py, pz] = pivot;
+        let offset = [tx - px, ty - py, tz - pz];
+        let local = [dot(offset, r), dot(offset, u), dot(offset, b)];
+        let [ox, oy] = orbit;
+        self.yaw = (self.yaw + ox).rem_euclid(std::f32::consts::TAU);
+        self.pitch = (self.pitch + oy).clamp(0.0, 1.52);
+        let [r2, u2, b2] = frame(self)?;
+        let moved = sum(
+            sum(scaled(r2, local[0]), scaled(u2, local[1])),
+            scaled(b2, local[2]),
+        );
+        self.target = sum(pivot, moved).map(|v| v.clamp(-1e7, 1e7));
+        Ok(())
+    }
+    /// The point the camera looks at, in scene coordinates.
+    pub fn target(&self) -> [f32; 3] {
+        self.target
+    }
     /// Frames new bounds for a viewport of `aspect` while keeping the viewing direction.
     pub fn fit(&mut self, target: [f32; 3], extent: f32, aspect: f32) -> Result<(), Error> {
         let framed = Self::new(target, extent, aspect)?;
@@ -675,6 +716,33 @@ mod tests {
         assert!(c.cursor_zoom_pan([f32::NAN, 0.0], aspect, 1.0).is_err());
         assert!(c.cursor_zoom_pan([2.0, 0.0], aspect, 1.0).is_err());
         assert!(c.cursor_zoom_pan([0.0, 0.0], aspect, f32::NAN).is_err());
+    }
+    #[test]
+    fn an_orbit_about_a_pivot_keeps_the_pivot_in_place_on_screen() {
+        // Tekla turns the view about its rotation point: the point stays where it was on the
+        // screen while the model turns around it.
+        for orthographic in [false, true] {
+            let mut c = Camera::new([0.0; 3], 4000.0, 1.6).unwrap();
+            c.set_projection(orthographic);
+            let pivot = [1500.0, -800.0, 300.0];
+            let before = c.view(1.6).unwrap().project(pivot);
+            c.orbit_about(pivot, [0.4, -0.2]).unwrap();
+            let after = c.view(1.6).unwrap().project(pivot);
+            assert!(
+                (before[0] - after[0]).abs() < 1e-3 && (before[1] - after[1]).abs() < 1e-3,
+                "{before:?} -> {after:?}"
+            );
+            // It did turn: the target moved round the pivot.
+            assert_ne!(c.target(), [0.0; 3]);
+        }
+        // A view plane never orbits, about a pivot or not.
+        let plane = WorkPlane::new([0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]).unwrap();
+        let mut plan = Camera::aligned_to(plane, [0.0; 3], 4000.0, 500.0).unwrap();
+        let before = plan.view(1.0).unwrap();
+        plan.orbit_about([100.0, 100.0, 0.0], [0.5, 0.5]).unwrap();
+        assert_eq!(plan.view(1.0).unwrap().back, before.back);
+        // A hostile pivot is refused.
+        assert!(plan.orbit_about([f32::NAN; 3], [0.1, 0.0]).is_err());
     }
     #[test]
     fn the_orthographic_depth_range_is_tight_enough_to_order_parts_a_few_millimetres_apart() {
