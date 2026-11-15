@@ -110,6 +110,31 @@ fn selection_edges(snapshot: &beamcraft_engine::ViewSnapshot, text: &str) -> Vec
         .unwrap_or_default()
 }
 
+/// Where `ray` meets the plane the pointer works on, in millimetres: the view's own plane in a
+/// plan, an elevation or a section, else the work plane `work`, else the ground. With a work
+/// plane set the point is given in its axes, otherwise in model coordinates. `origin` is the
+/// display origin.
+pub(super) fn working_coordinates(
+    camera: &crate::camera::Camera,
+    origin: [f64; 3],
+    work: Option<beamcraft_engine::work_plane::WorkPlane>,
+    ray: &crate::edit::Ray,
+) -> Option<[f64; 3]> {
+    let plane = if camera.is_aligned() {
+        camera.frame(origin).ok().map(|(plane, _)| plane)
+    } else {
+        work
+    };
+    let world = match plane {
+        Some(plane) => plane.ray_point(ray.origin, ray.direction),
+        None => crate::edit::ground_point(ray),
+    }?;
+    match work {
+        Some(work) => work.to_local(world).ok(),
+        None => Some(world),
+    }
+}
+
 impl App {
     /// Width over height of the active pane's image; 1.6 without a pane.
     pub(super) fn aspect(&self) -> f32 {
@@ -790,6 +815,25 @@ impl App {
             }
         };
         view.tint = tint;
+        let display_origin = self
+            .loaded
+            .as_ref()
+            .map_or([0.0; 3], |l| l.summary.origin_mm);
+        // The working coordinate under the pointer, for the status bar. Only a pane the
+        // pointer is over writes it; the frame stamp lets a stale reading expire when the
+        // pointer leaves every pane.
+        if let Some(pos) = response.hover_pos()
+            && let Some(ndc) = ndc_of(
+                [pos.x, pos.y],
+                [response.rect.min.x, response.rect.min.y],
+                [response.rect.width(), response.rect.height()],
+            )
+            && let Some(ray) = ray_through(&view, ndc, display_origin)
+        {
+            self.pointer_world =
+                working_coordinates(&pane.camera, display_origin, self.tools.plane, &ray)
+                    .map(|point| (ui.ctx().cumulative_pass_nr(), point));
+        }
         // The same clear colours `screenshot-view` answers with (issue 562 item 36): the dark
         // theme sits on the renderer's dark background, the light one on the paper tone.
         let background = if dark {
@@ -917,7 +961,7 @@ impl App {
             // beams (issue 569 item 13): `pane.grids` is only the pane's guides switch.
             if pane.grids && shown.is_none_or(|v| v.shows_kind(beamcraft_engine::ElementKind::Grid))
             {
-                self.grid_scene.paint(
+                let bubbles = self.grid_scene.paint(
                     ui,
                     response.rect,
                     &view,
@@ -932,7 +976,10 @@ impl App {
                     l.summary.origin_mm[2],
                     self.grid_scene.bounds(&l.summary),
                     &self.tools.definitions.levels,
-                    self.level_panel.selected_id(),
+                    crate::levels::SectionMarks {
+                        selected: self.level_panel.selected_id(),
+                        avoid: &bubbles,
+                    },
                 );
             }
             if let Ok(rows) = self.annotation.rows.as_deref()
