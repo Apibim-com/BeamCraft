@@ -135,6 +135,106 @@ pub(super) fn working_coordinates(
     }
 }
 
+/// The centre of an element's bounds in model millimetres: the rotation point while it is
+/// selected.
+pub(super) fn element_centre(
+    snapshot: &beamcraft_engine::ViewSnapshot,
+    id: &str,
+) -> Option<[f64; 3]> {
+    let element = snapshot
+        .elements()
+        .iter()
+        .find(|e| e.id.to_string() == id)?;
+    let bounds = element.full.world_bounds;
+    let centre: [f64; 3] = std::array::from_fn(|i| {
+        let low = bounds.min.get(i).copied().map_or(0.0, f64::from);
+        let high = bounds.max.get(i).copied().map_or(0.0, f64::from);
+        (low + high) / 2.0
+    });
+    centre.iter().all(|v| v.is_finite()).then_some(centre)
+}
+
+/// The model point a ray meets: the face it hits (an active view hits only what it shows, the
+/// display cut hides what it cuts away), else the ground.
+pub(super) fn model_point(
+    snapshot: &beamcraft_engine::ViewSnapshot,
+    shown: Option<&beamcraft_engine::views::ModelView>,
+    cut: Option<&beamcraft_engine::view_clipping::Clipping>,
+    ray: &crate::edit::Ray,
+) -> Option<[f64; 3]> {
+    let filter = beamcraft_engine::query::pick::SelectionFilter::ALL;
+    let hit = match shown {
+        Some(view) => beamcraft_engine::views::pick_visible_except(
+            snapshot,
+            view,
+            ray.origin,
+            ray.direction,
+            filter,
+            &std::collections::BTreeSet::new(),
+            cut,
+            false,
+        )
+        .ok()
+        .flatten(),
+        None => beamcraft_engine::views::pick_kept(
+            snapshot,
+            ray.origin,
+            ray.direction,
+            filter,
+            cut,
+            false,
+        )
+        .ok()
+        .flatten(),
+    };
+    hit.map(|h| h.point_world_mm)
+        .or_else(|| crate::edit::ground_point(ray))
+}
+
+/// The orbit (radians) the arrow keys ask for this frame: Ctrl+arrow turns 15 degrees, Shift+arrow
+/// 5, as in Tekla; Left/Right turn about the vertical, Up/Down tilt. The keys are consumed so no
+/// widget moves its focus with them.
+fn arrow_orbit(ui: &egui::Ui) -> [f32; 2] {
+    use egui::{Key, Modifiers};
+    let mut orbit = [0.0f32; 2];
+    ui.ctx().input_mut(|i| {
+        for (modifiers, degrees) in [(Modifiers::CTRL, 15.0f32), (Modifiers::SHIFT, 5.0)] {
+            let step = degrees.to_radians();
+            if i.consume_key(modifiers, Key::ArrowLeft) {
+                orbit[0] += step;
+            }
+            if i.consume_key(modifiers, Key::ArrowRight) {
+                orbit[0] -= step;
+            }
+            if i.consume_key(modifiers, Key::ArrowUp) {
+                orbit[1] += step;
+            }
+            if i.consume_key(modifiers, Key::ArrowDown) {
+                orbit[1] -= step;
+            }
+        }
+    });
+    orbit
+}
+
+/// Draws the rotation point: a ring with a cross in the brand colour.
+fn paint_pivot(
+    ui: &egui::Ui,
+    rect: egui::Rect,
+    view: &crate::camera::View,
+    origin: [f64; 3],
+    point: [f64; 3],
+) {
+    let Some(at) = crate::grid::project(point, rect, view, origin) else {
+        return;
+    };
+    let painter = ui.painter_at(rect);
+    let stroke = Stroke::new(2.0, theme::BRAND);
+    painter.circle_stroke(at, 7.0, stroke);
+    painter.line_segment([at - vec2(11.0, 0.0), at + vec2(11.0, 0.0)], stroke);
+    painter.line_segment([at - vec2(0.0, 11.0), at + vec2(0.0, 11.0)], stroke);
+}
+
 impl App {
     /// Width over height of the active pane's image; 1.6 without a pane.
     pub(super) fn aspect(&self) -> f32 {
@@ -776,12 +876,26 @@ impl App {
             zoom_out,
             self.invert_zoom,
         );
+        // Tekla's keyboard rotation, in the active pane only: Ctrl+arrows turn the view 15
+        // degrees, Shift+arrows 5, about the same rotation point the mouse uses.
+        let orbit = if keys.is_some() && !ui.ctx().egui_wants_keyboard_input() {
+            let step = arrow_orbit(ui);
+            [orbit[0] + step[0], orbit[1] + step[1]]
+        } else {
+            orbit
+        };
         // A contour grip holding the pointer takes the primary drag from the camera (V18): a
         // trackpad's primary drag would otherwise orbit while the grip is being dragged.
         let (orbit, pan) = if self.contour.holds_pointer() || self.member_grips.holds_pointer() {
             ([0.0; 2], [0.0; 2])
         } else {
             (orbit, pan)
+        };
+        // F8 locks rotation; pan and zoom still work.
+        let orbit = if self.rotation_locked {
+            [0.0; 2]
+        } else {
+            orbit
         };
         let aspect = pane.target.aspect();
         // Zoom toward the cursor: keep the point under the pointer still while zooming. A
@@ -803,11 +917,33 @@ impl App {
                 _ => pan,
             }
         };
-        let mut view = match pane
-            .camera
-            .navigate(orbit, pan, zoom)
-            .and_then(|()| pane.camera.view(aspect))
-        {
+        // The rotation point (Tekla's): the selected element's centre while one is selected,
+        // else the point the user set, else the camera's own target. The orbit turns rigidly
+        // about it; pan and zoom stay as they are.
+        let display_origin = self
+            .loaded
+            .as_ref()
+            .map_or([0.0; 3], |l| l.summary.origin_mm);
+        let selected_centre = self
+            .editor
+            .selected()
+            .zip(self.loaded.as_ref())
+            .and_then(|(selected, l)| element_centre(&l.snapshot, &selected.id));
+        let pivot = selected_centre.or(pane.pivot);
+        let scene_pivot = pivot.map(|p| {
+            std::array::from_fn::<f32, 3, _>(|i| {
+                (p.get(i).copied().unwrap_or(0.0) - display_origin.get(i).copied().unwrap_or(0.0))
+                    as f32
+            })
+        });
+        let moved = match scene_pivot {
+            Some(p) if orbit != [0.0; 2] => pane
+                .camera
+                .orbit_about(p, orbit)
+                .and_then(|()| pane.camera.navigate([0.0; 2], pan, zoom)),
+            _ => pane.camera.navigate(orbit, pan, zoom),
+        };
+        let mut view = match moved.and_then(|()| pane.camera.view(aspect)) {
             Ok(view) => view,
             Err(e) => {
                 self.error = Some(e.to_string());
@@ -815,10 +951,34 @@ impl App {
             }
         };
         view.tint = tint;
-        let display_origin = self
-            .loaded
-            .as_ref()
-            .map_or([0.0; 3], |l| l.summary.origin_mm);
+        // Setting the rotation point: Ctrl+Shift+middle click, or V, at the model point under
+        // the pointer (a face, else the ground).
+        let set_pivot = hovered
+            && ((ctrl && shift && response.clicked_by(egui::PointerButton::Middle))
+                || (!ui.ctx().egui_wants_keyboard_input()
+                    && ui.input(|i| {
+                        // A layout or input method that types the letter without a key event
+                        // still sets the point.
+                        (i.key_pressed(egui::Key::V) && i.modifiers.is_none())
+                            || i.events.iter().any(|e| {
+                                matches!(e, egui::Event::Text(t) if t.eq_ignore_ascii_case("v"))
+                            })
+                    })));
+        if set_pivot
+            && let Some(pos) = response.hover_pos()
+            && let Some(ndc) = ndc_of(
+                [pos.x, pos.y],
+                [response.rect.min.x, response.rect.min.y],
+                [response.rect.width(), response.rect.height()],
+            )
+            && let Some(ray) = ray_through(&view, ndc, display_origin)
+            && let Some(l) = self.loaded.as_ref()
+        {
+            let shown = pane.view.and_then(|id| self.views.book.get(&id));
+            if let Some(point) = model_point(&l.snapshot, shown, self.cut.as_ref(), &ray) {
+                pane.pivot = Some(point);
+            }
+        }
         // The working coordinate under the pointer, for the status bar. Only a pane the
         // pointer is over writes it; the frame stamp lets a stale reading expire when the
         // pointer leaves every pane.
@@ -959,6 +1119,17 @@ impl App {
         if let Some(l) = &self.loaded {
             // A view that hides the grid kind hides its lines and bubbles too, like it hides
             // beams (issue 569 item 13): `pane.grids` is only the pane's guides switch.
+            // The New grid form shows the grid it would create before Create: the editor of
+            // an existing grid has `grid_edit`, a new one does not.
+            if self.bench == workbench::Bench::Grid && self.grid_edit.is_none() {
+                crate::grid::paint_preview(
+                    ui,
+                    response.rect,
+                    &view,
+                    l.summary.origin_mm,
+                    &self.grid_form.preview_lines(),
+                );
+            }
             if pane.grids && shown.is_none_or(|v| v.shows_kind(beamcraft_engine::ElementKind::Grid))
             {
                 let bubbles = self.grid_scene.paint(
@@ -1004,6 +1175,10 @@ impl App {
                     Some(Some(_)) => &selected_rows,
                 };
                 annotation_panel::paint(ui, response.rect, &view, l.summary.origin_mm, rows, keep);
+            }
+            // The rotation point, seen while it is in effect.
+            if let Some(point) = pivot {
+                paint_pivot(ui, response.rect, &view, l.summary.origin_mm, point);
             }
             if let Some(selected) = self.editor.selected() {
                 let key = (selected.id.clone(), l.snapshot.token().as_str().to_owned());

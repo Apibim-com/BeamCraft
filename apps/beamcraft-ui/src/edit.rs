@@ -844,17 +844,24 @@ impl Editor {
                 "--id".into(),
                 id()?,
             ],
-            EditKind::Undo | EditKind::Redo => {
-                let workspace = target.workspace.ok_or_else(|| FormError {
-                    field: "Workspace",
-                    message: "undo and redo need a personal workspace: open the window with --workspace DIR (beamcraft create-workspace makes one)".into(),
-                })?;
-                vec![
+            // A personal workspace steps its draft; a project opened directly steps its own
+            // history, so Ctrl+Z works in every window as it does in Tekla.
+            EditKind::Undo | EditKind::Redo => match target.workspace {
+                Some(workspace) => vec![
                     kind.command().to_owned(),
                     "--workspace-dir".into(),
                     workspace.to_string_lossy().into_owned(),
-                ]
-            }
+                ],
+                None => vec![
+                    if kind == EditKind::Undo {
+                        "undo-revision".to_owned()
+                    } else {
+                        "redo-revision".to_owned()
+                    },
+                    "--store".into(),
+                    store,
+                ],
+            },
         };
         if matches!(kind, EditKind::Move | EditKind::Copy | EditKind::Delete) {
             crate::tools::push_actor(&mut args, self.actor.as_deref());
@@ -990,7 +997,11 @@ pub fn parse_edited(
     }
     let outcome = text(&reply, "outcome").unwrap_or_default();
     let replayed = outcome.ends_with("_replayed");
-    if outcome != kind.outcome() && !replayed {
+    let project_step = matches!(
+        (kind, outcome.as_str()),
+        (EditKind::Undo, "revision_undone") | (EditKind::Redo, "revision_redone")
+    );
+    if outcome != kind.outcome() && !replayed && !project_step {
         return Err(ToolError {
             code: "UNREADABLE_REPLY".into(),
             message: format!(
@@ -1513,13 +1524,20 @@ mod tests {
     }
 
     #[test]
-    fn undo_and_redo_need_a_workspace() {
+    fn undo_and_redo_in_a_project_step_its_own_history() {
+        // Owner decision 2026-11-14: Ctrl+Z works in a project opened without a workspace.
         let editor = Editor::default();
-        for kind in [EditKind::Undo, EditKind::Redo] {
-            let error = editor.prepare(kind, target()).unwrap_err();
-            assert_eq!(error.field, "Workspace");
-            assert!(error.message.contains("--workspace"));
-        }
+        assert_eq!(
+            editor.prepare(EditKind::Undo, target()).unwrap().args,
+            ["undo-revision", "--store", "S"]
+        );
+        assert_eq!(
+            editor.prepare(EditKind::Redo, target()).unwrap().args,
+            ["redo-revision", "--store", "S"]
+        );
+        // The project step's reply is read like the workspace one.
+        let reply = br#"{"outcome":"revision_undone","revision":{}}"#;
+        let _ = parse_edited(EditKind::Undo, Some(0), reply);
     }
 
     #[test]
@@ -1623,7 +1641,6 @@ mod tests {
     #[test]
     fn undo_runs_directly_and_not_while_busy() {
         let mut editor = Editor::default();
-        assert!(editor.begin_direct(EditKind::Undo, target()).is_err());
         let edit = editor
             .begin_direct(EditKind::Undo, workspace())
             .unwrap()

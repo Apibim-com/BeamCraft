@@ -179,6 +179,8 @@ pub struct App {
     edit_note: Option<Result<String, String>>,
     /// Flips the scroll zoom direction (macOS natural scrolling inverts it); pinch and keys keep theirs.
     invert_zoom: bool,
+    /// F8: the views do not rotate (Tekla's rotation lock); pan and zoom still work.
+    pub(crate) rotation_locked: bool,
     /// The active viewport input binding preset. A window starts on the side-panel choice
     /// saved in the settings file, or on the platform default when nothing is saved
     /// (`Trackpad` on macOS, `Mouse` elsewhere); a click in the side panel saves the choice.
@@ -1173,6 +1175,7 @@ impl App {
             select_epoch: Epoch::default(),
             edit_note: None,
             invert_zoom: false,
+            rotation_locked: false,
             preset,
             props: Properties::default(),
             sheet_editor: crate::sheet::SheetEditor::default(),
@@ -1952,6 +1955,42 @@ impl App {
             && ctx.input(|input| input.key_pressed(egui::Key::Delete))
         {
             self.delete_selection();
+        }
+        // Tekla's undo and redo keys: Ctrl+Z, Ctrl+Y and Ctrl+Shift+Z. A text field keeps them
+        // for its own text.
+        if !ctx.egui_wants_keyboard_input()
+            && !self.menu_open
+            && self.publisher.phase() != Phase::Confirming
+        {
+            let (redo, undo) = ctx.input_mut(|i| {
+                let shift_z = egui::KeyboardShortcut::new(
+                    egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+                    egui::Key::Z,
+                );
+                let redo = i.consume_shortcut(&shift_z)
+                    || i.consume_shortcut(&egui::KeyboardShortcut::new(
+                        egui::Modifiers::COMMAND,
+                        egui::Key::Y,
+                    ));
+                let undo = i.consume_shortcut(&egui::KeyboardShortcut::new(
+                    egui::Modifiers::COMMAND,
+                    egui::Key::Z,
+                ));
+                (redo, undo)
+            });
+            if redo {
+                self.start_edit(Some(EditKind::Redo));
+            } else if undo {
+                self.start_edit(Some(EditKind::Undo));
+            }
+        }
+        if !ctx.egui_wants_keyboard_input() && ctx.input(|input| input.key_pressed(egui::Key::F8)) {
+            self.rotation_locked = !self.rotation_locked;
+            self.edit_note = Some(Ok(if self.rotation_locked {
+                "Rotation locked (F8 unlocks).".into()
+            } else {
+                "Rotation unlocked.".into()
+            }));
         }
     }
 
