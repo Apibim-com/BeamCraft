@@ -783,6 +783,104 @@ impl Editor {
         }))
     }
 
+    /// The command for a move or copy of the selection picked by two points (Ctrl+M / Ctrl+C, as
+    /// in Tekla): a move runs `update-element --move-from --move-to`, a copy `copy-element
+    /// --offset (to - from)`. Runs at once, as one undo unit.
+    pub fn begin_two_point(
+        &mut self,
+        kind: EditKind,
+        from: [f64; 3],
+        to: [f64; 3],
+        target: Target<'_>,
+    ) -> Result<Option<Edit>, FormError> {
+        let id = self
+            .selected
+            .as_ref()
+            .map(|s| s.id.clone())
+            .ok_or_else(|| FormError {
+                field: "Selection",
+                message: "click an element first".into(),
+            })?;
+        let args = self.two_point_args(kind, id, from, to, target)?;
+        if self.busy {
+            return Ok(None);
+        }
+        self.busy = true;
+        self.staged = None;
+        Ok(Some(Edit { kind, args }))
+    }
+
+    /// Marks the panel busy for a batch of commands run as one revision; false while busy.
+    pub fn begin_batch(&mut self) -> bool {
+        if self.busy {
+            return false;
+        }
+        self.busy = true;
+        self.staged = None;
+        true
+    }
+
+    /// `delete-element` for `id`.
+    pub fn delete_args(&self, id: String, target: Target<'_>) -> Vec<String> {
+        let mut args = vec![
+            "delete-element".to_owned(),
+            "--store".into(),
+            target.store.to_string_lossy().into_owned(),
+            "--id".into(),
+            id,
+        ];
+        crate::tools::push_actor(&mut args, self.actor.as_deref());
+        args
+    }
+
+    /// The move or copy of `id` by two points.
+    pub fn two_point_args(
+        &self,
+        kind: EditKind,
+        id: String,
+        from: [f64; 3],
+        to: [f64; 3],
+        target: Target<'_>,
+    ) -> Result<Vec<String>, FormError> {
+        let text = |p: [f64; 3]| format!("{},{},{}", p[0], p[1], p[2]);
+        let store = target.store.to_string_lossy().into_owned();
+        let mut args = match kind {
+            EditKind::Move => vec![
+                "update-element".to_owned(),
+                "--store".into(),
+                store,
+                "--id".into(),
+                id,
+                "--move-from".into(),
+                text(from),
+                "--move-to".into(),
+                text(to),
+            ],
+            EditKind::Copy => vec![
+                if self.copy_instance {
+                    "copy-instance"
+                } else {
+                    "copy-element"
+                }
+                .to_owned(),
+                "--store".into(),
+                store,
+                "--id".into(),
+                id,
+                "--offset".into(),
+                text([to[0] - from[0], to[1] - from[1], to[2] - from[2]]),
+            ],
+            _ => {
+                return Err(FormError {
+                    field: "Command",
+                    message: "only a move or a copy takes two points".into(),
+                });
+            }
+        };
+        crate::tools::push_actor(&mut args, self.actor.as_deref());
+        Ok(args)
+    }
+
     /// The command of `kind` for the present selection and forms. Undo and redo need a workspace.
     pub fn prepare(&self, kind: EditKind, target: Target<'_>) -> Result<Edit, FormError> {
         if kind == EditKind::Move
@@ -1447,6 +1545,43 @@ mod tests {
         assert!(editor.busy());
         let second = editor.begin_axis_move(&placed_axis(), AxisEnd::Start, to, target());
         assert_eq!(second.unwrap(), None);
+    }
+
+    #[test]
+    fn two_points_move_by_from_and_to_and_copy_by_their_difference() {
+        let mut editor = Editor::default();
+        let (from, to) = ([100.0, 200.0, 0.0], [600.0, 200.0, 300.0]);
+        assert!(
+            editor
+                .begin_two_point(EditKind::Move, from, to, target())
+                .is_err()
+        );
+        editor.select(axis_info("E"));
+        let moved = editor
+            .begin_two_point(EditKind::Move, from, to, target())
+            .unwrap()
+            .unwrap();
+        let after = |edit: &Edit, flag: &str| {
+            let at = edit.args.iter().position(|a| a == flag).unwrap();
+            edit.args[at + 1].clone()
+        };
+        assert_eq!(moved.args[0], "update-element");
+        assert_eq!(after(&moved, "--move-from"), "100,200,0");
+        assert_eq!(after(&moved, "--move-to"), "600,200,300");
+        assert!(editor.busy());
+        editor.finish();
+        let copied = editor
+            .begin_two_point(EditKind::Copy, from, to, target())
+            .unwrap()
+            .unwrap();
+        assert_eq!(copied.args[0], "copy-element");
+        assert_eq!(after(&copied, "--offset"), "500,0,300");
+        editor.finish();
+        assert!(
+            editor
+                .begin_two_point(EditKind::Delete, from, to, target())
+                .is_err()
+        );
     }
 
     #[test]

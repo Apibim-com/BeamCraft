@@ -235,7 +235,149 @@ fn paint_pivot(
     painter.line_segment([at - vec2(0.0, 11.0), at + vec2(0.0, 11.0)], stroke);
 }
 
+/// Draws the area-selection rectangle: solid left to right (inside), dashed right to left
+/// (crossing).
+fn paint_area(ui: &egui::Ui, rect: egui::Rect, area: egui::Rect, crossing: bool) {
+    let painter = ui.painter_at(rect);
+    let stroke = Stroke::new(1.0, theme::BRAND);
+    painter.rect_filled(area, 0.0, theme::BRAND.gamma_multiply(0.08));
+    if crossing {
+        let [a, b, c, d] = [
+            area.left_top(),
+            area.right_top(),
+            area.right_bottom(),
+            area.left_bottom(),
+        ];
+        painter.add(egui::Shape::dashed_line(&[a, b, c, d, a], stroke, 5.0, 3.0));
+    } else {
+        painter.rect_stroke(area, 0.0, stroke, egui::StrokeKind::Inside);
+    }
+}
+
+/// Whether a box seen as `corners` (screen points) is taken by `area`: wholly inside it, or,
+/// for a crossing selection, touching it.
+pub(super) fn area_takes(area: egui::Rect, corners: &[egui::Pos2], crossing: bool) -> bool {
+    if corners.is_empty() {
+        return false;
+    }
+    if crossing {
+        let seen = egui::Rect::from_points(corners);
+        area.intersects(seen)
+    } else {
+        corners.iter().all(|p| area.contains(*p))
+    }
+}
+
+/// The elements an area selection takes: each element's bounds projected to the pane.
+fn area_hits(
+    snapshot: &beamcraft_engine::ViewSnapshot,
+    pane: egui::Rect,
+    view: &crate::camera::View,
+    origin: [f64; 3],
+    area: egui::Rect,
+    crossing: bool,
+    keep: impl Fn(&beamcraft_engine::ElementKind) -> bool,
+) -> Vec<String> {
+    let mut ids = Vec::new();
+    for element in snapshot.elements() {
+        if !keep(&element.kind) {
+            continue;
+        }
+        let b = element.full.world_bounds;
+        let (lo, hi) = (b.min.map(f64::from), b.max.map(f64::from));
+        let mut corners = Vec::with_capacity(8);
+        for i in 0..8u8 {
+            let pick =
+                |axis: u8, low: f64, high: f64| if i & (1 << axis) == 0 { low } else { high };
+            let point = [
+                pick(0, lo[0], hi[0]),
+                pick(1, lo[1], hi[1]),
+                pick(2, lo[2], hi[2]),
+            ];
+            match crate::grid::project(point, pane, view, origin) {
+                Some(at) => corners.push(at),
+                None => break,
+            }
+        }
+        if corners.len() == 8 && area_takes(area, &corners, crossing) {
+            ids.push(element.id.to_string());
+        }
+    }
+    ids
+}
+
 impl App {
+    /// Applies an area selection: no modifier replaces the selection, Ctrl adds, Shift toggles.
+    /// The last element taken becomes the primary one the panels show.
+    fn area_select(
+        &mut self,
+        area: egui::Rect,
+        pane: egui::Rect,
+        view: &crate::camera::View,
+        crossing: bool,
+        ctrl: bool,
+        shift: bool,
+    ) {
+        let Some(loaded) = self.loaded.as_ref() else {
+            return;
+        };
+        let shown = self.views.active_view();
+        let hits = area_hits(
+            &loaded.snapshot,
+            pane,
+            view,
+            loaded.summary.origin_mm,
+            area,
+            crossing,
+            |kind| {
+                *kind != beamcraft_engine::ElementKind::Grid
+                    && shown.is_none_or(|v| v.shows_kind(*kind))
+            },
+        );
+        let mut many: Vec<String> = if ctrl || shift {
+            let mut now = self.selected_many.clone();
+            if now.is_empty()
+                && let Some(one) = self.editor.selected()
+            {
+                now.push(one.id.clone());
+            }
+            now
+        } else {
+            Vec::new()
+        };
+        for id in hits {
+            match many.iter().position(|m| *m == id) {
+                Some(at) if shift => {
+                    many.remove(at);
+                }
+                Some(_) => {}
+                None => many.push(id),
+            }
+        }
+        self.grid_edit = None;
+        match many.last().cloned() {
+            Some(last) => {
+                self.editor.select_id(last);
+                self.edit_note = Some(Ok(format!("{} selected.", many.len())));
+            }
+            None => self.editor.deselect(),
+        }
+        self.selected_many = many;
+    }
+
+    /// The ids an edit acts on: the area selection when the primary element belongs to it,
+    /// else the primary element alone.
+    pub(super) fn selection_ids(&self) -> Vec<String> {
+        let Some(primary) = self.editor.selected() else {
+            return Vec::new();
+        };
+        if self.selected_many.len() > 1 && self.selected_many.contains(&primary.id) {
+            self.selected_many.clone()
+        } else {
+            vec![primary.id.clone()]
+        }
+    }
+
     /// Width over height of the active pane's image; 1.6 without a pane.
     pub(super) fn aspect(&self) -> f32 {
         self.views.active_pane().map_or(1.6, |p| p.target.aspect())
@@ -1180,6 +1322,26 @@ impl App {
             if let Some(point) = pivot {
                 paint_pivot(ui, response.rect, &view, l.summary.origin_mm, point);
             }
+            // The rest of an area selection, outlined like the primary element.
+            let ids = self.selection_ids();
+            if ids.len() > 1 {
+                let key = format!("{}|{}", ids.join(","), l.snapshot.token().as_str());
+                if self.many_edges.0 != key {
+                    let edges = ids
+                        .iter()
+                        .flat_map(|id| selection_edges(&l.snapshot, id))
+                        .collect();
+                    self.many_edges = (key, edges);
+                }
+                draw_selection(
+                    &ui.painter_at(response.rect),
+                    response.rect,
+                    &view,
+                    l.summary.origin_mm,
+                    &self.many_edges.1,
+                    cut.as_ref(),
+                );
+            }
             if let Some(selected) = self.editor.selected() {
                 let key = (selected.id.clone(), l.snapshot.token().as_str().to_owned());
                 if self.selection_edges.0 != key {
@@ -1302,6 +1464,50 @@ impl App {
                 picked = Some(ray);
             }
         }
+        // Area selection (Tekla): a left drag on the Select bench draws a rectangle. Left to
+        // right takes what lies wholly inside, right to left what it touches. Ctrl adds, Shift
+        // toggles, no modifier replaces. Only the mouse preset: on a trackpad a left drag orbits.
+        if !swallow
+            && !grip_hold
+            && self.preset == super::Preset::Mouse
+            && matches!(
+                self.bench,
+                workbench::Bench::Select | workbench::Bench::View
+            )
+            && !self.beam_mode
+            && !self.plate_mode
+            && self.views.picking.is_none()
+            && self.two_point.is_none()
+        {
+            if response.drag_started_by(egui::PointerButton::Primary) {
+                self.area_start = response.interact_pointer_pos();
+            }
+            if let Some(start) = self.area_start {
+                // The raw pointer, not the pane response: the release may land outside it.
+                let (now, down, released, ctrl, shift) = ui.input(|i| {
+                    (
+                        i.pointer.latest_pos(),
+                        i.pointer.primary_down(),
+                        i.pointer.primary_released(),
+                        i.modifiers.ctrl,
+                        i.modifiers.shift,
+                    )
+                });
+                let now = now.unwrap_or(start);
+                let area = egui::Rect::from_two_pos(start, now);
+                let crossing = now.x < start.x;
+                if released || !down {
+                    self.area_start = None;
+                    if area.width() > 3.0 && area.height() > 3.0 {
+                        self.area_select(area, response.rect, view, crossing, ctrl, shift);
+                    }
+                } else {
+                    paint_area(ui, response.rect, area, crossing);
+                }
+            }
+        } else {
+            self.area_start = None;
+        }
         if self.plate_mode {
             let resolved = response
                 .hover_pos()
@@ -1360,6 +1566,22 @@ impl App {
                 &draft,
             );
         }
+        // Copy or move by two points: a rubber line from the origin to the pointer.
+        if let Some(from) = self.two_point.and_then(|t| t.from)
+            && let Some(loaded) = self.loaded.as_ref()
+            && let Some(pos) = response.hover_pos()
+            && let Some(start) =
+                crate::grid::project(from, response.rect, view, loaded.summary.origin_mm)
+        {
+            let painter = ui.painter_at(response.rect);
+            painter.add(egui::Shape::dashed_line(
+                &[start, pos],
+                Stroke::new(1.5, theme::BRAND),
+                6.0,
+                4.0,
+            ));
+            painter.circle_filled(start, 3.5, theme::BRAND);
+        }
         if self.views.picking.is_some() {
             let hover = response.hover_pos().and_then(|pos| {
                 ndc_of(
@@ -1378,6 +1600,8 @@ impl App {
         } else if let Some(ray) = picked {
             if self.views.picking.is_some() {
                 self.view_click(ray);
+            } else if self.two_point.is_some() {
+                self.two_point_click(ray);
             } else if self.plane_pick {
                 if let Some(loaded) = &self.loaded {
                     match beamcraft_engine::work_plane::pick_work_plane(
@@ -1408,6 +1632,8 @@ impl App {
             } else if self.bench == workbench::Bench::Bolt {
                 self.bolt_click(ray);
             } else if !self.other_command_running() {
+                // A click picks one element: the area selection ends.
+                self.selected_many.clear();
                 self.start_select(ray);
             }
         }
@@ -1418,6 +1644,19 @@ impl App {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_window_takes_what_is_inside_and_a_crossing_what_it_touches() {
+        let area = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(100.0, 100.0));
+        let inside = [egui::pos2(10.0, 10.0), egui::pos2(90.0, 90.0)];
+        let across = [egui::pos2(50.0, 50.0), egui::pos2(150.0, 150.0)];
+        let outside = [egui::pos2(200.0, 200.0), egui::pos2(250.0, 250.0)];
+        assert!(area_takes(area, &inside, false));
+        assert!(!area_takes(area, &across, false));
+        assert!(area_takes(area, &across, true));
+        assert!(!area_takes(area, &outside, true));
+        assert!(!area_takes(area, &[], true));
+    }
 
     #[test]
     fn a_box_outline_has_twelve_edges_around_its_bounds() {
