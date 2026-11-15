@@ -646,12 +646,14 @@ pub fn op_accepted(store: &RevisionStore, op_id: &OpId) -> Result<bool, Refusal>
     Ok(matches!(prior, PriorOp::Accepted { .. }))
 }
 
-/// The bolt groups of the verified head (empty for a store without a revision).
-pub fn bolts(store: &RevisionStore) -> Result<Vec<BoltView>, Refusal> {
+/// The bolt listing of one verified head, both collections from a single revision so a paged
+/// listing ranges over one snapshot: the bolt groups as their model views and the placed
+/// A14.3 groups (empty vectors for a store without a revision).
+pub fn bolt_listing(store: &RevisionStore) -> Result<(Vec<BoltView>, Vec<BoltGroupView>), Refusal> {
     let control = control();
     let revision = match store.open() {
         Ok(revision) => revision,
-        Err(RevisionError::NoRevision) => return Ok(Vec::new()),
+        Err(RevisionError::NoRevision) => return Ok((Vec::new(), Vec::new())),
         Err(error) => return Err(error.into()),
     };
     let content = revision.manifest().content();
@@ -659,23 +661,18 @@ pub fn bolts(store: &RevisionStore) -> Result<Vec<BoltView>, Refusal> {
     let project = ProjectId::parse(content.project().as_str()).map_err(damaged)?;
     let workspace = WorkspaceId::parse(content.workspace().as_str()).map_err(damaged)?;
     let (_, base) = load_base(store, &project, &workspace)?;
-    Ok(model_of(&open_base(&base)?, &control)?.bolts)
+    let model = model_of(&open_base(&base)?, &control)?;
+    Ok((model.bolts, model.groups))
+}
+
+/// The bolt groups of the verified head (empty for a store without a revision).
+pub fn bolts(store: &RevisionStore) -> Result<Vec<BoltView>, Refusal> {
+    bolt_listing(store).map(|(bolts, _)| bolts)
 }
 
 /// The placed A14.3 bolt groups of the verified head (empty for a store without a revision).
 pub fn bolt_groups(store: &RevisionStore) -> Result<Vec<BoltGroupView>, Refusal> {
-    let control = control();
-    let revision = match store.open() {
-        Ok(revision) => revision,
-        Err(RevisionError::NoRevision) => return Ok(Vec::new()),
-        Err(error) => return Err(error.into()),
-    };
-    let content = revision.manifest().content();
-    let damaged = |_| integrity("head manifest identity is not a UUIDv7");
-    let project = ProjectId::parse(content.project().as_str()).map_err(damaged)?;
-    let workspace = WorkspaceId::parse(content.workspace().as_str()).map_err(damaged)?;
-    let (_, base) = load_base(store, &project, &workspace)?;
-    Ok(model_of(&open_base(&base)?, &control)?.groups)
+    bolt_listing(store).map(|(_, groups)| groups)
 }
 
 /// The stored record a command with these inputs and placement writes: the placement decision
@@ -770,7 +767,7 @@ fn hole_changes(
 }
 
 /// [`hole_changes`] over several groups at once, each new hole tagged with its owning group,
-/// so groups sharing a plate rewrite its record set once. `moved` replaces the
+/// so groups sharing a plate rewrite its record set once (issue 544). `moved` replaces the
 /// head's authored record of that plate (a part the same command moves).
 #[allow(clippy::too_many_arguments)]
 fn regenerated_holes(
@@ -1431,7 +1428,7 @@ pub fn create_bolt(
     })
 }
 
-/// The bolt groups that follow a part one `update-element` moves, as extra
+/// The bolt groups that follow a part one `update-element` moves (issue 544), as extra
 /// changes and footprint of the same edit: the fasteners belong to the group's main part.
 ///
 /// The moved part's world geometry is carried by the rigid delta `new · old⁻¹`. A group whose

@@ -55,7 +55,9 @@ fn printed(result: Result<Json, Refusal>) -> Vec<u8> {
     json.encode(&beamcraft_json::Limits::DEFAULT)
         .unwrap_or_else(|_| {
             // What `print_json` prints when a reply exceeds the encoder budget.
-            b"{\"outcome\":\"rejected\",\"code\":\"LIMIT_EXCEEDED\"}\n".to_vec()
+            let mut line = crate::report::REPLY_OVER_BUDGET_LINE.as_bytes().to_vec();
+            line.push(b'\n');
+            line
         })
 }
 
@@ -191,7 +193,7 @@ fn run(args: &[OsString]) -> Result<Output, Refusal> {
     let inspection = inspect(&RevisionStore::new(blobs))?;
     // A plate kept without geometry (D-7 degenerate drafts, K1 unsupported planes) has no
     // body to draw: the snapshot leaves it out and the reply names it, so one bad contour
-    // never makes the whole revision unviewable. Numbering, BOM and IFC still
+    // never makes the whole revision unviewable (issue 545). Numbering, BOM and IFC still
     // refuse such a revision.
     let skipped_plates = Json::Array(
         inspection
