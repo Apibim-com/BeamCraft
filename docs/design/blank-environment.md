@@ -20,17 +20,52 @@ saved setting.
   `environments/europe/` holds the real EN 10365:2022 IPE, HEA and HEB nominal dimensions, the
   parallel-flange UPE channel series and, since 2026-11-15, a second profile library with the
   EN 10219-2:2006 cold-formed hollow sections (SHS, RHS and CHS common sizes, validated against
-  the hollow closed-form area); `environments/russia/` holds the GOST 26020-83 parallel-flange
+  the hollow closed-form area) and, since 2026-11-15, the DIN hex-bolt fastener set completed
+  with the EN 1090-2 hole-series rows (M12 to M30, the environment's fastener library,
+  BC-ENV-002); `environments/russia/` holds the GOST 26020-83 parallel-flange
   beam (Б), wide-flange (Ш) and column (К) series and, since 2026-11-15, a second profile
-  library with the GOST 30245-2003 cold-bent square hollow sections (the complete square
-  series, sizes 40x40 to 300x300; validated against the hollow closed-form area) and the
+  library with the GOST 30245-2003 cold-bent closed hollow sections (the complete square
+  series, sizes 40x40 to 300x300, and the rectangular series 50x25 to 400x200 entering in
+  height-band slices; validated against the hollow closed-form area), a third profile
+  library with the GOST 8239-89 inclined-flange I beams and the GOST 8240-89 slope-series
+  channels through the `tapered_i` and `tapered_c` families (the slopes the standards print
+  as roll-pass ranges 6–12 % and 4–10 % carry as data per row), and the
   GOST 7798-70 hex-bolt fastener set (M12/16/20/24, the environment's fastener library,
-  BC-ENV-002); `environments/australia/` (2026-11-15) holds the
-  AS/NZS 3679.1:2016 UB and UC series and the AS/NZS 1163:2016 Appendix D hollow series,
+  BC-ENV-002) and, since 2026-11-15, a material library with the complete grade set of
+  GOST 27772-2015 (fourteen grades, the designations in the standard's own Cyrillic form,
+  where the leading С of «сталь строительная» is part of the standard's designation and is
+  not Latinized the way the profile series letters are);
+  `environments/australia/` (2026-11-15) holds the
+  AS/NZS 3679.1:2016 UB and UC series and the AS/NZS 1163:2016 Appendix D hollow series and,
+  since 2026-11-15, the AS/NZS 1252 high-strength structural hex-bolt fastener set
+  (M12/16/20/24/30/36, the environment's fastener library, BC-ENV-002; the holes follow the
+  AS/NZS 5131 standard-hole series; see `ATTRIBUTION.md`),
   `environments/india/` holds the IS 808:2021
-  narrow (NPB) and wide (WPB) parallel flange beam series, and `environments/china/`
+  narrow (NPB) and wide (WPB) parallel flange beam series and, since 2026-11-15, the IS 3757
+  high-strength structural hex-bolt fastener set (M16/20/24, the environment's fastener library,
+  BC-ENV-002) and, since 2026-11-16, a fourth profile library with the legacy sloping-flange
+  series of the same edition (tables 1, 2, 5, 6 and 7: the MB/WB medium and wide beams, the
+  JB/LB junior and light beams, the SC column and HB heavy sections and the MC/JC/LC channels,
+  102 rows) through the `tapered_i` and `tapered_c` families — the slope column the tables print
+  as the inner-face angle over the flange plane carries as data per row (its tangent over 90
+  degrees), T enters as the mean flange thickness the standard's annex A formulas use, and the
+  seventeen printed rows whose toe radius exceeds the annex-A toe thickness stay out as explicit
+  `NOT_FOUND` cases (see `ATTRIBUTION.md`) and, since 2026-11-16, a material library with the
+  complete published grade set of IS 2062:2011 (twenty-eight designations: the E250–E410 levels
+  in the sub-qualities A, BR, B0 and C, the E450–E650 levels in A and BR), and `environments/china/`
   (2026-11-15) holds the GB/T 706-2016 tapered-flange I-beam and channel series through the
-  `tapered_i` and `tapered_c` section families (see `ATTRIBUTION.md`).
+  `tapered_i` and `tapered_c` section families and, since 2026-11-15, the GB/T 5782 hex-bolt
+  fastener set (M12/16/20/24, the environment's fastener library, BC-ENV-002) and, since
+  2026-11-16, a material library with the complete published grade set of GB/T 1591-2018
+  (fifty-three designations across the as-rolled, normalizing and thermomechanical delivery
+  families; see `ATTRIBUTION.md`), `environments/usa/` (2026-11-15) holds, so far, only a material
+  library with the ASTM grades A36, A992 and the complete A572 Grade 42–65 set — the USA
+  profile pack waits on the axisrow/BeamCraft#649 provenance audit, so the environment lists no profile or
+  fastener libraries and the grades are its whole content — and `environments/canada/`
+  (2026-11-15) is grades-only the same way: the complete weldable category of
+  CSA G40.20-13/G40.21-13 (260W, 300W, 350W, 380W, 400W, 480W, 550W), and `environments/australia/`
+  carries, since 2026-11-16, a material library with the AS/NZS 3678-2016 base grades
+  (250, 300, 350, 400, 450 — the steel the AS/NZS 3679.2 welded sections are welded from).
 * `create-project --environment ID` looks the environment up (built-in, then the user's), reads
   and admits it, then copies it into the project folder (`environment/`) and publishes the two
   default materials. The project therefore carries its environment: closing and reopening it, or

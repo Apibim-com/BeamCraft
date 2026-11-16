@@ -26,7 +26,7 @@
 //! library file is written only by [`add_entry`], which renders the whole library again and reads
 //! it back before it installs the file.
 //!
-//! Fastener libraries (A14.1, #668) and material libraries (axisrow/BeamCraft#636) ride the same machinery under
+//! Fastener libraries (A14.1, axisrow/BeamCraft#668) and material libraries (axisrow/BeamCraft#636) ride the same machinery under
 //! `/Library/Fasteners` and `/Library/Materials`: the fastener entries carry
 //! `steel:fastener:*` attributes, the material entries `steel:material:*` (grade, density,
 //! optional standard and display name), and both are admitted by the same rules, provenance
@@ -67,8 +67,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use steel::model::definition::SectionProperties;
 use steel::model::fastener::{FastenerKind, FastenerSpec, HeadKind, HoleMode, WasherSpec};
 use steel::model::section::{
-    CustomSection, MAX_CUSTOM_CAVITIES, ParametricSection, SectionFamily, SectionShape,
-    profile_attribute,
+    AreaConvention, CustomSection, MAX_CUSTOM_CAVITIES, ParametricSection, SectionFamily,
+    SectionShape, profile_attribute,
 };
 
 /// Largest library file, in bytes.
@@ -278,6 +278,23 @@ fn optional_number(prim: &Prim, name: &str) -> Result<Option<f64>, Refusal> {
         .transpose()
 }
 
+fn optional_string(prim: &Prim, name: &str) -> Result<Option<String>, Refusal> {
+    Ok(field(prim, name, "string")
+        .map_err(as_input)?
+        .and_then(text)
+        .map(str::to_owned))
+}
+
+/// The declared-area convention of an entry: absent is the default exact convention; anything
+/// present must be a known convention token.
+fn area_convention(prim: &Prim) -> Result<AreaConvention, Refusal> {
+    match optional_string(prim, "steel:profile:areaConvention")? {
+        None => Ok(AreaConvention::default()),
+        Some(token) => AreaConvention::from_token(&token)
+            .ok_or_else(|| invalid("the area convention is not a known token")),
+    }
+}
+
 fn required_number(prim: &Prim, name: &str) -> Result<f64, Refusal> {
     optional_number(prim, name)?.ok_or_else(|| invalid("a required dimension is missing"))
 }
@@ -292,7 +309,7 @@ const DAMAGED_OUTLINE: &str = "the custom outline attributes are inconsistent";
 /// that disagrees with the outline is not a reason to refuse the entry (see
 /// [`DefinitionRecord::declared_area_warning`]).
 fn decode_record(prim: &Prim, designation: &str) -> Result<DefinitionRecord, Refusal> {
-    let section = SectionProperties {
+    let mut section = SectionProperties {
         designation: Some(designation.to_owned()),
         standard: field(prim, "steel:profile:standard", "string")
             .map_err(as_input)?
@@ -306,29 +323,40 @@ fn decode_record(prim: &Prim, designation: &str) -> Result<DefinitionRecord, Ref
         mass_per_meter_kg: optional_number(prim, "steel:profile:massPerMeterKg")?,
         surface_per_meter_m2: optional_number(prim, "steel:profile:surfacePerMeterM2")?,
         display_name: Some(designation.to_owned()),
+        area_convention: AreaConvention::default(),
     };
     let family = required_text(prim, "steel:profile:family", "token")?;
     let record = match family {
-        "rectangle" => DefinitionRecord::RectangleProfile {
-            width_mm: required_number(prim, "steel:profile:bMm")?,
-            height_mm: required_number(prim, "steel:profile:hMm")?,
-            section,
-        },
-        "custom" => DefinitionRecord::SectionProfile {
-            shape: SectionShape::Custom(CustomSection {
-                outer: decode_polygon(prim, "steel:profile:outerPointsMm", DAMAGED_OUTLINE)
+        "rectangle" => {
+            if optional_string(prim, "steel:profile:areaConvention")?.is_some() {
+                return Err(invalid("a rectangle profile declares no area convention"));
+            }
+            DefinitionRecord::RectangleProfile {
+                width_mm: required_number(prim, "steel:profile:bMm")?,
+                height_mm: required_number(prim, "steel:profile:hMm")?,
+                section,
+            }
+        }
+        "custom" => {
+            if optional_string(prim, "steel:profile:areaConvention")?.is_some() {
+                return Err(invalid("a custom profile declares no area convention"));
+            }
+            DefinitionRecord::SectionProfile {
+                shape: SectionShape::Custom(CustomSection {
+                    outer: decode_polygon(prim, "steel:profile:outerPointsMm", DAMAGED_OUTLINE)
+                        .map_err(as_input)?,
+                    cavities: decode_polygons(
+                        prim,
+                        "steel:profile:cavityPointsMm",
+                        "steel:profile:cavityVertexCounts",
+                        MAX_CUSTOM_CAVITIES,
+                        DAMAGED_OUTLINE,
+                    )
                     .map_err(as_input)?,
-                cavities: decode_polygons(
-                    prim,
-                    "steel:profile:cavityPointsMm",
-                    "steel:profile:cavityVertexCounts",
-                    MAX_CUSTOM_CAVITIES,
-                    DAMAGED_OUTLINE,
-                )
-                .map_err(as_input)?,
-            }),
-            section,
-        },
+                }),
+                section,
+            }
+        }
         token => {
             let family = SectionFamily::from_token(token)
                 .ok_or_else(|| invalid("unknown section family"))?;
@@ -337,6 +365,7 @@ fn decode_record(prim: &Prim, designation: &str) -> Result<DefinitionRecord, Ref
                 .iter()
                 .map(|name| required_number(prim, &profile_attribute(name)))
                 .collect::<Result<Vec<_>, _>>()?;
+            section.area_convention = area_convention(prim)?;
             DefinitionRecord::SectionProfile {
                 shape: SectionShape::Parametric(
                     ParametricSection::new(family, values).map_err(command)?,
@@ -1425,6 +1454,14 @@ fn entry_body(designation: &str, record: &DefinitionRecord) -> Result<String, Re
             lines.push(format!("double steel:profile:{name} = {value}"));
         }
     }
+    // The declared-area convention stores only when it is not the default: an absent
+    // attribute reads back as the exact convention.
+    if section.area_convention == AreaConvention::NominalSharp {
+        lines.push(format!(
+            "string steel:profile:areaConvention = {}",
+            usda_string(section.area_convention.token())
+        ));
+    }
     Ok(lines
         .iter()
         .map(|line| format!("            {line}\n"))
@@ -2064,6 +2101,66 @@ mod tests {
         }
     }
 
+    const UPN_BODY: &str = "            token steel:profile:family = \"tapered_c\"\n            double steel:profile:hMm = 100\n            double steel:profile:bMm = 50\n            double steel:profile:sMm = 6\n            double steel:profile:tMm = 8.5\n            double steel:profile:rMm = 8.5\n            double steel:profile:r1Mm = 4.5\n            double steel:profile:k = 0.08\n            double steel:profile:areaMm2 = 1350\n            double steel:profile:massPerMeterKg = 10.6\n";
+
+    #[test]
+    fn a_declared_area_convention_round_trips_and_is_admitted_by_token_only() {
+        // The EN 10365 UPN convention: the nominal sharp declaration reads back as such, and
+        // a rendered library carries the attribute so the round trip keeps it.
+        let nominal = format!(
+            "{UPN_BODY}            string steel:profile:areaConvention = \"nominal_sharp\"\n"
+        );
+        let original = load_text(
+            "o",
+            &library(&[
+                entry("A", "UPN100", UPN_BODY),
+                entry("B", "UPN200", &nominal),
+            ]),
+        )
+        .unwrap();
+        assert_eq!(original.entries.len(), 2);
+        for (designation, convention) in [
+            ("UPN100", AreaConvention::ExactFilleted),
+            ("UPN200", AreaConvention::NominalSharp),
+        ] {
+            let found = original.entry(designation).unwrap();
+            let DefinitionRecord::SectionProfile { section, .. } = &found.record else {
+                panic!("{designation} is not a section profile");
+            };
+            assert_eq!(section.area_convention, convention, "{designation}");
+        }
+        let named: Vec<(String, &LibraryEntry)> = original
+            .entries
+            .iter()
+            .enumerate()
+            .map(|(n, e)| (format!("E{n}"), e))
+            .collect();
+        let info = LibraryInfo {
+            id: "r".into(),
+            title: None,
+            version: None,
+            source: None,
+            licence: Some("MPL-2.0".into()),
+            digest: digest_of(b"").unwrap(),
+            bytes: 0,
+            binary: false,
+        };
+        let again = load_text("r", &render_library(&info, &named).unwrap()).unwrap();
+        for (got, want) in again.entries.iter().zip(&original.entries) {
+            assert_eq!(got.record, want.record);
+        }
+        // An unknown convention token refuses the entry; a rectangle or custom profile
+        // declaring one has no reference and is refused as well.
+        let unknown = format!(
+            "{UPN_BODY}            string steel:profile:areaConvention = \"approximate\"\n"
+        );
+        let loaded = load_text("u", &library(&[entry("A", "UPNX", &unknown)])).unwrap();
+        assert_eq!(loaded.rejected.len(), 1);
+        let rectangle = "            token steel:profile:family = \"rectangle\"\n            double steel:profile:hMm = 80\n            double steel:profile:bMm = 20\n            string steel:profile:areaConvention = \"nominal_sharp\"\n";
+        let loaded = load_text("x", &library(&[entry("A", "RECT", rectangle)])).unwrap();
+        assert_eq!(loaded.rejected.len(), 1);
+    }
+
     #[test]
     fn hostile_layers_are_refused_without_a_panic() {
         let no_id = "#usda 1.0\n(\n    metersPerUnit = 0.001\n    upAxis = \"Z\"\n)\n";
@@ -2098,7 +2195,7 @@ mod tests {
         );
         let library = load(path).unwrap();
         assert_eq!(library.info.id, "europe-en-10365-profiles");
-        assert_eq!(library.info.version.as_deref(), Some("2"));
+        assert_eq!(library.info.version.as_deref(), Some("3"));
         assert!(
             library
                 .info
@@ -2117,7 +2214,7 @@ mod tests {
         );
         // No transcription slips: every entry is admitted and none warns.
         assert_eq!(library.rejected, []);
-        assert_eq!(library.entries.len(), 69);
+        assert_eq!(library.entries.len(), 87);
         let mut designations = Vec::new();
         for entry in &library.entries {
             let DefinitionRecord::SectionProfile {
@@ -2127,10 +2224,12 @@ mod tests {
             else {
                 panic!("{} is not a parametric section", entry.designation);
             };
-            // The UPE channels are the pack's parallel-flange channel series; the rest are
-            // I and H shapes.
+            // The UPE channels are the pack's parallel-flange channel series, the UPN channels
+            // its taper-flange series, and the rest are I and H shapes.
             let want_family = if entry.designation.starts_with("UPE") {
                 SectionFamily::Channel
+            } else if entry.designation.starts_with("UPN") {
+                SectionFamily::TaperedC
             } else {
                 SectionFamily::IShape
             };
@@ -2141,9 +2240,10 @@ mod tests {
                 "{}",
                 entry.designation
             );
-            // The closed-form area of the declared dimensions must match the declared catalogue
-            // area (the D3 1 percent warning never fires) and the declared mass must be that
-            // area at the standard's 7850 kg/m3 within its published rounding.
+            // The declared catalogue area matches its convention's reference (the D3 1 percent
+            // warning never fires: like-for-like, EN 10365 publishes the UPN 50-300 areas as
+            // the nominal sharp-cornered value and the 320-400 areas exact) and the declared
+            // mass must be the area at the standard's 7850 kg/m3 within its published rounding.
             assert!(
                 entry.record.declared_area_warning().is_none(),
                 "{}",
@@ -2157,12 +2257,29 @@ mod tests {
                 "{}: mass {mass} kg/m vs area-derived {mass_from_area}",
                 entry.designation
             );
+            // The convention declaration itself: nominal sharp exactly on the UPN 50-300 rows,
+            // the exact default on the 320-400 rows and everywhere else.
+            let want_convention = if entry.designation.starts_with("UPN") {
+                let depth: f64 = entry.designation[3..].parse().unwrap();
+                if depth <= 300.0 {
+                    AreaConvention::NominalSharp
+                } else {
+                    AreaConvention::ExactFilleted
+                }
+            } else {
+                AreaConvention::ExactFilleted
+            };
+            assert_eq!(
+                section.area_convention, want_convention,
+                "{}",
+                entry.designation
+            );
             designations.push(entry.designation.clone());
         }
         // The series as EN 10365 publishes it, in the loader's designation order: no IPE 250/280
         // and no HEA/HEB 250 (those designations do not exist; the sequence steps 240 to 260/270),
-        // and no UPE 250/260 (the channel sequence steps 240 to 270). The taper-flange UPN series
-        // of the same standard is a different geometry family and is not part of the pack.
+        // no UPE 250/260 (the channel sequence steps 240 to 270), and the UPN series runs
+        // 50 to 400 with its own steps (320/350/380 after 300; no 270/330/360).
         assert_eq!(
             designations,
             [
@@ -2174,7 +2291,9 @@ mod tests {
                 "IPE140", "IPE160", "IPE180", "IPE200", "IPE220", "IPE240", "IPE270", "IPE300",
                 "IPE330", "IPE360", "IPE400", "IPE450", "IPE500", "IPE550", "IPE600", "UPE100",
                 "UPE120", "UPE140", "UPE160", "UPE180", "UPE200", "UPE220", "UPE240", "UPE270",
-                "UPE300", "UPE330", "UPE360", "UPE400", "UPE80",
+                "UPE300", "UPE330", "UPE360", "UPE400", "UPE80", "UPN100", "UPN120", "UPN140",
+                "UPN160", "UPN180", "UPN200", "UPN220", "UPN240", "UPN260", "UPN280", "UPN300",
+                "UPN320", "UPN350", "UPN380", "UPN400", "UPN50", "UPN65", "UPN80",
             ]
         );
         // Spot checks against the transcribed values.
@@ -2233,9 +2352,31 @@ mod tests {
         assert_eq!(p.values(), [300.0, 100.0, 9.5, 15.0, 15.0]);
         assert_eq!(section.area_mm2, Some(5660.0));
         assert_eq!(section.mass_per_meter_kg, Some(44.4));
+        let upn100 = library.entry("UPN100").unwrap();
+        let DefinitionRecord::SectionProfile {
+            shape: SectionShape::Parametric(p),
+            section,
+        } = &upn100.record
+        else {
+            panic!("UPN100 is not a parametric section");
+        };
+        assert_eq!(p.values(), [100.0, 50.0, 6.0, 8.5, 8.5, 4.5, 0.08]);
+        assert_eq!(section.area_mm2, Some(1350.0));
+        assert_eq!(section.mass_per_meter_kg, Some(10.6));
+        let upn400 = library.entry("UPN400").unwrap();
+        let DefinitionRecord::SectionProfile {
+            shape: SectionShape::Parametric(p),
+            section,
+        } = &upn400.record
+        else {
+            panic!("UPN400 is not a parametric section");
+        };
+        assert_eq!(p.values(), [400.0, 110.0, 14.0, 18.0, 18.0, 9.0, 0.05]);
+        assert_eq!(section.area_mm2, Some(9150.0));
+        assert_eq!(section.mass_per_meter_kg, Some(71.8));
         for absent in [
             "IPE250", "IPE280", "HEA250", "HEB250", "IPE650", "HEA700", "UPE250", "UPE260",
-            "UPE450", "UPN100", "UPN200",
+            "UPE450", "UPN250", "UPN270", "UPN330", "UPN360", "UPN450",
         ] {
             assert_eq!(
                 library.entry(absent).unwrap_err().code,
@@ -2257,13 +2398,14 @@ mod tests {
         // The profile namespace is unchanged by the fastener listing: both profile libraries
         // keep their entries.
         assert_eq!(environment.sources.len(), 2);
-        assert_eq!(environment.sources[0].library.entries.len(), 69);
+        assert_eq!(environment.sources[0].library.entries.len(), 87);
         assert_eq!(environment.sources[1].library.entries.len(), 52);
-        // The DIN fastener set rides the same environment, admitted with declared provenance.
+        // The DIN fastener set rides the same environment, admitted with declared provenance;
+        // the pack carries the M12-30 designations since the EN 1090-2 hole-series rows.
         assert_eq!(environment.fastener_sources.len(), 1);
         let bolts = &environment.fastener_sources[0];
         assert_eq!(bolts.library.info.id, "beamcraft-din-fasteners");
-        assert_eq!(bolts.library.entries.len(), 3);
+        assert_eq!(bolts.library.entries.len(), 6);
         assert!(bolts.library.rejected.is_empty());
         assert!(
             bolts
@@ -2287,7 +2429,7 @@ mod tests {
             matches!(&m12.record, DefinitionRecord::Fastener { spec } if spec.nominal_diameter_mm == 12.0 && spec.lengths_mm.contains(&80.0))
         );
         // A designation the set does not publish is NOT_FOUND, never a near match.
-        for absent in ["M24", "M12x80", "m12"] {
+        for absent in ["M36", "M12x80", "m12"] {
             assert_eq!(
                 lookup.find(absent).unwrap_err().code,
                 ErrorCode::NotFound,
@@ -2418,6 +2560,652 @@ mod tests {
         // A grade the set does not publish is NOT_FOUND, never a near match: no bare strength
         // class, no lowercase, no grade of another part or of the superseded 2004 edition.
         for absent in ["S235", "S355", "s355j2", "S355K2+N", "S500N", "S450J0"] {
+            assert_eq!(
+                lookup.find(absent).unwrap_err().code,
+                ErrorCode::NotFound,
+                "{absent}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_shipped_russia_gost_27772_materials_library_reads_with_every_entry_admitted() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/russia/materials-gost-27772.usda"
+        );
+        let library = load_material(path).unwrap();
+        assert_eq!(library.info.id, "russia-gost-27772-materials");
+        assert_eq!(library.info.version.as_deref(), Some("1"));
+        assert!(
+            library
+                .info
+                .licence
+                .as_deref()
+                .is_some_and(|l| !l.is_empty()),
+            "the shipped library declares its licence"
+        );
+        assert!(
+            library
+                .info
+                .source
+                .as_deref()
+                .is_some_and(|s| !s.is_empty()),
+            "the shipped library declares its source"
+        );
+        // No transcription slips: every entry is admitted, Cyrillic prim names included.
+        assert_eq!(library.rejected, []);
+        assert_eq!(library.entries.len(), 14);
+        // The complete grade set of GOST 27772-2015 clause 4.1, in the loader's designation
+        // order (byte order: the Cyrillic К, П suffixes sort after the ASCII ones), each with
+        // the standard and the pack density. The designations are the standard's own Cyrillic
+        // forms: the leading letter is the Cyrillic С (U+0421), where С means structural
+        // construction steel, the number the conventional yield strength in N/mm2, 1 a
+        // chemistry variant, К an increased corrosion resistance, П an increased fire
+        // resistance.
+        let gost = "GOST 27772-2015";
+        let expected: [&str; 14] = [
+            "С235", "С245", "С255", "С345", "С345К", "С355", "С355-1", "С355К", "С355П", "С390",
+            "С390-1", "С440", "С550", "С590",
+        ];
+        for (designation, entry) in expected.iter().zip(&library.entries) {
+            let DefinitionRecord::Material {
+                density_kg_m3,
+                grade,
+                standard,
+                display_name,
+            } = &entry.record
+            else {
+                panic!("{} is not a material", entry.designation);
+            };
+            assert_eq!(entry.designation, *designation);
+            assert_eq!(grade.as_deref(), Some(*designation));
+            assert_eq!(*density_kg_m3, Some(7850.0), "{}", designation);
+            assert_eq!(standard.as_deref(), Some(gost), "{}", designation);
+            assert_eq!(display_name.as_deref(), Some(*designation));
+        }
+        assert_eq!(library.entries.len(), expected.len());
+    }
+
+    #[test]
+    fn the_shipped_russia_environment_admits_its_material_library() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/russia/environment.usda"
+        );
+        let environment = load_environment(path).unwrap();
+        assert_eq!(
+            environment.info.material_libraries,
+            ["materials-gost-27772.usda"]
+        );
+        // The profile and fastener namespaces are unchanged by the material listing.
+        assert_eq!(environment.sources.len(), 3);
+        assert_eq!(environment.fastener_sources.len(), 1);
+        assert_eq!(environment.material_sources.len(), 1);
+        let materials = &environment.material_sources[0];
+        assert_eq!(materials.library.info.id, "russia-gost-27772-materials");
+        assert_eq!(materials.library.entries.len(), 14);
+        assert!(materials.library.rejected.is_empty());
+        // A grade rides the same resolver machinery, in its own namespace.
+        let lookup = environment.material_lookup();
+        let (source, s345) = lookup.find("С345").unwrap();
+        assert_eq!(source.library.info.id, "russia-gost-27772-materials");
+        assert!(matches!(
+            &s345.record,
+            DefinitionRecord::Material { density_kg_m3: Some(7850.0), standard, .. }
+                if standard.as_deref() == Some("GOST 27772-2015")
+        ));
+        // A grade the set does not publish is NOT_FOUND, never a near match: no bare strength
+        // class, no Latin look-alike of the Cyrillic С (the С of the standard's own
+        // designation is the Cyrillic letter, so neither the Latin C nor the transliteration
+        // S answers), no lowercase variant and no grade of the superseded 1988 edition.
+        for absent in [
+            "С275", "С375", "С285", "C245", "S245", "C345", "s355", "С245 ", "С440Д",
+        ] {
+            assert_eq!(
+                lookup.find(absent).unwrap_err().code,
+                ErrorCode::NotFound,
+                "{absent}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_shipped_usa_astm_materials_library_reads_with_every_entry_admitted() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/usa/materials-astm.usda"
+        );
+        let library = load_material(path).unwrap();
+        assert_eq!(library.info.id, "usa-astm-materials");
+        assert_eq!(library.info.version.as_deref(), Some("1"));
+        assert!(
+            library
+                .info
+                .licence
+                .as_deref()
+                .is_some_and(|l| !l.is_empty()),
+            "the shipped library declares its licence"
+        );
+        assert!(
+            library
+                .info
+                .source
+                .as_deref()
+                .is_some_and(|s| !s.is_empty()),
+            "the shipped library declares its source"
+        );
+        // No transcription slips: every entry is admitted.
+        assert_eq!(library.rejected, []);
+        assert_eq!(library.entries.len(), 7);
+        // The grades of the three standards in the loader's designation order: the single
+        // A36, the five A572 strength grades (42 to 65, the grade number the minimum yield
+        // strength in ksi) with the Grade word the standard designates with, and the W-shape
+        // grade A992. The standards are the consulted editions; the density is the metric
+        // 7850 kg/m3 of every shipped pack.
+        let a36 = "ASTM A36/A36M-19";
+        let a992 = "ASTM A992/A992M-22";
+        let a572 = "ASTM A572/A572M-21";
+        let expected: [(&str, &str); 7] = [
+            ("A36", a36),
+            ("A572 Grade 42", a572),
+            ("A572 Grade 50", a572),
+            ("A572 Grade 55", a572),
+            ("A572 Grade 60", a572),
+            ("A572 Grade 65", a572),
+            ("A992", a992),
+        ];
+        for ((designation, want_standard), entry) in expected.iter().zip(&library.entries) {
+            let DefinitionRecord::Material {
+                density_kg_m3,
+                grade,
+                standard,
+                display_name,
+            } = &entry.record
+            else {
+                panic!("{} is not a material", entry.designation);
+            };
+            assert_eq!(entry.designation, *designation);
+            assert_eq!(grade.as_deref(), Some(*designation));
+            assert_eq!(*density_kg_m3, Some(7850.0), "{}", designation);
+            assert_eq!(standard.as_deref(), Some(*want_standard), "{}", designation);
+            assert_eq!(display_name.as_deref(), Some(*designation));
+        }
+        assert_eq!(library.entries.len(), expected.len());
+    }
+
+    #[test]
+    fn the_shipped_usa_environment_admits_its_material_library() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/usa/environment.usda"
+        );
+        let environment = load_environment(path).unwrap();
+        assert_eq!(environment.info.material_libraries, ["materials-astm.usda"]);
+        // The environment carries no profile or fastener libraries: the USA profile pack waits
+        // on the axisrow/BeamCraft#649 provenance audit, so the material listing is the whole environment.
+        assert_eq!(environment.sources.len(), 0);
+        assert_eq!(environment.fastener_sources.len(), 0);
+        assert_eq!(environment.material_sources.len(), 1);
+        let materials = &environment.material_sources[0];
+        assert_eq!(materials.library.info.id, "usa-astm-materials");
+        assert_eq!(materials.library.entries.len(), 7);
+        assert!(materials.library.rejected.is_empty());
+        // A grade rides the same resolver machinery, in its own namespace.
+        let lookup = environment.material_lookup();
+        let (source, grade_50) = lookup.find("A572 Grade 50").unwrap();
+        assert_eq!(source.library.info.id, "usa-astm-materials");
+        assert!(matches!(
+            &grade_50.record,
+            DefinitionRecord::Material { density_kg_m3: Some(7850.0), standard, .. }
+                if standard.as_deref() == Some("ASTM A572/A572M-21")
+        ));
+        // A grade the set does not publish is NOT_FOUND, never a near match: no bare grade
+        // number, no hyphenated or compact industry shorthand (the shipped form is the
+        // standard's own Grade form), no lowercase, no grade outside the standard's set and
+        // no grade of another specification.
+        for absent in [
+            "A572",
+            "A572-50",
+            "A572Gr50",
+            "A36M",
+            "a992",
+            "A572 Grade 70",
+            "A500",
+        ] {
+            assert_eq!(
+                lookup.find(absent).unwrap_err().code,
+                ErrorCode::NotFound,
+                "{absent}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_shipped_canada_csa_materials_library_reads_with_every_entry_admitted() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/canada/materials-csa-g4021.usda"
+        );
+        let library = load_material(path).unwrap();
+        assert_eq!(library.info.id, "canada-csa-g4021-materials");
+        assert_eq!(library.info.version.as_deref(), Some("1"));
+        assert!(
+            library
+                .info
+                .licence
+                .as_deref()
+                .is_some_and(|l| !l.is_empty()),
+            "the shipped library declares its licence"
+        );
+        assert!(
+            library
+                .info
+                .source
+                .as_deref()
+                .is_some_and(|s| !s.is_empty()),
+            "the shipped library declares its source"
+        );
+        // No transcription slips: every entry is admitted.
+        assert_eq!(library.rejected, []);
+        assert_eq!(library.entries.len(), 7);
+        // The complete weldable category of CSA G40.20-13/G40.21-13 in the loader's
+        // designation order: the metric W series, the number the minimum yield strength in
+        // MPa and W the weldable category. 380W is available only as hollow structural
+        // sections, angles and bars, the scope note the standard's grade table carries; the
+        // impact-tested, atmospheric-corrosion-resistant and quenched-and-tempered categories
+        // are not in the pack.
+        let csa = "CSA G40.20-13/G40.21-13";
+        let expected: [(&str, &str); 7] = [
+            ("260W", csa),
+            ("300W", csa),
+            ("350W", csa),
+            ("380W", csa),
+            ("400W", csa),
+            ("480W", csa),
+            ("550W", csa),
+        ];
+        for ((designation, want_standard), entry) in expected.iter().zip(&library.entries) {
+            let DefinitionRecord::Material {
+                density_kg_m3,
+                grade,
+                standard,
+                display_name,
+            } = &entry.record
+            else {
+                panic!("{} is not a material", entry.designation);
+            };
+            assert_eq!(entry.designation, *designation);
+            assert_eq!(grade.as_deref(), Some(*designation));
+            assert_eq!(*density_kg_m3, Some(7850.0), "{}", designation);
+            assert_eq!(standard.as_deref(), Some(*want_standard), "{}", designation);
+            assert_eq!(display_name.as_deref(), Some(*designation));
+        }
+        assert_eq!(library.entries.len(), expected.len());
+    }
+
+    #[test]
+    fn the_shipped_canada_environment_admits_its_material_library() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/canada/environment.usda"
+        );
+        let environment = load_environment(path).unwrap();
+        assert_eq!(
+            environment.info.material_libraries,
+            ["materials-csa-g4021.usda"]
+        );
+        // The grades-only environment the axisrow/BeamCraft#697 mechanism admits: no profile or fastener
+        // libraries, one material source.
+        assert_eq!(environment.sources.len(), 0);
+        assert_eq!(environment.fastener_sources.len(), 0);
+        assert_eq!(environment.material_sources.len(), 1);
+        let materials = &environment.material_sources[0];
+        assert_eq!(materials.library.info.id, "canada-csa-g4021-materials");
+        assert_eq!(materials.library.entries.len(), 7);
+        assert!(materials.library.rejected.is_empty());
+        // A grade rides the same resolver machinery, in its own namespace.
+        let lookup = environment.material_lookup();
+        let (source, grade_350) = lookup.find("350W").unwrap();
+        assert_eq!(source.library.info.id, "canada-csa-g4021-materials");
+        assert!(matches!(
+            &grade_350.record,
+            DefinitionRecord::Material { density_kg_m3: Some(7850.0), standard, .. }
+                if standard.as_deref() == Some("CSA G40.20-13/G40.21-13")
+        ));
+        // A grade the set does not publish is NOT_FOUND, never a near match: no bare strength
+        // level, no imperial-ksi designation of the same grade, no other category (the
+        // impact-tested 350WT and the weathering 350A of the same strength level included),
+        // no lowercase and no strength level outside the standard's set.
+        for absent in [
+            "350", "50W", "44W", "350WT", "350A", "350R", "w350", "600W", "700W",
+        ] {
+            assert_eq!(
+                lookup.find(absent).unwrap_err().code,
+                ErrorCode::NotFound,
+                "{absent}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_shipped_china_gb_t_1591_materials_library_reads_with_every_entry_admitted() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/china/materials-gb-t-1591.usda"
+        );
+        let library = load_material(path).unwrap();
+        assert_eq!(library.info.id, "china-gb-t-1591-materials");
+        assert_eq!(library.info.version.as_deref(), Some("1"));
+        assert!(
+            library
+                .info
+                .licence
+                .as_deref()
+                .is_some_and(|l| !l.is_empty()),
+            "the shipped library declares its licence"
+        );
+        assert!(
+            library
+                .info
+                .source
+                .as_deref()
+                .is_some_and(|s| !s.is_empty()),
+            "the shipped library declares its source"
+        );
+        // No transcription slips: every entry is admitted, fifty-three designations.
+        assert_eq!(library.rejected, []);
+        assert_eq!(library.entries.len(), 53);
+        // The complete published grade set of GB/T 1591-2018 in the loader's designation
+        // order: per strength level the as-rolled grades (the AR code omitted) first, then
+        // the thermomechanical M and the normalizing N families, each with the quality
+        // grades its table lists — the sections-and-bars-only Q460 as-rolled grade has C
+        // only, and the Q500-to-Q690 levels exist in the thermomechanical family only. The
+        // designation system is clause 4: Q + the minimum upper yield strength in MPa + the
+        // delivery status code + the quality grade.
+        let gb = "GB/T 1591-2018";
+        let expected: [&str; 53] = [
+            "Q355B", "Q355C", "Q355D", "Q355MB", "Q355MC", "Q355MD", "Q355ME", "Q355MF", "Q355NB",
+            "Q355NC", "Q355ND", "Q355NE", "Q355NF", "Q390B", "Q390C", "Q390D", "Q390MB", "Q390MC",
+            "Q390MD", "Q390ME", "Q390NB", "Q390NC", "Q390ND", "Q390NE", "Q420B", "Q420C", "Q420MB",
+            "Q420MC", "Q420MD", "Q420ME", "Q420NB", "Q420NC", "Q420ND", "Q420NE", "Q460C",
+            "Q460MC", "Q460MD", "Q460ME", "Q460NC", "Q460ND", "Q460NE", "Q500MC", "Q500MD",
+            "Q500ME", "Q550MC", "Q550MD", "Q550ME", "Q620MC", "Q620MD", "Q620ME", "Q690MC",
+            "Q690MD", "Q690ME",
+        ];
+        for (designation, entry) in expected.iter().zip(&library.entries) {
+            let DefinitionRecord::Material {
+                density_kg_m3,
+                grade,
+                standard,
+                display_name,
+            } = &entry.record
+            else {
+                panic!("{} is not a material", entry.designation);
+            };
+            assert_eq!(entry.designation, *designation);
+            assert_eq!(grade.as_deref(), Some(*designation));
+            assert_eq!(*density_kg_m3, Some(7850.0), "{}", designation);
+            assert_eq!(standard.as_deref(), Some(gb), "{}", designation);
+            assert_eq!(display_name.as_deref(), Some(*designation));
+        }
+        assert_eq!(library.entries.len(), expected.len());
+    }
+
+    #[test]
+    fn the_shipped_china_environment_admits_its_material_library() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/china/environment.usda"
+        );
+        let environment = load_environment(path).unwrap();
+        assert_eq!(
+            environment.info.material_libraries,
+            ["materials-gb-t-1591.usda"]
+        );
+        // The profile and fastener namespaces are unchanged by the material listing.
+        assert_eq!(environment.sources.len(), 2);
+        assert_eq!(environment.fastener_sources.len(), 1);
+        assert_eq!(environment.material_sources.len(), 1);
+        let materials = &environment.material_sources[0];
+        assert_eq!(materials.library.info.id, "china-gb-t-1591-materials");
+        assert_eq!(materials.library.entries.len(), 53);
+        assert!(materials.library.rejected.is_empty());
+        // A grade rides the same resolver machinery, in its own namespace.
+        let lookup = environment.material_lookup();
+        let (source, q355) = lookup.find("Q355ND").unwrap();
+        assert_eq!(source.library.info.id, "china-gb-t-1591-materials");
+        assert!(matches!(
+            &q355.record,
+            DefinitionRecord::Material { density_kg_m3: Some(7850.0), standard, .. }
+                if standard.as_deref() == Some("GB/T 1591-2018")
+        ));
+        // A grade the set does not publish is NOT_FOUND, never a near match: no bare
+        // steel-grade without a quality grade, no designation of the withdrawn 2008 edition
+        // (Q345 became Q355), no lowercase, no quality grade a table omits (the as-rolled
+        // Q420 stops at C, the high-strength levels exist only in the thermomechanical
+        // family) and no grade of another standard.
+        for absent in [
+            "Q355", "Q345B", "Q345", "q355b", "Q420D", "Q420F", "Q460B", "Q500B", "Q500NB",
+            "Q690NE", "Q960", "S355",
+        ] {
+            assert_eq!(
+                lookup.find(absent).unwrap_err().code,
+                ErrorCode::NotFound,
+                "{absent}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_shipped_australia_as_nzs_3678_materials_library_reads_with_every_entry_admitted() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/australia/materials-as-nzs-3678.usda"
+        );
+        let library = load_material(path).unwrap();
+        assert_eq!(library.info.id, "australia-as-nzs-3678-materials");
+        assert_eq!(library.info.version.as_deref(), Some("1"));
+        assert!(
+            library
+                .info
+                .licence
+                .as_deref()
+                .is_some_and(|l| !l.is_empty()),
+            "the shipped library declares its licence"
+        );
+        assert!(
+            library
+                .info
+                .source
+                .as_deref()
+                .is_some_and(|s| !s.is_empty()),
+            "the shipped library declares its source"
+        );
+        // No transcription slips: every entry is admitted.
+        assert_eq!(library.rejected, []);
+        assert_eq!(library.entries.len(), 5);
+        // The structural base grades of AS/NZS 3678-2016 in the loader's designation order,
+        // the bare strength-level numbers (the nominal minimum yield in MPa) the ASI
+        // specification lists for plates and flats. The 300 and 400 grades are the steels the
+        // welded beams and columns of AS/NZS 3679.2 are welded from; the impact-test L
+        // suffixes, the Z values, the AS/NZS 1594 product grades and the weathering WR350
+        // product are not in the pack.
+        let asnzs = "AS/NZS 3678-2016";
+        let expected: [(&str, &str); 5] = [
+            ("250", asnzs),
+            ("300", asnzs),
+            ("350", asnzs),
+            ("400", asnzs),
+            ("450", asnzs),
+        ];
+        for ((designation, want_standard), entry) in expected.iter().zip(&library.entries) {
+            let DefinitionRecord::Material {
+                density_kg_m3,
+                grade,
+                standard,
+                display_name,
+            } = &entry.record
+            else {
+                panic!("{} is not a material", entry.designation);
+            };
+            assert_eq!(entry.designation, *designation);
+            assert_eq!(grade.as_deref(), Some(*designation));
+            assert_eq!(*density_kg_m3, Some(7850.0), "{}", designation);
+            assert_eq!(standard.as_deref(), Some(*want_standard), "{}", designation);
+            assert_eq!(display_name.as_deref(), Some(*designation));
+        }
+        assert_eq!(library.entries.len(), expected.len());
+    }
+
+    #[test]
+    fn the_shipped_australia_environment_admits_its_material_library() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/australia/environment.usda"
+        );
+        let environment = load_environment(path).unwrap();
+        assert_eq!(
+            environment.info.material_libraries,
+            ["materials-as-nzs-3678.usda"]
+        );
+        // The profile and fastener namespaces are unchanged by the material listing.
+        assert_eq!(environment.sources.len(), 2);
+        assert_eq!(environment.fastener_sources.len(), 1);
+        assert_eq!(environment.material_sources.len(), 1);
+        let materials = &environment.material_sources[0];
+        assert_eq!(materials.library.info.id, "australia-as-nzs-3678-materials");
+        assert_eq!(materials.library.entries.len(), 5);
+        assert!(materials.library.rejected.is_empty());
+        // A grade rides the same resolver machinery, in its own namespace.
+        let lookup = environment.material_lookup();
+        let (source, grade_350) = lookup.find("350").unwrap();
+        assert_eq!(source.library.info.id, "australia-as-nzs-3678-materials");
+        assert!(matches!(
+            &grade_350.record,
+            DefinitionRecord::Material { density_kg_m3: Some(7850.0), standard, .. }
+                if standard.as_deref() == Some("AS/NZS 3678-2016")
+        ));
+        // A grade the set does not publish is NOT_FOUND, never a near match: no qualifier
+        // forms (the NZ catalogue G-prefix and the Grade word, the AS/NZS 1594 HA form), no
+        // impact suffix, no Z value, no lighter grade outside the shipped set and no grade of
+        // another standard.
+        for absent in [
+            "G350",
+            "Grade 350",
+            "HA250",
+            "HW350",
+            "C350L0",
+            "350L15",
+            "350Z25",
+            "200",
+            "500",
+            "A36",
+        ] {
+            assert_eq!(
+                lookup.find(absent).unwrap_err().code,
+                ErrorCode::NotFound,
+                "{absent}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_shipped_india_is_2062_materials_library_reads_with_every_entry_admitted() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/india/materials-is-2062.usda"
+        );
+        let library = load_material(path).unwrap();
+        assert_eq!(library.info.id, "india-is-2062-materials");
+        assert_eq!(library.info.version.as_deref(), Some("1"));
+        assert!(
+            library
+                .info
+                .licence
+                .as_deref()
+                .is_some_and(|l| !l.is_empty()),
+            "the shipped library declares its licence"
+        );
+        assert!(
+            library
+                .info
+                .source
+                .as_deref()
+                .is_some_and(|s| !s.is_empty()),
+            "the shipped library declares its source"
+        );
+        // No transcription slips: every entry is admitted, twenty-eight designations.
+        assert_eq!(library.rejected, []);
+        assert_eq!(library.entries.len(), 28);
+        // The complete published grade set of IS 2062:2011 in the loader's designation order
+        // (byte order: the B0 digit sorts before the BR letter): the five lower levels carry
+        // the four sub-qualities A, BR, B0 and C, the higher levels E450 to E650 only A and
+        // BR — the sub-qualities indicate impact-test requirement and de-oxidation mode.
+        // The 2011 edition replaced the 2006 Fe designations with the minimum-yield E system,
+        // and its top levels are E600 and E650, not the E590 some second-hand lists name.
+        let india = "IS 2062-2011";
+        let expected: [&str; 28] = [
+            "E250A", "E250B0", "E250BR", "E250C", "E275A", "E275B0", "E275BR", "E275C", "E300A",
+            "E300B0", "E300BR", "E300C", "E350A", "E350B0", "E350BR", "E350C", "E410A", "E410B0",
+            "E410BR", "E410C", "E450A", "E450BR", "E550A", "E550BR", "E600A", "E600BR", "E650A",
+            "E650BR",
+        ];
+        for (designation, entry) in expected.iter().zip(&library.entries) {
+            let DefinitionRecord::Material {
+                density_kg_m3,
+                grade,
+                standard,
+                display_name,
+            } = &entry.record
+            else {
+                panic!("{} is not a material", entry.designation);
+            };
+            assert_eq!(entry.designation, *designation);
+            assert_eq!(grade.as_deref(), Some(*designation));
+            assert_eq!(*density_kg_m3, Some(7850.0), "{}", designation);
+            assert_eq!(standard.as_deref(), Some(india), "{}", designation);
+            assert_eq!(display_name.as_deref(), Some(*designation));
+        }
+        assert_eq!(library.entries.len(), expected.len());
+    }
+
+    #[test]
+    fn the_shipped_india_environment_admits_its_material_library() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/india/environment.usda"
+        );
+        let environment = load_environment(path).unwrap();
+        assert_eq!(
+            environment.info.material_libraries,
+            ["materials-is-2062.usda"]
+        );
+        // The profile and fastener namespaces are unchanged by the material listing.
+        assert_eq!(environment.sources.len(), 4);
+        assert_eq!(environment.fastener_sources.len(), 1);
+        assert_eq!(environment.material_sources.len(), 1);
+        let materials = &environment.material_sources[0];
+        assert_eq!(materials.library.info.id, "india-is-2062-materials");
+        assert_eq!(materials.library.entries.len(), 28);
+        assert!(materials.library.rejected.is_empty());
+        // A grade rides the same resolver machinery, in its own namespace.
+        let lookup = environment.material_lookup();
+        let (source, e350) = lookup.find("E350C").unwrap();
+        assert_eq!(source.library.info.id, "india-is-2062-materials");
+        assert!(matches!(
+            &e350.record,
+            DefinitionRecord::Material { density_kg_m3: Some(7850.0), standard, .. }
+                if standard.as_deref() == Some("IS 2062-2011")
+        ));
+        // A grade the set does not publish is NOT_FOUND, never a near match: no 2006-edition
+        // Fe designations, no bare grade without a sub-quality, no lowercase, no level the
+        // edition does not publish, no sub-quality the higher levels omit and no grade of
+        // another standard.
+        for absent in [
+            "Fe410WA", "Fe490A", "Fe590", "E250", "e350c", "E250D", "E590", "E450C", "E550C",
+            "E600C", "E650C", "S355",
+        ] {
             assert_eq!(
                 lookup.find(absent).unwrap_err().code,
                 ErrorCode::NotFound,
@@ -2646,14 +3434,14 @@ mod tests {
     }
 
     #[test]
-    fn the_shipped_russia_gost_30245_squares_library_reads_with_every_entry_admitted() {
+    fn the_shipped_russia_gost_30245_library_reads_with_every_entry_admitted() {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../../environments/russia/profiles-gost-30245.usda"
         );
         let library = load(path).unwrap();
-        assert_eq!(library.info.id, "russia-gost-30245-squares");
-        assert_eq!(library.info.version.as_deref(), Some("2"));
+        assert_eq!(library.info.id, "russia-gost-30245-profiles");
+        assert_eq!(library.info.version.as_deref(), Some("7"));
         assert!(
             library
                 .info
@@ -2672,7 +3460,7 @@ mod tests {
         );
         // No transcription slips: every entry is admitted and none warns.
         assert_eq!(library.rejected, []);
-        assert_eq!(library.entries.len(), 155);
+        assert_eq!(library.entries.len(), 580);
         let mut designations = Vec::new();
         for entry in &library.entries {
             let DefinitionRecord::SectionProfile {
@@ -2697,9 +3485,9 @@ mod tests {
             // must be that closed-form area at the standard's 0.785 kg per m per cm2.
             let values = parametric.values();
             let [h, b, t, r] = [values[0], values[1], values[2], values[3]];
-            assert_eq!(h, b, "{}: a square is square", entry.designation);
-            let area_exact_mm2 = h * h
-                - (h - 2.0 * t) * (h - 2.0 * t)
+            assert!(h >= b, "{}: the tables publish h >= b", entry.designation);
+            let area_exact_mm2 = h * b
+                - (h - 2.0 * t) * (b - 2.0 * t)
                 - (4.0 - std::f64::consts::PI) * t * (2.0 * r - t);
             let declared = section.area_mm2.unwrap();
             let area_tolerance = if declared < 10_000.0 { 0.5 } else { 5.0 };
@@ -2723,9 +3511,11 @@ mod tests {
             );
             designations.push(entry.designation.clone());
         }
-        // Table 1 exactly as GOST 30245-2003 publishes it: the complete square series, sizes
-        // 40, 50, 60, 70, 80, 90, 100, 120, 140, 150, 160, 180, 200, 250 and 300, each with
-        // its published wall thicknesses in 0.5 mm steps.
+        // Tables 1 and 2 exactly as GOST 30245-2003 publishes them: the complete square
+        // series (table 1, sizes 40, 50, 60, 70, 80, 90, 100, 120, 140, 150, 160, 180, 200,
+        // 250 and 300) and the rectangular series (table 2) entering by height bands, this
+        // layer carrying the table 2 groups with h up to 80 mm, each group with its published
+        // wall thicknesses in 0.5 mm steps.
         let mut expected = vec![
             "40x40x2",
             "40x40x2.5",
@@ -2882,6 +3672,431 @@ mod tests {
             "300x300x11",
             "300x300x11.5",
             "300x300x12",
+            "50x25x2",
+            "50x25x2.5",
+            "50x25x3",
+            "50x25x3.5",
+            "50x25x4",
+            "50x30x2",
+            "50x30x2.5",
+            "50x30x3",
+            "50x30x3.5",
+            "50x30x4",
+            "50x30x5",
+            "50x40x2",
+            "50x40x2.5",
+            "50x40x3",
+            "50x40x3.5",
+            "50x40x4",
+            "50x40x4.5",
+            "50x40x5",
+            "60x30x2",
+            "60x30x2.5",
+            "60x30x3",
+            "60x30x3.5",
+            "60x30x4",
+            "60x30x4.5",
+            "60x30x5",
+            "60x30x5.5",
+            "60x30x6",
+            "60x40x2",
+            "60x40x2.5",
+            "60x40x3",
+            "60x40x3.5",
+            "60x40x4",
+            "60x40x4.5",
+            "60x40x5",
+            "60x40x5.5",
+            "60x40x6",
+            "70x50x2",
+            "70x50x2.5",
+            "70x50x3",
+            "70x50x3.5",
+            "70x50x4",
+            "70x50x4.5",
+            "70x50x5",
+            "70x50x5.5",
+            "70x50x6",
+            "80x40x2",
+            "80x40x2.5",
+            "80x40x3",
+            "80x40x3.5",
+            "80x40x4",
+            "80x40x4.5",
+            "80x40x5",
+            "80x40x5.5",
+            "80x40x6",
+            "80x60x2",
+            "80x60x2.5",
+            "80x60x3",
+            "80x60x3.5",
+            "80x60x4",
+            "80x60x4.5",
+            "80x60x5",
+            "80x60x5.5",
+            "80x60x6",
+            "80x60x6.5",
+            "80x60x7",
+            "80x70x3",
+            "80x70x3.5",
+            "80x70x4",
+            "80x70x4.5",
+            "80x70x5",
+            "80x70x5.5",
+            "80x70x6",
+            "80x70x6.5",
+            "80x70x7",
+            "90x50x3",
+            "90x50x3.5",
+            "90x50x4",
+            "90x50x4.5",
+            "90x50x5",
+            "90x50x5.5",
+            "90x50x6",
+            "90x50x6.5",
+            "90x50x7",
+            "90x60x3",
+            "90x60x3.5",
+            "90x60x4",
+            "90x60x4.5",
+            "90x60x5",
+            "90x60x5.5",
+            "90x60x6",
+            "90x60x6.5",
+            "90x60x7",
+            "100x40x3",
+            "100x40x3.5",
+            "100x40x4",
+            "100x40x4.5",
+            "100x40x5",
+            "100x40x5.5",
+            "100x40x6",
+            "100x40x6.5",
+            "100x40x7",
+            "100x50x3",
+            "100x50x3.5",
+            "100x50x4",
+            "100x50x4.5",
+            "100x50x5",
+            "100x50x5.5",
+            "100x50x6",
+            "100x50x6.5",
+            "100x50x7",
+            "100x60x3",
+            "100x60x3.5",
+            "100x60x4",
+            "100x60x4.5",
+            "100x60x5",
+            "100x60x5.5",
+            "100x60x6",
+            "100x60x6.5",
+            "100x60x7",
+            "120x40x3",
+            "120x40x3.5",
+            "120x40x4",
+            "120x40x4.5",
+            "120x40x5",
+            "120x40x5.5",
+            "120x40x6",
+            "120x40x6.5",
+            "120x40x7",
+            "120x60x3",
+            "120x60x3.5",
+            "120x60x4",
+            "120x60x4.5",
+            "120x60x5",
+            "120x60x5.5",
+            "120x60x6",
+            "120x60x6.5",
+            "120x60x7",
+            "120x80x3",
+            "120x80x3.5",
+            "120x80x4",
+            "120x80x4.5",
+            "120x80x5",
+            "120x80x5.5",
+            "120x80x6",
+            "120x80x6.5",
+            "120x80x7",
+            "140x60x3",
+            "140x60x3.5",
+            "140x60x4",
+            "140x60x4.5",
+            "140x60x5",
+            "140x60x5.5",
+            "140x60x6",
+            "140x60x6.5",
+            "140x60x7",
+            "140x100x4",
+            "140x100x4.5",
+            "140x100x5",
+            "140x100x5.5",
+            "140x100x6",
+            "140x100x6.5",
+            "140x100x7",
+            "140x120x4",
+            "140x120x4.5",
+            "140x120x5",
+            "140x120x5.5",
+            "140x120x6",
+            "140x120x6.5",
+            "140x120x7",
+            "140x120x7.5",
+            "140x120x8",
+            "150x100x4",
+            "150x100x4.5",
+            "150x100x5",
+            "150x100x5.5",
+            "150x100x6",
+            "150x100x6.5",
+            "150x100x7",
+            "160x40x3",
+            "160x40x3.5",
+            "160x40x4",
+            "160x40x4.5",
+            "160x40x5",
+            "160x40x5.5",
+            "160x40x6",
+            "160x40x6.5",
+            "160x40x7",
+            "160x80x4",
+            "160x80x4.5",
+            "160x80x5",
+            "160x80x5.5",
+            "160x80x6",
+            "160x80x6.5",
+            "160x80x7",
+            "160x100x4",
+            "160x100x4.5",
+            "160x100x5",
+            "160x100x5.5",
+            "160x100x6",
+            "160x100x6.5",
+            "160x100x7",
+            "160x100x7.5",
+            "160x100x8",
+            "160x120x4",
+            "160x120x4.5",
+            "160x120x5",
+            "160x120x5.5",
+            "160x120x6",
+            "160x120x6.5",
+            "160x120x7",
+            "160x120x7.5",
+            "160x120x8",
+            "160x140x5",
+            "160x140x5.5",
+            "160x140x6",
+            "160x140x6.5",
+            "160x140x7",
+            "160x140x7.5",
+            "160x140x8",
+            "180x60x4",
+            "180x60x4.5",
+            "180x60x5",
+            "180x60x5.5",
+            "180x60x6",
+            "180x60x6.5",
+            "180x60x7",
+            "180x60x7.5",
+            "180x60x8",
+            "180x80x4",
+            "180x80x4.5",
+            "180x80x5",
+            "180x80x5.5",
+            "180x80x6",
+            "180x80x6.5",
+            "180x80x7",
+            "180x80x7.5",
+            "180x80x8",
+            "180x100x4",
+            "180x100x4.5",
+            "180x100x5",
+            "180x100x5.5",
+            "180x100x6",
+            "180x100x6.5",
+            "180x100x7",
+            "180x100x7.5",
+            "180x100x8",
+            "180x140x4",
+            "180x140x4.5",
+            "180x140x5",
+            "180x140x5.5",
+            "180x140x6",
+            "180x140x6.5",
+            "180x140x7",
+            "180x140x7.5",
+            "180x140x8",
+            "200x40x4",
+            "200x40x4.5",
+            "200x40x5",
+            "200x40x5.5",
+            "200x40x6",
+            "200x40x6.5",
+            "200x40x7",
+            "200x80x4",
+            "200x80x4.5",
+            "200x80x5",
+            "200x80x5.5",
+            "200x80x6",
+            "200x80x6.5",
+            "200x80x7",
+            "200x80x7.5",
+            "200x80x8",
+            "200x100x4",
+            "200x100x4.5",
+            "200x100x5",
+            "200x100x5.5",
+            "200x100x6",
+            "200x100x6.5",
+            "200x100x7",
+            "200x100x7.5",
+            "200x100x8",
+            "200x120x4",
+            "200x120x4.5",
+            "200x120x5",
+            "200x120x5.5",
+            "200x120x6",
+            "200x120x6.5",
+            "200x120x7",
+            "200x120x7.5",
+            "200x120x8",
+            "200x160x5",
+            "200x160x5.5",
+            "200x160x6",
+            "200x160x6.5",
+            "200x160x7",
+            "200x160x7.5",
+            "200x160x8",
+            "200x160x8.5",
+            "200x160x9",
+            "200x160x9.5",
+            "200x160x10",
+            "220x100x4",
+            "220x100x4.5",
+            "220x100x5",
+            "220x100x5.5",
+            "220x100x6",
+            "220x100x6.5",
+            "220x100x7",
+            "220x100x7.5",
+            "220x100x8",
+            "220x140x5",
+            "220x140x5.5",
+            "220x140x6",
+            "220x140x6.5",
+            "220x140x7",
+            "220x140x7.5",
+            "220x140x8",
+            "240x120x5",
+            "240x120x5.5",
+            "240x120x6",
+            "240x120x6.5",
+            "240x120x7",
+            "240x120x7.5",
+            "240x120x8",
+            "240x160x6",
+            "240x160x6.5",
+            "240x160x7",
+            "240x160x7.5",
+            "240x160x8",
+            "240x160x8.5",
+            "240x160x9",
+            "240x160x9.5",
+            "240x160x10",
+            "240x160x10.5",
+            "240x160x11",
+            "240x160x11.5",
+            "240x160x12",
+            "250x150x6",
+            "250x150x6.5",
+            "250x150x7",
+            "250x150x7.5",
+            "250x150x8",
+            "260x130x6",
+            "260x130x6.5",
+            "260x130x7",
+            "260x130x7.5",
+            "260x130x8",
+            "260x130x8.5",
+            "260x130x9",
+            "260x130x9.5",
+            "260x130x10",
+            "260x130x10.5",
+            "260x130x11",
+            "260x130x11.5",
+            "260x130x12",
+            "300x100x6",
+            "300x100x6.5",
+            "300x100x7",
+            "300x100x7.5",
+            "300x100x8",
+            "300x100x8.5",
+            "300x100x9",
+            "300x100x9.5",
+            "300x100x10",
+            "300x200x6",
+            "300x200x6.5",
+            "300x200x7",
+            "300x200x7.5",
+            "300x200x8",
+            "300x200x8.5",
+            "300x200x9",
+            "300x200x9.5",
+            "300x200x10",
+            "300x200x10.5",
+            "300x200x11",
+            "300x200x11.5",
+            "300x200x12",
+            "320x180x6",
+            "320x180x6.5",
+            "320x180x7",
+            "320x180x7.5",
+            "320x180x8",
+            "320x180x8.5",
+            "320x180x9",
+            "320x180x9.5",
+            "320x180x10",
+            "320x180x10.5",
+            "320x180x11",
+            "320x180x11.5",
+            "320x180x12",
+            "350x250x6",
+            "350x250x6.5",
+            "350x250x7",
+            "350x250x7.5",
+            "350x250x8",
+            "350x250x8.5",
+            "350x250x9",
+            "350x250x9.5",
+            "350x250x10",
+            "350x250x10.5",
+            "350x250x11",
+            "350x250x11.5",
+            "350x250x12",
+            "350x300x6",
+            "350x300x6.5",
+            "350x300x7",
+            "350x300x7.5",
+            "350x300x8",
+            "350x300x8.5",
+            "350x300x9",
+            "350x300x9.5",
+            "350x300x10",
+            "350x300x10.5",
+            "350x300x11",
+            "350x300x11.5",
+            "350x300x12",
+            "380x220x6",
+            "380x220x6.5",
+            "380x220x7",
+            "380x220x7.5",
+            "380x220x8",
+            "400x200x10",
+            "400x200x10.5",
+            "400x200x11",
+            "400x200x11.5",
+            "400x200x12",
         ];
         expected.sort();
         assert_eq!(designations, expected);
@@ -2926,6 +4141,45 @@ mod tests {
         // print with one decimal.
         spot("250x250x11.5", [250.0, 250.0, 11.5, 34.5], 10400.0, 81.67);
         spot("300x300x12", [300.0, 300.0, 12.0, 36.0], 13210.0, 103.7);
+        // The rectangular band spots against the transcribed values: the smallest row,
+        // the 50x30 wall range that steps over 4.5 mm, the 80x60 top wall at the 2.5t
+        // radius band, and the 80x70 row only the raster scan prints cleanly.
+        spot("50x25x2", [50.0, 25.0, 2.0, 4.0], 274.0, 2.15);
+        spot("50x25x4", [50.0, 25.0, 4.0, 8.0], 495.0, 3.88);
+        spot("50x30x5", [50.0, 30.0, 5.0, 10.0], 636.0, 4.99);
+        spot("80x60x7", [80.0, 60.0, 7.0, 17.5], 1596.0, 12.53);
+        spot("80x70x5", [80.0, 70.0, 5.0, 10.0], 1336.0, 10.48);
+        // Band 2 spots: the band opener, the 90x60 row both text scans drop (only the
+        // raster scan prints it; the closed form and the row's own mass confirm it),
+        // and the band's widest group at its top wall.
+        spot("90x50x3", [90.0, 50.0, 3.0, 6.0], 781.0, 6.13);
+        spot("90x60x6.5", [90.0, 60.0, 6.5, 16.25], 1636.0, 12.84);
+        spot("100x40x7", [100.0, 40.0, 7.0, 17.5], 1596.0, 12.53);
+        spot("120x80x7", [120.0, 80.0, 7.0, 17.5], 2436.0, 19.12);
+        // Band 3 spots: the band opener, the widest group's top wall at the 2.5t radius
+        // band, and the tall-thin 160x40 pair against the scans.
+        spot("140x60x3", [140.0, 60.0, 3.0, 6.0], 1141.0, 8.96);
+        spot("140x120x5", [140.0, 120.0, 5.0, 10.0], 2436.0, 19.12);
+        spot("150x100x4", [150.0, 100.0, 4.0, 8.0], 1895.0, 14.87);
+        spot("160x40x7", [160.0, 40.0, 7.0, 17.5], 2436.0, 19.12);
+        spot("160x120x8", [160.0, 120.0, 8.0, 20.0], 4004.0, 31.43);
+        // Band 4 spots: the band opener, the 200x160 group at its opening wall, and the
+        // band's largest wall at the 2.5t radius band.
+        spot("180x60x4", [180.0, 60.0, 4.0, 8.0], 1815.0, 14.25);
+        spot("200x160x5", [200.0, 160.0, 5.0, 10.0], 3436.0, 26.97);
+        spot("200x120x8", [200.0, 120.0, 8.0, 20.0], 4644.0, 36.46);
+        // Band 5 spots, including the two rectangular print errata: the scans' typeset
+        // prints 220x100x7 as 46.16 while its own mass 32.31 is 0.785 * 41.16 (the raster
+        // and the closed form carry 41.16), and the scans print 350x300x9 as 110.0 while
+        // its own mass 87.12 and Ix 20347 are those of 111.0 (the raster and the closed
+        // form carry 111.0); the library carries the relation's values, the misprints are
+        // named here. The 400x200x12 spot closes the assortment at its largest row, whose
+        // area prints at one decimal.
+        spot("220x100x7", [220.0, 100.0, 7.0, 17.5], 4116.0, 32.31);
+        spot("350x300x9", [350.0, 300.0, 9.0, 22.5], 11100.0, 87.12);
+        spot("240x160x6", [240.0, 160.0, 6.0, 12.0], 4563.0, 35.82);
+        spot("260x130x12", [260.0, 130.0, 12.0, 36.0], 8166.0, 64.1);
+        spot("400x200x12", [400.0, 200.0, 12.0, 36.0], 13210.0, 103.7);
         // Designations the standard does not publish are NOT_FOUND, never a near match:
         // no 65/110/130/170/210/220/240/260/280 mm squares, and each size keeps its
         // published thickness range. The Cyrillic authenticity form is not a lookup key.
@@ -2953,7 +4207,220 @@ mod tests {
             "200x200x5.5",
             "200x200x12.5",
             "60х60х3",
+            // Rectangular facts table 2 does not publish: no 90x40, 150x75, 180x120,
+            // 200x140 or 260x140 group; the 50x30 group steps over the 4.5 mm wall; and
+            // every published group keeps its printed wall range. The Cyrillic form is
+            // not a lookup key for a rectangle either.
+            "50x25x4.5",
+            "50x30x4.5",
+            "60x30x6.5",
+            "80x70x2.5",
+            "90x40x3",
+            "150x75x4",
+            "180x120x5",
+            "200x140x5",
+            "260x140x9.5",
+            // Band 2 facts table 2 does not publish: the 90x50 wall range ends at 7 mm,
+            // the 100x40 range opens at 3 mm, the 120x80 range ends at 7 mm, and no
+            // 110 mm height group exists.
+            "90x50x7.5",
+            "100x40x2.5",
+            "110x60x4",
+            "120x80x7.5",
+            // Band 3 facts table 2 does not publish: the 140x60 wall range ends at 7 mm,
+            // the 140x100 and 150x100 ranges end at 7 mm too, the 160x40 range opens at
+            // 3 mm, and neither a 140x80 nor a 170x100 group exists.
+            "140x60x7.5",
+            "140x100x7.5",
+            "150x100x7.5",
+            "160x40x2.5",
+            "140x80x4",
+            "170x100x5",
+            // Band 4 facts table 2 does not publish: the 180x60 wall range ends at 8 mm,
+            // the 200x40 range ends at 7 mm, the 200x160 range ends at 10 mm, and no
+            // 190 mm height group exists.
+            "180x60x8.5",
+            "200x40x7.5",
+            "200x160x10.5",
+            "190x100x5",
+            // Band 5 facts table 2 does not publish: the 220x100, 240x120, 250x150 and
+            // 380x220 wall ranges end at 8 mm, the 300x100 range ends at 10 mm, and the
+            // 400x200 range opens at 10 mm.
+            "220x100x8.5",
+            "240x120x8.5",
+            "250x150x8.5",
+            "380x220x8.5",
+            "300x100x10.5",
+            "400x200x9.5",
         ] {
+            assert_eq!(
+                library.entry(absent).unwrap_err().code,
+                ErrorCode::NotFound,
+                "{absent} is not in the shipped series"
+            );
+        }
+    }
+
+    #[test]
+    fn the_shipped_russia_gost_8239_8240_library_reads_with_every_entry_admitted() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/russia/profiles-gost-8239-8240.usda"
+        );
+        let library = load(path).unwrap();
+        assert_eq!(library.info.id, "russia-gost-8239-8240-profiles");
+        assert_eq!(library.info.version.as_deref(), Some("1"));
+        assert!(
+            library
+                .info
+                .licence
+                .as_deref()
+                .is_some_and(|l| !l.is_empty()),
+            "the shipped library declares its licence"
+        );
+        assert!(
+            library
+                .info
+                .source
+                .as_deref()
+                .is_some_and(|s| !s.is_empty()),
+            "the shipped library declares its source"
+        );
+        // No transcription slips: every entry is admitted and none warns.
+        assert_eq!(library.rejected, []);
+        assert_eq!(library.entries.len(), 35);
+        // Neither standard prints a per-row slope: the note under the clause 1 figure fixes the
+        // inner-face slope as a roll-pass range (8239: 6-12 %, 8240: 4-10 %), excluded from
+        // finished-product inspection by note 2, and the rows carry the middle of the range.
+        const I_SLOPE: f64 = 0.09;
+        const C_SLOPE: f64 = 0.07;
+        let mut designations = Vec::new();
+        for entry in &library.entries {
+            let DefinitionRecord::SectionProfile {
+                shape: SectionShape::Parametric(parametric),
+                section,
+            } = &entry.record
+            else {
+                panic!("{} is not a parametric section", entry.designation);
+            };
+            let (slope, range, standard, family) = match parametric.family() {
+                SectionFamily::TaperedI => (
+                    I_SLOPE,
+                    [0.06, 0.12],
+                    "GOST 8239-89",
+                    SectionFamily::TaperedI,
+                ),
+                SectionFamily::TaperedC => (
+                    C_SLOPE,
+                    [0.04, 0.10],
+                    "GOST 8240-89",
+                    SectionFamily::TaperedC,
+                ),
+                family => panic!("{}: unexpected family {family:?}", entry.designation),
+            };
+            assert_eq!(
+                parametric.values()[6],
+                slope,
+                "{}: the series slope",
+                entry.designation
+            );
+            assert_eq!(
+                section.standard.as_deref(),
+                Some(standard),
+                "{}",
+                entry.designation
+            );
+            // The exact closed-form area of the declared dimensions stays within 0.8 percent of
+            // the published catalogue area at the shipped slope (tighter than the D3 1 percent
+            // warning) and at both ends of the printed roll-pass range, so no slope the
+            // standards allow can push a row over the warning.
+            let declared = section.area_mm2.unwrap();
+            let exact = parametric.exact_area_mm2();
+            let gap = (declared - exact).abs() / declared;
+            assert!(
+                gap <= 0.008,
+                "{}: exact {exact} mm2 vs declared {declared} (gap {:.3} %)",
+                entry.designation,
+                gap * 100.0
+            );
+            let mut values = parametric.values().to_vec();
+            for end in range {
+                values[6] = end;
+                let exact = ParametricSection::new(family, values.clone())
+                    .unwrap()
+                    .exact_area_mm2();
+                let gap = (declared - exact).abs() / declared;
+                assert!(
+                    gap <= 0.008,
+                    "{} at slope {end}: exact {exact} mm2 vs declared {declared} (gap {:.3} %)",
+                    entry.designation,
+                    gap * 100.0
+                );
+            }
+            // The declared mass is the declared area at the standards' own 7.85 g/cm3 note,
+            // within the printed rounding. I60 is the one row whose printed mass corresponds to
+            // the unrounded roll-pass area instead of the printed one (0.785 x 138.0 is 108.33,
+            // the standard prints 108.00); the published pair is taken as-is.
+            let mass = section.mass_per_meter_kg.unwrap();
+            let mass_from_area = declared * 7850.0 / 1.0e6;
+            if entry.designation == "I60" {
+                assert_eq!(mass, 108.0, "I60 carries the printed mass");
+            } else {
+                assert!(
+                    (mass - mass_from_area).abs() <= 0.08,
+                    "{}: mass {mass} kg/m vs area-derived {mass_from_area}",
+                    entry.designation
+                );
+            }
+            designations.push(entry.designation.clone());
+        }
+        // Both assortments exactly as the standards publish them: the 17 I-beam designations
+        // 10 to 60 and the 18 slope-series channels of table 1 (16a and 18a included), in the
+        // library's lexicographic designation order. The parallel-flange П series (table 2 of
+        // GOST 8240-89) is a different geometry family and ships with none of this pack.
+        assert_eq!(
+            designations,
+            [
+                "C10", "C12", "C14", "C16", "C16a", "C18", "C18a", "C20", "C22", "C24", "C27",
+                "C30", "C33", "C36", "C40", "C5", "C6.5", "C8", "I10", "I12", "I14", "I16", "I18",
+                "I20", "I22", "I24", "I27", "I30", "I33", "I36", "I40", "I45", "I50", "I55", "I60",
+            ]
+        );
+        // Spot checks against the transcribed values.
+        let spot = |designation: &str, values: [f64; 7], area: f64, mass: f64| {
+            let entry = library.entry(designation).unwrap();
+            let DefinitionRecord::SectionProfile {
+                shape: SectionShape::Parametric(p),
+                section,
+            } = &entry.record
+            else {
+                panic!("{designation} is not a parametric section");
+            };
+            assert_eq!(p.values(), values, "{designation}");
+            assert_eq!(section.area_mm2, Some(area), "{designation}");
+            assert_eq!(section.mass_per_meter_kg, Some(mass), "{designation}");
+        };
+        spot(
+            "I10",
+            [100.0, 55.0, 4.5, 7.2, 7.0, 2.5, I_SLOPE],
+            1200.0,
+            9.46,
+        );
+        spot(
+            "I60",
+            [600.0, 190.0, 12.0, 17.8, 20.0, 8.0, I_SLOPE],
+            13800.0,
+            108.0,
+        );
+        spot(
+            "C16a",
+            [160.0, 68.0, 5.0, 9.0, 8.5, 3.5, C_SLOPE],
+            1950.0,
+            15.3,
+        );
+        // The assortment gaps: numbers the standards do not publish are refused, not silently
+        // substituted.
+        for absent in ["I11", "I21", "I25", "I32", "I65", "C15", "C24a", "C45"] {
             assert_eq!(
                 library.entry(absent).unwrap_err().code,
                 ErrorCode::NotFound,
@@ -4217,6 +5684,285 @@ mod tests {
                 "{absent} is not in the shipped series"
             );
         }
+    }
+
+    #[test]
+    fn the_shipped_india_sloping_flange_library_reads_with_every_entry_admitted() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/india/profiles-is808-sloping-flange.usda"
+        );
+        let library = load(path).unwrap();
+        assert_eq!(library.info.id, "india-is808-sloping-flange-profiles");
+        assert_eq!(library.info.version.as_deref(), Some("1"));
+        assert!(
+            library
+                .info
+                .licence
+                .as_deref()
+                .is_some_and(|l| !l.is_empty()),
+            "the shipped library declares its licence"
+        );
+        assert!(
+            library
+                .info
+                .source
+                .as_deref()
+                .is_some_and(|s| !s.is_empty()),
+            "the shipped library declares its source"
+        );
+        // No transcription slips: every entry is admitted and none warns.
+        assert_eq!(library.rejected, []);
+        assert_eq!(library.entries.len(), 102);
+        // The slope column prints the angle the inner flange face makes with the flange plane
+        // (parallel rows print 90 degrees); every row carries k = tan of the angle over 90
+        // degrees, as printed. The shipped rows split as: 8 degrees - MB, SC and the heavy
+        // WB200x52.09 row; 6 degrees - the other WB rows, the provisional LBP175/LBP200, MC,
+        // LC225 and deeper, and LCP125-LCP300; 4 degrees - HB; 1.5 degrees - JB, JC, the other
+        // LB rows (LB75-LB200 with LBP100) and the shallow plain LC rows (LC75-LC200). The deep
+        // LB rows that also print 8 degrees are the excluded toe-fit rows. The legacy
+        // IS 808:1989 edition prints the same column as "flange slope, max", a roll-pass
+        // maximum, so unlike the GB/T 706 tables there is no tighter-than-D3 bound: the
+        // declared areas reproduce at the printed slope within 0.8 percent (the worst rows
+        // MB500, JB175 and JC125 sit 0.54 to 0.76 percent above the closed form).
+        let k98 = 8.0_f64.to_radians().tan();
+        let k96 = 6.0_f64.to_radians().tan();
+        let k94 = 4.0_f64.to_radians().tan();
+        let k915 = 1.5_f64.to_radians().tan();
+        let mut designations = Vec::new();
+        for entry in &library.entries {
+            let DefinitionRecord::SectionProfile {
+                shape: SectionShape::Parametric(parametric),
+                section,
+            } = &entry.record
+            else {
+                panic!("{} is not a parametric section", entry.designation);
+            };
+            match parametric.family() {
+                SectionFamily::TaperedI | SectionFamily::TaperedC => {}
+                family => panic!("{}: unexpected family {family:?}", entry.designation),
+            }
+            let k = parametric.values()[6];
+            assert!(
+                k == k98 || k == k96 || k == k94 || k == k915,
+                "{}: slope {k} is not one of the printed angles",
+                entry.designation
+            );
+            assert_eq!(
+                section.standard.as_deref(),
+                Some("IS 808:2021"),
+                "{}",
+                entry.designation
+            );
+            // The D3 discipline: the declared catalogue area never warns against the exact
+            // filleted area of the admitted geometry at the printed slope.
+            assert!(
+                entry.record.declared_area_warning().is_none(),
+                "{}",
+                entry.designation
+            );
+            // Every declared mass follows its declared area at 7850 kg/m3 within 1 percent,
+            // except two named print errata: the mass column disagrees with the same row's
+            // printed area in BOTH the 2021 and the 1989 editions, while the areas track the
+            // closed form of the printed dimensions (MC175x22.7 prints 22.7 against an area
+            // worth 21.4 to 21.5 kg/m, a 5.6 percent gap; MC225x30.7 prints 30.7 against 30.3
+            // to 30.6, 1.04 percent). The printed values ship: the engine's quantities compute
+            // from the catalogue area, not from this metadata.
+            let area = section.area_mm2.unwrap();
+            let mass = section.mass_per_meter_kg.unwrap();
+            let mass_from_area = area * 7850.0 / 1.0e6;
+            let gap = (mass - mass_from_area).abs() / mass;
+            if matches!(entry.designation.as_str(), "MC175x22.7" | "MC225x30.7") {
+                assert!(
+                    gap > 0.01,
+                    "{}: {mass} kg/m vs area-derived {mass_from_area}: the documented print \
+                     erratum no longer reproduces",
+                    entry.designation
+                );
+            } else {
+                assert!(
+                    gap <= 0.01,
+                    "{}: mass {mass} kg/m vs area-derived {mass_from_area}",
+                    entry.designation
+                );
+            }
+            designations.push(entry.designation.clone());
+        }
+        // Both families exactly as tables 1, 2, 5, 6 and 7 of IS 808:2021 publish them: 62
+        // sloping flange beams, columns and heavy beams (tapered_i) and 40 sloping flange
+        // channels (tapered_c). Where one depth carries several rows the heavier ones take the
+        // depth-x-mass form the standard requires when ordering them (WB200x52.09), the star of
+        // the print is a footnote marker and is dropped (SC150 is the printed SC 150*), and the
+        // provisional sections' (P) marker is normalized to P (LB(P) 100 ships as LBP100).
+        designations.sort();
+        let expected = [
+            "HB150",
+            "HB150x30.15",
+            "HB150x33.66",
+            "HB200",
+            "HB200x39.73",
+            "HB225",
+            "HB225x46.52",
+            "HB250",
+            "HB250x54.41",
+            "HB300",
+            "HB300x62.67",
+            "HB350",
+            "HB350x72.03",
+            "HB400",
+            "HB400x81.83",
+            "HB450",
+            "HB450x92.19",
+            "JB150",
+            "JB175",
+            "JB200",
+            "JB225",
+            "JC100",
+            "JC125",
+            "JC150",
+            "JC175",
+            "JC200",
+            "LB100",
+            "LB125",
+            "LB150",
+            "LB175",
+            "LB200",
+            "LB75",
+            "LBP100",
+            "LBP175",
+            "LBP200",
+            "LC100",
+            "LC125",
+            "LC150",
+            "LC175",
+            "LC200",
+            "LC225",
+            "LC250",
+            "LC300",
+            "LC350",
+            "LC400",
+            "LC75",
+            "LCP125",
+            "LCP150",
+            "LCP200",
+            "LCP300",
+            "MB100",
+            "MB125",
+            "MB150",
+            "MB175",
+            "MB200",
+            "MB225",
+            "MB250",
+            "MB300",
+            "MB350",
+            "MB400",
+            "MB450",
+            "MB500",
+            "MB550",
+            "MB600",
+            "MC100",
+            "MC125",
+            "MC125x13.7",
+            "MC150",
+            "MC150x17.7",
+            "MC175",
+            "MC175x22.7",
+            "MC200",
+            "MC200x24.3",
+            "MC225",
+            "MC225x30.7",
+            "MC250",
+            "MC250x34.2",
+            "MC250x38.1",
+            "MC300",
+            "MC300x41.5",
+            "MC300x46.2",
+            "MC350",
+            "MC400",
+            "MC75",
+            "SC100",
+            "SC120",
+            "SC140",
+            "SC150",
+            "SC160",
+            "SC180",
+            "WB150",
+            "WB175",
+            "WB200",
+            "WB200x52.09",
+            "WB225",
+            "WB350",
+            "WB400",
+            "WB450",
+            "WB500",
+            "WB550",
+            "WB600",
+            "WB600x145.06",
+        ];
+        assert_eq!(designations, expected);
+        // Seventeen printed rows are absent: their published toe radius R2 exceeds the toe
+        // thickness the standard's own annex A computes for the same row (T - ((B-t)/4) tan of
+        // the slope), so the exact tapered outline the kernel admits cannot express them
+        // (WB250, WB300, SC200, SC220, SC250, and the deep light beams LB225 to LB600 with
+        // LB(P)300). The depths no series publishes stay absent, as do the parallel flange
+        // channel (MCP/MPC, table 8) and bearing pile (PBP, table 13) series - different
+        // families than the tapered ones this library ships.
+        for absent in [
+            "WB250", "WB300", "SC200", "SC220", "SC250", "LB225", "LB250", "LB275", "LB300",
+            "LBP300", "LB325", "LB350", "LB400", "LB450", "LB500", "LB550", "LB600", "MB275",
+            "MB325", "WB275", "SC190", "JB250", "HB175", "HB500", "JC75", "JC250", "LC450",
+            "MC450", "MPC200", "MCP300", "PBP300",
+        ] {
+            assert_eq!(
+                library.entry(absent).unwrap_err().code,
+                ErrorCode::NotFound,
+                "{absent} is not in the shipped series"
+            );
+        }
+        // Spot rows against the print: dimensions, catalogue area and mass.
+        let spot = |designation: &str, values: [f64; 7], area: f64, mass: f64| {
+            let entry = library.entry(designation).unwrap();
+            let DefinitionRecord::SectionProfile {
+                shape: SectionShape::Parametric(p),
+                section,
+            } = &entry.record
+            else {
+                panic!("{designation} is not a parametric section");
+            };
+            assert_eq!(p.values(), values, "{designation}");
+            assert_eq!(section.area_mm2, Some(area), "{designation}");
+            assert_eq!(section.mass_per_meter_kg, Some(mass), "{designation}");
+        };
+        spot(
+            "MB200",
+            [200.0, 100.0, 5.7, 10.0, 11.0, 5.5, k98],
+            3080.0,
+            24.17,
+        );
+        spot(
+            "MC200",
+            [200.0, 75.0, 6.2, 11.4, 11.0, 3.2, k96],
+            2840.0,
+            22.3,
+        );
+        spot(
+            "HB450x92.19",
+            [450.0, 250.0, 11.3, 13.7, 15.0, 7.5, k94],
+            11700.0,
+            92.19,
+        );
+        spot(
+            "LBP100",
+            [100.0, 50.0, 4.3, 7.0, 8.0, 3.0, k915],
+            1110.0,
+            8.75,
+        );
+        spot(
+            "LC400",
+            [400.0, 100.0, 8.0, 14.0, 14.0, 4.8, k96],
+            5820.0,
+            45.8,
+        );
     }
 
     #[test]
