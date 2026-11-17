@@ -1705,7 +1705,7 @@ impl App {
     /// Starts a click selection on a worker: the engine's `pick` along the ray, then the details
     /// of the element it hit, from one lookup ([`command::select`]) on the snapshot on screen.
     fn start_select(&mut self, ray: crate::edit::Ray) {
-        self.grid_edit = None;
+        self.drop_grid_edit();
         if self.select_job.is_some() {
             return;
         }
@@ -3973,7 +3973,7 @@ impl eframe::App for App {
                 self.editor.deselect();
                 self.props.clear();
                 self.set_bench(workbench::Bench::Select);
-                self.grid_edit = None;
+                self.drop_grid_edit();
             }
         }
         // Another process committed to the store: refresh, exactly as the `R` key does.
@@ -8826,6 +8826,35 @@ pub(crate) mod tests {
         assert!(app.error.is_some());
         assert_eq!(app.loaded.as_ref().unwrap().snapshot.token(), &token);
         assert_eq!(app.grid_scene, old_guides);
+    }
+
+    #[test]
+    fn a_new_grid_never_inherits_the_limits_of_the_grid_selected_before() {
+        let Some(mut app) = headless() else { return };
+        deliver(&mut app, refreshed(1));
+        let id = "01990000-0000-7000-8000-000000000001";
+        let mut big = crate::grid::GridForm::default();
+        big.u.expression = "0 8*6000".into();
+        big.v.span = ["2000".into(), "50000".into()];
+        app.grid_scene = crate::grid::GridScene {
+            grids: vec![crate::grid::GridProperties {
+                id: id.into(),
+                form: big.clone(),
+                editable: true,
+                lines: 0..0,
+            }],
+            ..Default::default()
+        };
+        app.select_grid(id);
+        assert_eq!(app.grid_form, big, "the selected grid fills the form");
+        // A click on empty space ends the selection, then the Grid tool opens for a new grid.
+        app.start_select(crate::edit::Ray {
+            origin: [0.0, 0.0, 1e6],
+            direction: [0.0, 0.0, -1.0],
+        });
+        app.set_bench(super::workbench::Bench::Grid);
+        assert!(app.grid_edit.is_none());
+        assert_eq!(app.grid_form, crate::grid::GridForm::default());
     }
 
     #[test]

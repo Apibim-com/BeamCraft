@@ -97,6 +97,30 @@ fn browser_tab(ui: &mut egui::Ui, icon: theme::Icon, label: &str, active: bool) 
 }
 
 /// A small icon button of a browser row, shown under the pointer.
+/// A 3D camera frame as a 3D view stores it, as Tekla keeps a 3D view: on the ground plane XY
+/// under the camera's centre, with the camera's heading and tilt as the view's rotations about
+/// Z and X. The camera stays exactly as it was, and the view's depth limit then cuts parallel
+/// to the ground and the grids instead of square to the line of sight. `None` for a frame
+/// whose right axis is not level (no turntable camera makes one).
+pub(crate) fn spatial_frame(camera: &WorkPlane) -> Option<(WorkPlane, [f64; 2])> {
+    let [rx, ry, rz] = camera.x();
+    let [ux, uy, uz] = camera.y();
+    if rz.abs() > 1e-6 {
+        return None;
+    }
+    let z = ry.atan2(rx);
+    let (sz, cz) = z.sin_cos();
+    let x = uz.atan2(-sz * ux + cz * uy);
+    let [ox, oy, _] = camera.origin();
+    let plane = WorkPlane::new([ox, oy, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]).ok()?;
+    Some((plane, [z, x]))
+}
+
+/// Whether `view` is a 3D view: built on a plane its camera is tilted away from.
+pub(crate) fn is_spatial(view: &ModelView) -> bool {
+    view.rotation_rad[1].abs() > 1e-9
+}
+
 fn small_icon(ui: &mut egui::Ui, icon: theme::Icon, tip: &str) -> egui::Response {
     let palette = theme::Palette::current(ui);
     let (rect, response) = ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::click());
@@ -450,7 +474,9 @@ impl App {
             Err(e) => return self.view_note(Err(e)),
         };
         let name = self.views.book.unique_name("3D View", &[]);
+        let (plane, rotation) = spatial_frame(&plane).unwrap_or((plane, [0.0; 2]));
         let mut view = ModelView::new(id, &name, plane, span);
+        view.rotation_rad = rotation;
         view.projection = if orthographic {
             Projection::Orthographic
         } else {
@@ -467,9 +493,23 @@ impl App {
 
     /// Puts the first pane, which opens as a free camera, on the default view.
     pub(crate) fn adopt_default_view(&mut self) {
-        let Some(view) = self.views.book.default_view().cloned() else {
+        let Some(mut view) = self.views.book.default_view().cloned() else {
             return;
         };
+        // A default view saved before 3D views sat on the ground plane stood square to its
+        // camera, so its depth limit cut across the line of sight: it moves onto the ground
+        // plane with the same camera.
+        if !is_spatial(&view)
+            && view.rotation_rad == [0.0; 2]
+            && crate::views::view_kind(&view) == crate::views::ViewKind::Inclined
+            && let Some((plane, rotation)) = spatial_frame(&view.plane)
+        {
+            view.plane = plane;
+            view.rotation_rad = rotation;
+            if self.views.book.update(view.clone()).is_ok() {
+                self.persist_views();
+            }
+        }
         if let Some(pane) = self.views.panes.iter_mut().find(|p| p.view.is_none()) {
             pane.mode = view.render_mode;
             pane.grids = view.grids_visible;
@@ -487,7 +527,9 @@ impl App {
     /// in a 3D view floated 273 mm above the grid and dived under the slab). An inclined plane
     /// to work on is installed through the Work plane section (three points, a picked face).
     fn installs_plane(view: &ModelView) -> bool {
-        !view.is_default && crate::views::view_kind(view) != crate::views::ViewKind::Inclined
+        !view.is_default
+            && !is_spatial(view)
+            && crate::views::view_kind(view) != crate::views::ViewKind::Inclined
     }
 
     /// The input frame a view installs: its plane, when [`Self::installs_plane`] says so.
@@ -1097,6 +1139,7 @@ impl App {
             form.name = self.views.book.next_default_name();
         }
         let origin = self.view_origin();
+        let mut camera_rotation = None;
         let single =
             |plane: WorkPlane| -> Vec<(String, WorkPlane, Option<f64>, Option<Projection>)> {
                 vec![(form.name.trim().to_owned(), plane, None, None)]
@@ -1129,7 +1172,14 @@ impl App {
                     .map(|p| p.camera)
                     .ok_or_else(|| "Open a view to take its camera.".to_owned())?;
                 let (plane, _) = camera.frame(origin).map_err(|e| e.to_string())?;
-                single(plane)
+                // A 3D camera is kept as a 3D view on the ground plane (see `spatial_frame`).
+                match spatial_frame(&plane) {
+                    Some((ground, rotation)) => {
+                        camera_rotation = Some(rotation);
+                        single(ground)
+                    }
+                    None => single(plane),
+                }
             }
             Construction::GridAxes => {
                 let grid = self
@@ -1219,6 +1269,9 @@ impl App {
             // Only the first view of a batch can take the default mark.
             each.default = form.default && made.is_empty();
             each.apply(&mut view)?;
+            if let Some(rotation) = camera_rotation {
+                view.rotation_rad = rotation;
+            }
             view.temporary = unnamed;
             if let Some(span) = span {
                 view.span_mm = span;
@@ -4589,5 +4642,48 @@ mod tests {
             app.state.renderer.read().texture(&texture).is_none(),
             "the deleted view's preview texture is freed"
         );
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod spatial_tests {
+    use super::spatial_frame;
+    use crate::camera::Camera;
+    use beamcraft_engine::views::ModelView;
+    use beamcraft_model::id::Uuid7;
+
+    #[test]
+    fn a_3d_view_sits_on_the_ground_keeps_its_camera_and_cuts_level() {
+        let mut orbit = Camera::new([1000.0, 2000.0, 300.0], 20_000.0, 1.0).unwrap();
+        orbit.navigate([0.4, -0.3], [0.0, 0.0], 0.0).unwrap();
+        let before = orbit.view(1.0).unwrap();
+        let (frame, span) = orbit.frame([0.0; 3]).unwrap();
+        let (plane, rotation) = spatial_frame(&frame).unwrap();
+        assert!(
+            plane.normal()[2] > 0.999,
+            "the view plane is the ground plane"
+        );
+        let mut view = ModelView::new(
+            Uuid7::parse("019a7bf0-0000-7000-8000-000000000009").unwrap(),
+            "3D",
+            plane,
+            span,
+        );
+        view.rotation_rad = rotation;
+        // Opened again, it is the same free camera, looking the same way.
+        let camera = Camera::from_view(&view, [0.0; 3], 50_000.0).unwrap();
+        assert!(!camera.is_aligned(), "a 3D view opens as an orbit camera");
+        let after = camera.view(1.0).unwrap();
+        for (a, b) in [(before.right, after.right), (before.up, after.up)] {
+            for (x, y) in a.iter().zip(b) {
+                assert!((x - y).abs() < 1e-4, "{a:?} {b:?}");
+            }
+        }
+        // Its depth limit cuts parallel to the ground.
+        view.depth = Some([1000.0, 1000.0]);
+        for p in view.clipping().unwrap().planes {
+            assert!(p.normal[2].abs() > 0.999, "{:?}", p.normal);
+        }
     }
 }

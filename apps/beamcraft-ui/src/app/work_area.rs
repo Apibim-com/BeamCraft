@@ -329,11 +329,14 @@ impl App {
                 None => many.push(id),
             }
         }
-        self.grid_edit = None;
+        self.drop_grid_edit();
         match many.last().cloned() {
             Some(last) => {
                 self.editor.select_id(last);
                 self.edit_note = Some(Ok(format!("{} selected.", many.len())));
+                // The primary element's details load as a click's do, so the panel shows its
+                // properties instead of "details unavailable" and the view's form.
+                self.refresh_selection();
             }
             None => self.editor.deselect(),
         }

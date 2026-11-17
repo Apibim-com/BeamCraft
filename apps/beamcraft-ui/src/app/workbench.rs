@@ -885,7 +885,7 @@ impl App {
                         if tool_button(ui, Icon::Grid, "Grid guides", self.grids_shown(), has_pane).clicked() {
                             let on = !self.grids_shown();
                             self.set_grids_shown(on);
-                            if !on { self.grid_edit = None; }
+                            if !on { self.drop_grid_edit(); }
                         }
                     });
                     group(ui, "Colour", &mut |ui| {

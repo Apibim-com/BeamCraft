@@ -133,6 +133,16 @@ impl Camera {
         if derived_anchor(&view.plane) && cast.iter().all(|x| x.is_finite() && x.abs() <= 1e7) {
             camera.target = cast;
         }
+        // A 3D view (a ground plane with the camera tilted off it, as Tekla keeps one) opens
+        // as the free orbit camera it was saved from, not one locked on a plane, so it turns
+        // and Ctrl+P looks down at its plan. Heading and tilt map onto yaw and pitch.
+        let [turn, tilt] = view.rotation_rad;
+        if tilt.abs() > 1e-9 && view.plane.normal()[2].abs() > 0.999 {
+            camera.basis = None;
+            camera.yaw =
+                ((turn - std::f64::consts::FRAC_PI_2) as f32).rem_euclid(std::f32::consts::TAU);
+            camera.pitch = ((std::f64::consts::FRAC_PI_2 - tilt) as f32).clamp(-1.52, 1.52);
+        }
         Ok(camera)
     }
     /// An orthographic camera looking straight at `plane` with `span` millimetres of visible

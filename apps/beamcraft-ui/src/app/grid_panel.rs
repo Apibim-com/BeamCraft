@@ -62,6 +62,16 @@ fn family(ui: &mut Ui, title: &str, form: &mut FamilyForm, hint: &str) {
 }
 
 impl App {
+    /// Leaves the edit of a selected grid. The form held that grid's values, its line limits
+    /// too, so it goes back to a new grid's defaults: a grid created next must not inherit
+    /// another grid's limits (a small grid took the large one's 50 m lines).
+    pub(super) fn drop_grid_edit(&mut self) {
+        if self.grid_edit.take().is_some() {
+            self.grid_form = crate::grid::GridForm::default();
+            self.grid_line = crate::grid::DrawLineForm::default();
+        }
+    }
+
     pub(super) fn select_grid(&mut self, id: &str) {
         let Some(grid) = self.grid_scene.get(id).cloned() else {
             return;
@@ -282,7 +292,7 @@ impl App {
             return;
         };
         let Some(grid) = self.grid_scene.get(&edit.id) else {
-            self.grid_edit = None;
+            self.drop_grid_edit();
             self.grid_refresh_edit = false;
             self.grid_note = Some(Err("The selected grid is no longer available.".into()));
             return;
