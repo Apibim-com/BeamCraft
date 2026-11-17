@@ -179,6 +179,23 @@ impl GridForm {
     }
 }
 
+/// The preview lines that do not lie on a grid line already in the model: same label and the
+/// same ends (in either order) within a millimetre in plan. A form that matches a grid already
+/// created (the default form over the default grid, or the form just applied) would otherwise
+/// draw every label twice, once in the grid's bubble and once at the preview's line end.
+pub fn new_preview_lines(lines: Vec<PreviewLine>, existing: &[GridLine]) -> Vec<PreviewLine> {
+    let near = |a: [f64; 3], b: [f64; 3]| (a[0] - b[0]).abs() <= 1.0 && (a[1] - b[1]).abs() <= 1.0;
+    let same = |line: &PreviewLine, grid: &GridLine| {
+        let [a, b] = line.points;
+        let [c, d] = grid.points;
+        line.label == grid.label && ((near(a, c) && near(b, d)) || (near(a, d) && near(b, c)))
+    };
+    lines
+        .into_iter()
+        .filter(|line| !existing.iter().any(|grid| same(line, grid)))
+        .collect()
+}
+
 /// Draws the grid a form would create: dashed lines with their labels at both ends, so the
 /// layout is seen before Create. Display only.
 pub fn paint_preview(
@@ -1346,6 +1363,29 @@ mod form_tests {
                 _ => None,
             })
             .collect()
+    }
+
+    #[test]
+    fn a_preview_line_on_an_existing_grid_line_is_not_drawn_again() {
+        let line = |label: &str, points: [[f64; 3]; 2]| PreviewLine {
+            label: label.into(),
+            points,
+        };
+        let existing = vec![GridLine {
+            label: "A".into(),
+            points: [[0.0, 0.0, 0.0], [0.0, 6000.0, 0.0]],
+        }];
+        let preview = vec![
+            // The same line, its ends the other way round and within a millimetre.
+            line("A", [[0.4, 6000.0, 0.0], [0.0, -0.5, 0.0]]),
+            // The same place under another label is a new line.
+            line("B", [[0.0, 0.0, 0.0], [0.0, 6000.0, 0.0]]),
+            // The same label elsewhere is a new line.
+            line("A", [[3000.0, 0.0, 0.0], [3000.0, 6000.0, 0.0]]),
+        ];
+        let kept = new_preview_lines(preview.clone(), &existing);
+        assert_eq!(kept, preview[1..].to_vec());
+        assert_eq!(new_preview_lines(preview.clone(), &[]), preview);
     }
 
     #[test]

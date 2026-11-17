@@ -40,6 +40,8 @@ pub(crate) enum Bench {
     Colour,
     /// Create a fillet weld between two picked parts (V10); the A06 create-weld command.
     Weld,
+    /// Trim a part's end flush with a plate (A13); the fit-end-to-part command.
+    Fit,
     /// Place a bolt group of a library fastener between picked parts (V19); the A14.3
     /// create-bolt-group command.
     Bolt,
@@ -78,6 +80,7 @@ impl Bench {
             Self::CutPlane => "Cut plane",
             Self::Colour => "Colour",
             Self::Weld => "Weld",
+            Self::Fit => "Fit end",
             Self::Bolt => "Bolt group",
             Self::Annotations => "Annotations",
             Self::View => "View properties",
@@ -99,6 +102,7 @@ impl Bench {
             | Self::CutPlane
             | Self::Colour
             | Self::Weld
+            | Self::Fit
             | Self::Bolt
             | Self::Annotations
             | Self::View
@@ -478,6 +482,7 @@ impl App {
             Bench::CutPlane => {}
             Bench::Colour => {}
             Bench::Weld => {}
+            Bench::Fit => self.fit.clear_placement(),
             Bench::Bolt => self.bolt_load(),
             Bench::Annotations => {}
             Bench::View => {}
@@ -551,7 +556,6 @@ impl App {
                         ("Saved locally", true)
                     };
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        theme::window_controls(ui);
                         if let Some(appearance) = &mut self.appearance {
                             appearance.error_ui(ui, true);
                         }
@@ -770,6 +774,12 @@ impl App {
                             .clicked()
                         {
                             pick = Some(Bench::Weld);
+                        }
+                        if tool_button(ui, Icon::End, "Fit end", bench == Bench::Fit, store_free)
+                            .on_hover_text("Trim a beam, column or plate end flush with a plate")
+                            .clicked()
+                        {
+                            pick = Some(Bench::Fit);
                         }
                     });
                     }
@@ -1169,6 +1179,7 @@ impl App {
                             Bench::CutPlane => self.cut_panel(ui),
                             Bench::Colour => self.colour_panel(ui),
                             Bench::Weld => self.weld_panel(ui),
+                            Bench::Fit => self.fit_panel(ui),
                             Bench::Bolt => self.bolt_panel(ui),
                             Bench::Annotations => self.annotation_panel(ui),
                             Bench::View => self.view_panel(ui),
@@ -1186,6 +1197,7 @@ impl App {
             Bench::View => self.views.note.as_ref(),
             Bench::Bolt => self.bolt.note.as_ref(),
             Bench::Weld => self.weld.note.as_ref(),
+            Bench::Fit => self.fit.note.as_ref(),
             Bench::Grid => self.grid_note.as_ref(),
             Bench::Levels => self.level_panel.note.as_ref(),
             Bench::Plate | Bench::Beam | Bench::Column => self.tool_note.as_ref(),
@@ -1202,7 +1214,8 @@ impl App {
             .map(|note| note.as_ref().map(String::as_str).map_err(String::as_str))
     }
 
-    /// The status bar: the selection, snap switches (not available yet) and Details.
+    /// The status bar: the selection switches, the snap switches, the global Snap switch and
+    /// Details.
     pub(crate) fn status_bar(&mut self, ui: &mut Ui) {
         let palette = Palette::current(ui);
         egui::Panel::bottom("model-status")
@@ -1392,28 +1405,14 @@ impl App {
                     if let Some(error) = &self.error {
                         ui.label(RichText::new(error).small().color(palette.error));
                     }
-                    let reading = self
-                        .pointer_world
-                        .filter(|(stamp, _)| *stamp + 1 >= ui.ctx().cumulative_pass_nr());
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        // Added first, so it sits at the far right like Tekla's coordinate
-                        // readout. A fixed-width monospace text does not jitter while the
-                        // pointer moves.
-                        let text = reading.map_or_else(
-                            || coordinate_text(None),
-                            |(_, point)| coordinate_text(Some(point)),
-                        );
-                        ui.label(RichText::new(text).monospace().size(10.0).color(palette.muted))
-                            .on_hover_text(if self.tools.plane.is_some() {
-                                "Pointer position in the work plane, mm"
-                            } else {
-                                "Pointer position in the model, mm"
-                            });
-                        ui.separator();
                         if ui
                             .selectable_label(
                                 self.selection.snapping_enabled,
                                 RichText::new("Snap").size(10.0),
+                            )
+                            .on_hover_text(
+                                "Snapping on or off for every pick; the switches to the left keep                                  their settings",
                             )
                             .clicked()
                         {
@@ -1421,6 +1420,7 @@ impl App {
                         }
                         if ui
                             .selectable_label(self.details, RichText::new("Details").size(10.0))
+                            .on_hover_text("Show the details of the selected objects")
                             .clicked()
                         {
                             self.details = !self.details;
@@ -1452,6 +1452,7 @@ impl App {
             ("Beam", Bench::Beam),
             ("Plate", Bench::Plate),
             ("Weld", Bench::Weld),
+            ("Fit end", Bench::Fit),
             ("Bolts", Bench::Bolt),
             ("Move", Bench::Move),
             ("Copy", Bench::Copy),
@@ -2151,36 +2152,5 @@ mod tests {
             assert_eq!(bench.edit(), None);
         }
         assert_eq!(Bench::default(), Bench::Select);
-    }
-}
-
-/// The working coordinate as the status bar shows it: millimetres to one decimal, each value
-/// padded to a fixed width so the readout does not shift as the pointer moves; dashes while the
-/// pointer is over no plane.
-pub(crate) fn coordinate_text(point: Option<[f64; 3]>) -> String {
-    match point {
-        Some([x, y, z]) if [x, y, z].iter().all(|v| v.is_finite()) => {
-            format!("X {x:>10.1}  Y {y:>10.1}  Z {z:>10.1}")
-        }
-        _ => format!("X {:>10}  Y {:>10}  Z {:>10}", "-", "-", "-"),
-    }
-}
-
-#[cfg(test)]
-mod coordinate_tests {
-    use super::coordinate_text;
-
-    #[test]
-    fn the_coordinate_readout_has_a_fixed_width() {
-        let a = coordinate_text(Some([12345.67, -789.0, 3000.0]));
-        let b = coordinate_text(Some([0.0, 0.0, 0.0]));
-        assert_eq!(a.len(), b.len());
-        assert_eq!(a, "X    12345.7  Y     -789.0  Z     3000.0");
-        // Nothing under the pointer, or a non-finite point, reads as dashes of the same width.
-        assert_eq!(coordinate_text(None).len(), a.len());
-        assert_eq!(
-            coordinate_text(Some([f64::NAN, 0.0, 0.0])),
-            coordinate_text(None)
-        );
     }
 }

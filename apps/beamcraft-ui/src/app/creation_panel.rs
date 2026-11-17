@@ -94,8 +94,8 @@ fn preset_combo(ui: &mut egui::Ui, tools: &mut crate::tools::Tools) {
     }
 }
 
-/// The marker and caption of the snap the pointer resolved to, shared by plate and member placement.
-fn paint_snap_marker(
+/// The marker and caption of the snap the pointer resolved to, shared by every point pick.
+pub(super) fn paint_snap_marker(
     painter: &egui::Painter,
     pos: egui::Pos2,
     kind: SnapKind,
@@ -107,7 +107,14 @@ fn paint_snap_marker(
         SnapKind::Center => "Axis center",
         SnapKind::GridIntersection => "Grid intersection",
         SnapKind::Edge | SnapKind::Axis | SnapKind::GridLine => "On line",
-        _ => "Endpoint",
+        SnapKind::Perpendicular => "Perpendicular",
+        SnapKind::ConstructionPoint => "Construction point",
+        SnapKind::ConstructionCenter => "Construction center",
+        SnapKind::ConstructionLine | SnapKind::ConstructionCircle => "On construction line",
+        SnapKind::ConstructionPlane => "On construction plane",
+        SnapKind::GridEnd => "Grid end",
+        SnapKind::AxisEnd => "Axis end",
+        SnapKind::Vertex | SnapKind::ConstructionEnd => "Endpoint",
     };
     super::switches::snap_marker(painter, rect, kind, color);
     painter.text(
@@ -165,6 +172,34 @@ impl App {
         }
         false
     }
+    /// The last point the running gesture picked, the start of a perpendicular snap: a
+    /// plate's last corner, a beam's start, the origin of a copy or move, or the first point
+    /// of a bolt group.
+    pub(super) fn last_picked_point(&self) -> Option<[f64; 3]> {
+        if self.plate_mode {
+            return self.plate_draft.points().last().copied();
+        }
+        if self.beam_mode {
+            return self.beam.start();
+        }
+        if let Some(two) = self.two_point {
+            return two.from;
+        }
+        if self.bench == super::workbench::Bench::Bolt && self.bolt.point2.is_none() {
+            return self.bolt.point1;
+        }
+        None
+    }
+
+    /// Whether the pointer is picking a point outside plate and member placement: a copy or
+    /// move by two points, or the two points of a bolt group.
+    pub(super) fn picking_point(&self) -> bool {
+        self.two_point.is_some()
+            || (self.bench == super::workbench::Bench::Bolt
+                && self.bolt.parts.len() >= 2
+                && self.bolt.point2.is_none())
+    }
+
     pub(super) fn creation_point(
         &self,
         ray: crate::edit::Ray,
@@ -258,6 +293,14 @@ impl App {
                 .map_err(|e| ToolError::local("INVALID_ARGUMENT", e.to_string()))?
                 .map(|hit| hit.point_world_mm),
             }
+            // Empty space lands on the active view's own plane, as in Tekla: a beam drawn in a
+            // level plan sits at that level, never silently at the ground.
+            .or_else(|| {
+                self.views
+                    .active_view()
+                    .filter(|view| !view.is_default)
+                    .and_then(|view| view.plane.ray_point(ray.origin, ray.direction))
+            })
             .or_else(|| ground_point(&ray))
         } else {
             ground_point(&ray)
@@ -402,6 +445,7 @@ impl App {
                 cursor: Some(cursor),
                 sources: self.selection.snap_sources(),
                 nearest: self.selection.snap_nearest,
+                from: self.last_picked_point(),
             };
             // Exact targets get first refusal; a nearby line must not steal an intersection
             // or midpoint just because its perpendicular distance is smaller.
@@ -663,6 +707,10 @@ impl App {
         if self.other_command_running() {
             return;
         }
+        if self.tools.plate.by_size {
+            self.place_plate_by_size(ray);
+            return;
+        }
         match self.creation_point(ray, true) {
             Ok(point) => {
                 if self.plate_draft.points().len() >= 3
@@ -680,6 +728,44 @@ impl App {
                     self.distance_input.clear();
                     self.distance_aim = None;
                 }
+            }
+            Err(error) => self.tool_note = Some(Err(error.to_string())),
+        }
+    }
+
+    /// One click by size: the clicked point (snapped) is the centre of the typed rectangle, on
+    /// the work plane, else the active view's plane, else level with the point.
+    fn place_plate_by_size(&mut self, ray: crate::edit::Ray) {
+        let result = self.creation_point(ray, false).and_then(|centre| {
+            let plane = self
+                .tools
+                .plane
+                .or_else(|| {
+                    self.views
+                        .active_view()
+                        .filter(|view| !view.is_default)
+                        .map(|view| view.plane)
+                })
+                .unwrap_or_default();
+            crate::creation::rectangle_corners(
+                centre,
+                &plane,
+                &self.tools.plate.width,
+                &self.tools.plate.length,
+            )
+            .map_err(|e| ToolError::local("INVALID_ARGUMENT", e.to_string()))
+        });
+        match result {
+            Ok(corners) => {
+                self.plate_draft.clear();
+                for corner in corners {
+                    if let Err(error) = self.plate_draft.push(corner) {
+                        self.tool_note = Some(Err(error.to_string()));
+                        self.plate_draft.clear();
+                        return;
+                    }
+                }
+                self.finish_plate();
             }
             Err(error) => self.tool_note = Some(Err(error.to_string())),
         }
@@ -835,6 +921,15 @@ impl App {
                     token_combo(ui, "plate-thickness-side", "Thickness from", &mut self.tools.plate.thickness_side, THICKNESS_SIDES);
                     choice_combo(ui, "plate-material", "Material", &mut self.tools.plate.material, &self.tools.definitions.materials, false);
                     ui.separator();
+                    ui.horizontal(|ui| {
+                        ui.selectable_value(&mut self.tools.plate.by_size, false, "By contour");
+                        ui.selectable_value(&mut self.tools.plate.by_size, true, "By size");
+                    });
+                    if self.tools.plate.by_size {
+                        field(ui, "Width (mm)", &mut self.tools.plate.width, 80.0);
+                        field(ui, "Length (mm)", &mut self.tools.plate.length, 80.0);
+                        ui.label("Click the centre of the plate. Width runs along the work plane's X, length along its Y.");
+                    } else {
                     ui.label("Pick contour vertices in 3D. Aim, type a length and press Enter to add a point. O toggles orthogonal X/Y/Z. Enter without a length, right-click, wheel-click or Finish creates the plate. Backspace removes a digit or point.");
                     ui.checkbox(&mut self.selection.orthogonal,"Orthogonal X/Y/Z (O)");
                     ui.label(format!("{} vertices", self.plate_draft.points().len()));
@@ -858,6 +953,7 @@ impl App {
                             } else { self.tool_note = Some(Err("Enter finite X and Y coordinates.".into())); }
                         }
                     });
+                    }
                 }
                 ToolKind::Member => {
                     ui.label(crate::theme::bold(if self.bench == Bench::Column { "Column properties" } else { "Beam properties" }, 16.0));

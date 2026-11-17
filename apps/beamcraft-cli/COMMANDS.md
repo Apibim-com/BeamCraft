@@ -1482,8 +1482,11 @@ snap --store ROOT --point X,Y,Z [--radius MM] [--kinds KIND,...] [--max-hits N]
     [--plane OX,OY,OZ,XX,XY,XZ,YX,YY,YZ] [--origin X,Y,Z] [--direction X,Y,Z] [--aperture F]
     [--cursor-radius MM] [--reference-snaps true|false] [--geometry-snaps true|false]
     [--grid-snaps true|false] [--construction-snaps true|false] [--grids UUID,...]
-    [--nearest true|false]
+    [--nearest true|false] [--from X,Y,Z]
 ```
+
+`--from` is the last picked point; the `perpendicular` kind snaps to the foot of the
+perpendicular from it on a member reference axis or a grid line.
 
 ### lookup-feature
 

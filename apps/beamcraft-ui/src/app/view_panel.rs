@@ -605,7 +605,9 @@ impl App {
         }
     }
 
-    /// Ctrl+P: looks straight at the active view's plane (or the work plane), and back again.
+    /// Ctrl+P, as in Tekla: a plane view (its camera fixed on the view plane) switches to 3D,
+    /// where it orbits; a 3D camera looks straight at the active view's plane (or the work
+    /// plane). Pressed again, the camera from before comes back.
     pub(crate) fn toggle_view_plane(&mut self) {
         if let Some(pane) = self.views.active_pane_mut()
             && let Some(previous) = pane.toggled.take()
@@ -616,6 +618,13 @@ impl App {
         let Some(camera) = self.views.active_pane().map(|p| p.camera) else {
             return;
         };
+        if camera.is_aligned() {
+            if let Some(pane) = self.views.active_pane_mut() {
+                pane.toggled = Some(pane.camera);
+                pane.camera = camera.orbiting();
+            }
+            return;
+        }
         let origin = self.view_origin();
         let plane = self
             .views

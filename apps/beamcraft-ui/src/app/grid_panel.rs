@@ -92,70 +92,77 @@ impl App {
         self.grid_note = None;
     }
 
+    /// Where a grid-line pick lands: the ground point under `ray`, snapped like placement, and
+    /// the snap kind it took. `Err` names why there is no point.
+    pub(super) fn grid_line_hit(
+        &self,
+        ray: crate::edit::Ray,
+    ) -> Result<([f64; 3], Option<beamcraft_engine::query::pick::SnapKind>), String> {
+        use beamcraft_engine::query::pick::SnapKind;
+        let point = super::ground_point(&ray).ok_or("Aim at the horizontal grid plane.")?;
+        let kinds = self.selection.snap_kinds();
+        let Some(loaded) = self.loaded.as_ref().filter(|_| !kinds.is_empty()) else {
+            return Ok((point, None));
+        };
+        let grids = if self.grids_shown() {
+            self.grid_scene.query_grids.as_slice()
+        } else {
+            &[]
+        };
+        // The second end of a line starts from the first: the start of a perpendicular snap.
+        let from = (self.grid_line.click == Some(true))
+            .then(|| self.grid_line.points.first())
+            .flatten()
+            .and_then(|[x, y]| Some([x.trim().parse().ok()?, y.trim().parse().ok()?, point[2]]));
+        let context = beamcraft_engine::query::pick::SnapContext {
+            grids,
+            member_axes: &self.grid_scene.member_axes,
+            sources: self.selection.snap_sources(),
+            nearest: self.selection.snap_nearest,
+            from,
+            ..Default::default()
+        };
+        for discrete in [true, false] {
+            let kinds = kinds
+                .iter()
+                .copied()
+                .filter(|kind| {
+                    matches!(kind, SnapKind::Axis | SnapKind::Edge | SnapKind::GridLine) != discrete
+                })
+                .collect::<Vec<_>>();
+            if kinds.is_empty() {
+                continue;
+            }
+            let query = beamcraft_engine::query::pick::SnapQuery {
+                point_mm: point,
+                radius_mm: 100.0,
+                kinds,
+                max_hits: 1,
+            };
+            let result = beamcraft_engine::query::pick::snap_with_context(
+                &loaded.snapshot,
+                &query,
+                &context,
+            )
+            .map_err(|error| error.to_string())?;
+            if let Some(hit) = result.candidates.first() {
+                return Ok((hit.point_world_mm, Some(hit.kind)));
+            }
+        }
+        Ok((point, None))
+    }
+
     pub(super) fn place_grid_line(&mut self, ray: crate::edit::Ray) {
         if self.other_command_running() {
             return;
         }
-        let Some(mut point) = super::ground_point(&ray) else {
-            self.grid_note = Some(Err("Aim at the horizontal grid plane.".into()));
-            return;
-        };
-        let kinds = self.selection.snap_kinds();
-        if !kinds.is_empty()
-            && let Some(loaded) = &self.loaded
-        {
-            let grids = if self.grids_shown() {
-                self.grid_scene.query_grids.as_slice()
-            } else {
-                &[]
-            };
-            let context = beamcraft_engine::query::pick::SnapContext {
-                grids,
-                member_axes: &self.grid_scene.member_axes,
-                sources: self.selection.snap_sources(),
-                nearest: self.selection.snap_nearest,
-                ..Default::default()
-            };
-            for discrete in [true, false] {
-                let kinds = kinds
-                    .iter()
-                    .copied()
-                    .filter(|kind| {
-                        matches!(
-                            kind,
-                            beamcraft_engine::query::pick::SnapKind::Axis
-                                | beamcraft_engine::query::pick::SnapKind::Edge
-                                | beamcraft_engine::query::pick::SnapKind::GridLine
-                        ) != discrete
-                    })
-                    .collect::<Vec<_>>();
-                if kinds.is_empty() {
-                    continue;
-                }
-                let query = beamcraft_engine::query::pick::SnapQuery {
-                    point_mm: point,
-                    radius_mm: 100.0,
-                    kinds,
-                    max_hits: 1,
-                };
-                match beamcraft_engine::query::pick::snap_with_context(
-                    &loaded.snapshot,
-                    &query,
-                    &context,
-                ) {
-                    Ok(result) => {
-                        if let Some(hit) = result.candidates.first() {
-                            point = hit.point_world_mm;
-                            break;
-                        }
-                    }
-                    Err(error) => {
-                        self.grid_note = Some(Err(error.to_string()));
-                        return;
-                    }
-                }
+        let point = match self.grid_line_hit(ray) {
+            Ok((point, _)) => point,
+            Err(error) => {
+                self.grid_note = Some(Err(error));
+                return;
             }
-        }
+        };
         // A grid line is plan-only. Snap supplies XY; height never becomes grid data.
         let index = usize::from(self.grid_line.click == Some(true));
         if let Some(endpoint) = self.grid_line.points.get_mut(index) {
@@ -396,6 +403,18 @@ impl App {
         if done.primary {
             self.start_grid();
         }
+        // An existing grid is deleted from the panel itself, not only with the Delete key.
+        if editing {
+            ui.horizontal(|ui| {
+                let free = !busy && self.grid_job.is_none() && editable;
+                if theme::button(ui, theme::Kind::Secondary, "Delete grid", free)
+                    .on_hover_text("Delete this grid (Ctrl+Z restores it)")
+                    .clicked()
+                {
+                    self.delete_selection();
+                }
+            });
+        }
         if done.cancel {
             self.grid_edit = None;
             self.grid_line = crate::grid::DrawLineForm::default();
@@ -453,6 +472,20 @@ impl App {
                 return;
             }
         };
+        // A first grid in an empty model is framed at once, so it is seen where it was made.
+        self.grid_fit_after = self.grid_edit.is_none()
+            && self.loaded.as_ref().is_none_or(|loaded| {
+                loaded
+                    .snapshot
+                    .elements()
+                    .iter()
+                    .all(|element| element.kind == beamcraft_engine::ElementKind::Grid)
+            });
+        self.spawn_grid_command(args);
+    }
+
+    /// Runs one grid command on a worker; [`App::poll_grid`] takes its outcome.
+    fn spawn_grid_command(&mut self, args: Vec<String>) {
         let cli = self.source.cli.clone();
         let stats = Arc::clone(&self.stats);
         let (tx, rx) = mpsc::channel();
@@ -483,6 +516,7 @@ impl App {
         match result {
             Ok(_) => {
                 self.set_grids_shown(true);
+                self.pending_fit |= std::mem::take(&mut self.grid_fit_after);
                 self.grid_refresh_edit = self.grid_edit.is_some();
                 self.grid_note = Some(Ok(if self.grid_refresh_edit {
                     "Grid updated."

@@ -576,17 +576,15 @@ fn window(size: egui::Vec2, create: eframe::AppCreator<'_>) -> Result<(), Error>
         .with_inner_size(size)
         .with_title("BeamCraft")
         .with_icon(load_icon());
-    // macOS keeps the native frame and its traffic lights over a transparent title bar, with
-    // our header drawn under them; elsewhere the window is frameless and draws its own controls.
-    let viewport = if beamcraft_ui::theme::NATIVE_WINDOW_CONTROLS {
-        viewport
-            .with_decorations(true)
-            .with_fullsize_content_view(true)
-            .with_titlebar_shown(false)
-            .with_title_shown(false)
-    } else {
-        viewport.with_decorations(false)
-    };
+    // The window controls are always the operating system's own. macOS keeps its traffic
+    // lights over a transparent title bar, with our header drawn under them; Windows and Linux
+    // keep their native title bar and its controls above our header.
+    let viewport = viewport.with_decorations(true);
+    #[cfg(target_os = "macos")]
+    let viewport = viewport
+        .with_fullsize_content_view(true)
+        .with_titlebar_shown(false)
+        .with_title_shown(false);
     // The Wayland app ID and X11 window class match the desktop entry `install-linux.sh`
     // registers, so the running window groups with its launcher and shows its icon.
     #[cfg(target_os = "linux")]

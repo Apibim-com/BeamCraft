@@ -193,6 +193,19 @@ impl Camera {
         let span = (2.0 * f64::from(self.distance) * f64::from(HALF_FOV.tan())).clamp(1.0, 2e7);
         Ok((plane, span))
     }
+    /// The 3D camera of a plane view (Ctrl+P, as in Tekla): the same target, distance and
+    /// projection, free of the view plane and turned to the default 3D direction, so it orbits.
+    /// A camera that already orbits is returned as it is.
+    pub fn orbiting(&self) -> Self {
+        if self.basis.is_none() {
+            return *self;
+        }
+        let mut camera = *self;
+        camera.basis = None;
+        camera.yaw = -0.8;
+        camera.pitch = 0.85;
+        camera
+    }
     /// Whether the camera is aligned with a view plane rather than orbiting by yaw and pitch.
     pub fn is_aligned(&self) -> bool {
         self.basis.is_some()
@@ -476,6 +489,23 @@ mod tests {
             }
         }
     }
+    #[test]
+    fn a_plane_camera_switched_to_3d_orbits() {
+        let plane = WorkPlane::default();
+        let aligned = Camera::aligned_to(plane, [0.0; 3], 10_000.0, 50_000.0).unwrap();
+        let mut stuck = aligned;
+        let before = stuck.view(1.0).unwrap();
+        stuck.navigate([0.5, 0.2], [0.0; 2], 0.0).unwrap();
+        assert_eq!(stuck.view(1.0).unwrap().right, before.right);
+        let mut free = aligned.orbiting();
+        assert!(!free.is_aligned());
+        assert_eq!(free.target, aligned.target);
+        assert_eq!(free.distance, aligned.distance);
+        let start = free.view(1.0).unwrap();
+        free.navigate([0.5, 0.2], [0.0; 2], 0.0).unwrap();
+        assert_ne!(free.view(1.0).unwrap().right, start.right);
+    }
+
     #[test]
     fn projection_and_basis() {
         let c = Camera::new([0.0; 3], 100.0, 2.0).unwrap();
