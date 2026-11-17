@@ -1172,10 +1172,8 @@ impl App {
             };
             // The display cut is uniform state: the scene and its snapshot never change.
             // Planes are model millimetres; the uniform is scene-centred.
-            let clip = match &cut {
-                Some(cut) => crate::cut_plane::ClipGpu::of(cut, l.summary.origin_mm),
-                None => crate::cut_plane::ClipGpu::none(),
-            };
+            let clip =
+                crate::views::display_clip_gpu(self.cut.as_ref(), shown, l.summary.origin_mm);
             // One loaded scene, five drawing styles: the mode picks the pipeline and never
             // rewrites the snapshot or its token.
             if pane.mode == RenderMode::SelectedOnly {

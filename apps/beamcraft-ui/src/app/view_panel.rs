@@ -1298,6 +1298,8 @@ impl App {
             probe.span_mm.to_string(),
             "--depth".into(),
             probe.depth.map_or("none".into(), |d| join(&d)),
+            "--beyond".into(),
+            probe.beyond.as_str().into(),
             "--rotation".into(),
             join(&probe.rotation_rad.map(f64::to_degrees)),
             "--render-mode".into(),
@@ -2832,10 +2834,7 @@ impl App {
         };
         let mut camera_view = camera.view(aspect).ok()?;
         camera_view.tint = crate::views::tint_of(Some(view));
-        let clip = match crate::views::display_clip(None, Some(view)) {
-            Some(cut) => crate::cut_plane::ClipGpu::of(&cut, origin),
-            None => crate::cut_plane::ClipGpu::none(),
-        };
+        let clip = crate::views::display_clip_gpu(None, Some(view), origin);
         let mode = if view.render_mode == RenderMode::SelectedOnly {
             RenderMode::Shaded
         } else {
@@ -3477,6 +3476,23 @@ impl App {
                             let [above, below] = &mut form.depth;
                             text(ui, "Towards, mm", above);
                             text(ui, "Behind, mm", below);
+                            crate::kit::mark_next_changed(
+                                ui,
+                                saved.as_ref().is_some_and(|o| o.beyond != form.beyond),
+                            );
+                            {
+                                use beamcraft_engine::views::DepthBeyond;
+                                crate::kit::prop_choice(
+                                    ui,
+                                    "view-beyond",
+                                    "Beyond depth",
+                                    &mut form.beyond,
+                                    &[
+                                        (DepthBeyond::Cut, "Cut parts"),
+                                        (DepthBeyond::Transparent, "Show transparent"),
+                                    ],
+                                );
+                            }
                         }
                         crate::kit::mark_next_changed(
                             ui,

@@ -122,6 +122,38 @@ impl Projection {
     }
 }
 
+/// What a view with a depth limit shows of the parts beyond it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DepthBeyond {
+    /// Cut away at the depth limit: only what lies inside the slab is drawn.
+    #[default]
+    Cut,
+    /// Drawn faintly: a part crossing the limit stays whole, its part inside the slab in full.
+    Transparent,
+}
+
+impl DepthBeyond {
+    /// The stable wire token.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Cut => "cut",
+            Self::Transparent => "transparent",
+        }
+    }
+
+    /// Parses an exact token.
+    pub fn parse(text: &str) -> Result<Self, CommandError> {
+        match text {
+            "cut" => Ok(Self::Cut),
+            "transparent" => Ok(Self::Transparent),
+            _ => Err(invalid(
+                "views.beyond",
+                "beyond the depth is cut or transparent",
+            )),
+        }
+    }
+}
+
 /// Admits a browser folder path: at most eight nonempty, unpadded `/`-separated segments, no
 /// `.` or `..`, no control characters. The empty path is the root. It is never a filesystem path.
 pub fn validate_folder(folder: &str) -> Result<(), CommandError> {
@@ -235,6 +267,8 @@ pub struct ModelView {
     /// Visible distance `[above, below]` the plane; `above` is towards the viewer. `None` shows
     /// everything in front of and behind the plane.
     pub depth: Option<[f64; 2]>,
+    /// What the depth limit does to the parts beyond it.
+    pub beyond: DepthBeyond,
     /// Display mode of this view.
     pub render_mode: RenderMode,
     /// Whether grid guides are displayed.
@@ -283,6 +317,7 @@ impl ModelView {
             projection: Projection::Orthographic,
             span_mm,
             depth: None,
+            beyond: DepthBeyond::Cut,
             render_mode: RenderMode::Shaded,
             grids_visible: true,
             folder: String::new(),
@@ -325,6 +360,7 @@ impl ModelView {
         self.projection = source.projection;
         self.span_mm = source.span_mm;
         self.depth = source.depth;
+        self.beyond = source.beyond;
         self.render_mode = source.render_mode;
         self.grids_visible = source.grids_visible;
         self.hidden_kinds = source.hidden_kinds;

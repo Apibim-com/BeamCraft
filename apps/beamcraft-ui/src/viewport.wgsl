@@ -6,7 +6,8 @@ struct Camera { right: vec4f, up: vec4f, back: vec4f, eye: vec4f, params: vec4f,
 @group(0) @binding(0) var<uniform> camera: Camera;
 // The V15 cut plane: a count and up to 16 half-spaces (normal.xyz, -normal·point). A fragment
 // outside any half-space is discarded, so the model is cut in the image only and never in data.
-struct Clip { count: u32, pad0: u32, pad1: u32, pad2: u32, planes: array<vec4f, 16> }
+// The last `soft` planes are a view's depth slab drawn faintly beyond, not cut away.
+struct Clip { count: u32, soft: u32, pad1: u32, pad2: u32, planes: array<vec4f, 16> }
 @group(0) @binding(1) var<uniform> clip: Clip;
 // The V17 colour overlay: a per-instance tint (rgb colour, a = 1 - transparency). White keeps
 // the pipeline's own colours, so an element no rule matches draws exactly as before.
@@ -93,6 +94,26 @@ fn cut_verdict(world: vec3f, cap: f32) -> CutVerdict {
         if (abs(d) < fwidth(d)) { verdict.edge = true; }
     }
     return verdict;
+}
+// The faint pass of a view that shows the parts beyond its depth (`soft` planes): only what
+// the hard cut keeps and the slab leaves out is drawn, lightly, over the opaque pass, without
+// writing depth, so the part inside the slab stays in full and the rest of it stays visible.
+@fragment fn shade_beyond(o: Out, @builtin(front_facing) front: bool) -> @location(0) vec4f {
+    let hard = clip.count - clip.soft;
+    var inside = true;
+    for (var i = 0u; i < clip.count; i += 1u) {
+        let plane = clip.planes[i];
+        let d = dot(plane.xyz, o.world) + plane.w;
+        if (d < 0.0) {
+            if (i < hard) { discard; }
+            inside = false;
+        }
+    }
+    if (inside || !front) { discard; }
+    let n = normalize(o.normal);
+    let base = view_colour(mix(vec3f(0.38, 0.51, 0.59), vec3f(0.74, 0.80, 0.84), clamp(n.z, 0.0, 1.0)));
+    let light = 0.55 + 0.45 * max(dot(n, normalize(vec3f(0.3, -0.4, 0.85))), 0.0);
+    return vec4f(overlay(base, o.tint.rgb, n) * light, 0.22);
 }
 // The model view tint (V12): a fully transparent view draws nothing, and a colour override
 // replaces the base colour of the model faces; a negative red keeps the pipeline colour.

@@ -437,6 +437,8 @@ struct Pipelines {
     grey: wgpu::RenderPipeline,
     /// The ghost preview: the same vertices, a distinct fragment colour.
     ghost: wgpu::RenderPipeline,
+    /// The faint pass beyond a view's depth slab: blended, depth-tested, no depth writes.
+    beyond: wgpu::RenderPipeline,
 }
 
 fn pipeline(
@@ -640,9 +642,17 @@ fn pipeline(
             true,
             no_cull,
         ),
+        beyond: pipeline(
+            "BeamCraft beyond the depth",
+            "shade_beyond",
+            wgpu::PrimitiveTopology::TriangleList,
+            Some(alpha),
+            false,
+            no_cull,
+        ),
     };
     finish_scopes(scopes)?;
-    stats.pipeline_builds.add(5);
+    stats.pipeline_builds.add(6);
     Ok((pipelines, camera, clip, bind))
 }
 
@@ -888,6 +898,16 @@ impl Renderer {
                     pass.set_vertex_buffer(0, vertices.slice(..));
                     pass.set_vertex_buffer(1, mesh.instances.slice(..));
                     pass.draw(0..count, 0..mesh.instance_count);
+                }
+                // A view that shows the parts beyond its depth draws them faintly over the
+                // opaque pass; the wireframe has no faces to draw them with.
+                if clip.soft > 0 && mode != RenderMode::Wireframe {
+                    pass.set_pipeline(&self.pipeline.beyond);
+                    for mesh in &uploaded.meshes {
+                        pass.set_vertex_buffer(0, mesh.vertices.slice(..));
+                        pass.set_vertex_buffer(1, mesh.instances.slice(..));
+                        pass.draw(0..mesh.vertex_count, 0..mesh.instance_count);
+                    }
                 }
             }
             self.paint_ghost(&mut pass);
