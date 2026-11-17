@@ -243,11 +243,12 @@ impl Camera {
         // A view plane (a plan, an elevation or a section) never orbits: it stays on its plane
         // with its X to the right and its Y up, as a plan does in Tekla and Revit, and is turned
         // only by the view's own Rotation setting. Pan and zoom still work. The 3D view orbits
-        // by yaw about the world Z and pitch from the ground, and stops just short of the top
-        // so its turntable keeps a heading.
+        // by yaw about the world Z and pitch, above or below the ground so the underside of a
+        // plate can be seen, and stops just short of straight up or down so its turntable
+        // keeps a heading.
         if self.basis.is_none() {
             self.yaw = (self.yaw + ox).rem_euclid(std::f32::consts::TAU);
-            self.pitch = (self.pitch + oy).clamp(0.0, 1.52);
+            self.pitch = (self.pitch + oy).clamp(-1.52, 1.52);
         }
         self.distance = (self.distance * (-zoom.clamp(-10.0, 10.0)).exp()).clamp(10.0, 2e7);
         let view = self.view(1.0)?;
@@ -289,7 +290,7 @@ impl Camera {
         let local = [dot(offset, r), dot(offset, u), dot(offset, b)];
         let [ox, oy] = orbit;
         self.yaw = (self.yaw + ox).rem_euclid(std::f32::consts::TAU);
-        self.pitch = (self.pitch + oy).clamp(0.0, 1.52);
+        self.pitch = (self.pitch + oy).clamp(-1.52, 1.52);
         let [r2, u2, b2] = frame(self)?;
         let moved = sum(
             sum(scaled(r2, local[0]), scaled(u2, local[1])),
@@ -489,6 +490,17 @@ mod tests {
             }
         }
     }
+    #[test]
+    fn the_3d_camera_orbits_below_the_ground_to_see_an_underside() {
+        let mut camera = Camera::new([0.0; 3], 1000.0, 1.0).unwrap();
+        camera.navigate([0.0, -3.0], [0.0, 0.0], 0.0).unwrap();
+        let [.., back_z, _] = camera.view(1.0).unwrap().back;
+        assert!(back_z < -0.99, "the eye is under the ground: {back_z}");
+        camera.orbit_about([0.0; 3], [0.0, 3.0]).unwrap();
+        let [.., back_z, _] = camera.view(1.0).unwrap().back;
+        assert!(back_z > 0.99, "and back over the top: {back_z}");
+    }
+
     #[test]
     fn a_plane_camera_switched_to_3d_orbits() {
         let plane = WorkPlane::default();

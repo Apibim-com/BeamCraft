@@ -1804,7 +1804,19 @@ impl App {
             count_pill(ui, all.len());
             toggle = name.clicked();
             // Rename and delete show on the row under the pointer, as small icons at its end.
-            if ui.ui_contains_pointer() {
+            // The whole row band counts, the icons' own place too: the row's laid-out rect ends
+            // after the count while the icons are hidden, so testing it hid the icons again as
+            // soon as the pointer moved onto them, and a hovered name took the hover from it.
+            let band = egui::Rect::from_x_y_ranges(ui.max_rect().x_range(), name.rect.y_range())
+                .expand2(egui::vec2(0.0, 3.0));
+            let over = ui
+                .input(|i| i.pointer.hover_pos())
+                .is_some_and(|pos| band.contains(pos))
+                && ui
+                    .ctx()
+                    .layer_id_at(ui.input(|i| i.pointer.hover_pos()).unwrap_or_default())
+                    == Some(ui.layer_id());
+            if over {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.spacing_mut().item_spacing.x = 0.0;
                     if small_icon(

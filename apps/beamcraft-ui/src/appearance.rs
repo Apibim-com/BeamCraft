@@ -131,6 +131,11 @@ impl Appearance {
     /// Start-screen title bar with optional maximize for a resizable library.
     pub fn titlebar(&mut self, ui: &mut egui::Ui, enabled: bool, maximize: bool) {
         self.poll(ui.ctx());
+        // Off macOS the system title bar names and moves the window, so the strip is drawn only
+        // when it carries something: the welcome theme choice or a settings error.
+        if !cfg!(target_os = "macos") && maximize && self.error.is_none() {
+            return;
+        }
         let palette = Palette::current(ui);
         egui::Panel::top("application-appearance")
             .exact_size(36.0)

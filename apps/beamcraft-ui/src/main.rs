@@ -564,12 +564,10 @@ fn window(size: egui::Vec2, create: eframe::AppCreator<'_>) -> Result<(), Error>
     let mut setup = eframe::egui_wgpu::WgpuSetupCreateNew::without_display_handle();
     setup.instance_descriptor.backends =
         wgpu::Backends::DX12 | wgpu::Backends::VULKAN | wgpu::Backends::METAL;
-    // The wireframe render mode draws triangle edges: a native desktop feature (Metal, DX12,
-    // and Vulkan with `fillModeNonSolid`), requested explicitly like the renderer's own
-    // headless device does.
+    // The wireframe draws the meshes' feature edges as plain lines, so no optional device
+    // feature is needed.
     setup.device_descriptor = std::sync::Arc::new(|_adapter| wgpu::DeviceDescriptor {
         label: Some("BeamCraft viewport"),
-        required_features: wgpu::Features::POLYGON_MODE_LINE,
         ..Default::default()
     });
     let viewport = egui::ViewportBuilder::default()
