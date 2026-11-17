@@ -64,31 +64,28 @@ fn preset_combo(ui: &mut egui::Ui, tools: &mut crate::tools::Tools) {
         return;
     }
     let chosen = tools.chosen_preset.clone();
+    // In the panel's type row, as the view properties show theirs: the chosen preset's name,
+    // or "Presets…" once a field was changed by hand.
     let selected = options
         .iter()
         .find(|(id, _)| Some(id) == chosen.as_ref())
-        .map_or("custom", |(_, name)| name.as_str())
+        .map_or("Presets…", |(_, name)| name.as_str())
         .to_owned();
     let mut picked = None;
-    ui.horizontal(|ui| {
-        ui.add_sized(
-            egui::vec2(70.0, 28.0),
-            egui::Label::new(egui::RichText::new("Preset").size(11.0)),
-        );
-        egui::ComboBox::from_id_salt("part-preset")
-            .width(ui.available_width().max(80.0))
-            .selected_text(selected)
-            .show_ui(ui, |ui| {
-                for (id, name) in &options {
-                    if ui
-                        .selectable_label(Some(id) == chosen.as_ref(), name)
-                        .clicked()
-                    {
-                        picked = Some(id.clone());
-                    }
+    egui::ComboBox::from_id_salt("part-preset")
+        .width((ui.available_width() - crate::kit::FIT).max(80.0))
+        .selected_text(selected)
+        .truncate()
+        .show_ui(ui, |ui| {
+            for (id, name) in &options {
+                if ui
+                    .selectable_label(Some(id) == chosen.as_ref(), name)
+                    .clicked()
+                {
+                    picked = Some(id.clone());
                 }
-            });
-    });
+            }
+        });
     if let Some(id) = picked {
         tools.use_preset(kind, Some(&id));
     }
@@ -913,21 +910,19 @@ impl App {
         ui.add_enabled_ui(!busy, |ui| {
             match self.tools.active {
                 ToolKind::Plate => {
-                    ui.label(crate::theme::bold("Plate properties", 16.0));
-                    preset_combo(ui, &mut self.tools);
-                    field(ui, "Name", &mut self.tools.plate.name, 160.0);
-                    field(ui, "Class", &mut self.tools.plate.class, 80.0);
-                    field(ui, "Thickness (mm)", &mut self.tools.plate.thickness, 80.0);
-                    token_combo(ui, "plate-thickness-side", "Thickness from", &mut self.tools.plate.thickness_side, THICKNESS_SIDES);
-                    choice_combo(ui, "plate-material", "Material", &mut self.tools.plate.material, &self.tools.definitions.materials, false);
-                    ui.separator();
-                    ui.horizontal(|ui| {
-                        ui.selectable_value(&mut self.tools.plate.by_size, false, "By contour");
-                        ui.selectable_value(&mut self.tools.plate.by_size, true, "By size");
+                    crate::kit::type_header(ui, crate::theme::Icon::Plate, "Plate", |ui| preset_combo(ui, &mut self.tools));
+                    crate::kit::section(ui, "plate", "Part", true, |ui| {
+                        field(ui, "Name", &mut self.tools.plate.name, 160.0);
+                        field(ui, "Class", &mut self.tools.plate.class, 80.0);
+                        field(ui, "Thickness, mm", &mut self.tools.plate.thickness, 80.0);
+                        token_combo(ui, "plate-thickness-side", "Thickness from", &mut self.tools.plate.thickness_side, THICKNESS_SIDES);
+                        choice_combo(ui, "plate-material", "Material", &mut self.tools.plate.material, &self.tools.definitions.materials, false);
                     });
+                    crate::kit::section(ui, "plate", "Placement", true, |ui| {
+                    crate::kit::prop_choice(ui, "plate-mode", "Shape", &mut self.tools.plate.by_size, &[(false, "By contour"), (true, "By size")]);
                     if self.tools.plate.by_size {
-                        field(ui, "Width (mm)", &mut self.tools.plate.width, 80.0);
-                        field(ui, "Length (mm)", &mut self.tools.plate.length, 80.0);
+                        field(ui, "Width, mm", &mut self.tools.plate.width, 80.0);
+                        field(ui, "Length, mm", &mut self.tools.plate.length, 80.0);
                         ui.label("Click the centre of the plate. Width runs along the work plane's X, length along its Y.");
                     } else {
                     ui.label("Pick contour vertices in 3D. Aim, type a length and press Enter to add a point. O toggles orthogonal X/Y/Z. Enter without a length, right-click, wheel-click or Finish creates the plate. Backspace removes a digit or point.");
@@ -954,25 +949,28 @@ impl App {
                         }
                     });
                     }
+                    });
                 }
                 ToolKind::Member => {
-                    ui.label(crate::theme::bold(if self.bench == Bench::Column { "Column properties" } else { "Beam properties" }, 16.0));
-                    preset_combo(ui, &mut self.tools);
+                    let column = self.bench == Bench::Column;
+                    let (icon, kind) = if column { (crate::theme::Icon::Column, "Column") } else { (crate::theme::Icon::Beam, "Beam") };
+                    crate::kit::type_header(ui, icon, kind, |ui| preset_combo(ui, &mut self.tools));
+                    crate::kit::section(ui, "member", "Part", true, |ui| {
                     field(ui, "Name", &mut self.tools.member.name, 160.0);
                     field(ui, "Class", &mut self.tools.member.class, 80.0);
                     choice_combo(ui, "member-profile", "Profile", &mut self.tools.member.profile, &self.tools.definitions.profiles, true);
                     choice_combo(ui, "member-material", "Material", &mut self.tools.member.material, &self.tools.definitions.materials, false);
-                    let column = self.bench == Bench::Column;
                     if column {
                         let levels: Vec<crate::tools::Choice> = self.tools.definitions.levels.iter().map(|l| crate::tools::Choice {
                             label: format!("{} · {} mm", l.name, l.elevation_mm),
                             digest: l.id.clone(),
                             rect_mm: None,
                         }).collect();
-                        field(ui, "Height (mm)", &mut self.tools.member.height, 80.0);
+                        field(ui, "Height, mm", &mut self.tools.member.height, 80.0);
                         choice_combo(ui, "column-top-level", "Top level", &mut self.tools.member.top_level, &levels, false);
                     }
-                    crate::kit::fold(ui, "member-position", "Position and rotation", true, |ui| {
+                    });
+                    crate::kit::section(ui, "member", "Position", true, |ui| {
                         let member = &mut self.tools.member;
                         field(ui, "Rotation, °", &mut member.roll, 80.0);
                         token_combo(ui, "member-plane", "On plane", &mut member.plane, &[("left", "Left"), ("centre", "Middle"), ("right", "Right")]);
@@ -982,7 +980,7 @@ impl App {
                         field(ui, "Start offset, mm", &mut member.start_offset, 80.0);
                         field(ui, "End offset, mm", &mut member.end_offset, 80.0);
                     });
-                    ui.separator();
+                    crate::kit::section(ui, "member", "Placement", true, |ui| {
                     ui.label(if column && self.beam.start().is_none() { "Click the base point. The top follows the chosen level, or the height when no level is chosen." } else if self.beam.start().is_some() { "Aim, type a length in mm and press Enter, or pick the end point. O toggles orthogonal X/Y/Z." } else { "Pick the start point, then the end point in the model view." });
                     if ui.button("Pick new points").clicked() {
                         self.beam.reset(); self.beam_mode = true; self.beam_hover = None;
@@ -998,6 +996,7 @@ impl App {
                         field(ui, "Start expression", &mut self.tools.member.start_input, 160.0);
                         field(ui, "End expression", &mut self.tools.member.end_input, 160.0);
                         if ui.button("Create member").clicked() { self.create_from_form(); }
+                    });
                     });
                 }
             }

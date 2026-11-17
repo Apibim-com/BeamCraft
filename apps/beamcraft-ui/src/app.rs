@@ -2891,6 +2891,7 @@ impl App {
     /// half-space count, so a refusal and a success are both readable afterwards (issue 569
     /// item 21).
     fn cut_panel(&mut self, ui: &mut egui::Ui) {
+        crate::kit::type_box(ui, crate::theme::Icon::CutPlane, "Cut plane");
         ui.label(
             "The cut plane hides part of the model in this window only. The model, its \
              revisions and every measurement stay unchanged.",
@@ -2937,6 +2938,7 @@ impl App {
     /// Everything here is display state: the overlay is never written to the model, and a set
     /// lives in the user's colour-sets file, not in the store.
     fn colour_panel(&mut self, ui: &mut egui::Ui) {
+        crate::kit::type_box(ui, crate::theme::Icon::Palette, "Colour");
         ui.label(
             "Colour the model by a saved representation set. Colours are display only: the \
              model, its revisions and every measurement stay unchanged, and the set lives in \
@@ -3286,6 +3288,12 @@ impl App {
     }
 
     fn edit_panel(&mut self, ui: &mut egui::Ui) {
+        let (icon, kind) = match self.bench {
+            workbench::Bench::Copy => (crate::theme::Icon::Copy, "Copy"),
+            workbench::Bench::Delete => (crate::theme::Icon::Delete, "Delete"),
+            _ => (crate::theme::Icon::Move, "Move"),
+        };
+        crate::kit::type_box(ui, icon, kind);
         ui.label("Click an element in the view to select it. Esc clears the selection.");
         match self.editor.selected() {
             Some(info) => {
@@ -8571,7 +8579,8 @@ pub(crate) mod tests {
         assert!(!form.shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Text(text) if text.galley.job.text == "Show grids")));
         draw(click(position(&form, "Cancel")));
         let cancelled = draw(Vec::new());
-        position(&cancelled, "Properties");
+        // Back on the selection's properties: no form of the grid tool is left.
+        assert!(!cancelled.shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Text(text) if text.galley.job.text == "Create grid")));
         assert_eq!(app.bench, super::workbench::Bench::Select);
         assert!(app.grid_job.is_none());
         assert!(!app.beam_mode && app.beam.start().is_none() && app.ghost_end.is_none());
@@ -8898,7 +8907,8 @@ pub(crate) mod tests {
         draw(&mut app, Vec::new());
         app.grid_form.name = "Unapplied name".into();
         let edited = draw(&mut app, Vec::new());
-        position(&edited, "Grid properties");
+        // The grid's own type row heads its panel.
+        position(&edited, "Grid");
         // An existing grid is deleted from its panel too, not only with the Delete key.
         position(&edited, "Delete grid");
         for removed in ["Fit grid extents", "Reload properties", "Show grids"] {
@@ -9613,6 +9623,85 @@ pub(crate) mod tests {
             );
         }
         output.drop_without_applying_deltas();
+    }
+
+    #[test]
+    fn a_plan_switched_to_3d_with_ctrl_p_orbits_under_ctrl_middle_drag() {
+        use beamcraft_engine::views::ModelView;
+        use beamcraft_engine::work_plane::WorkPlane;
+        let Some(mut app) = headless() else { return };
+        deliver(&mut app, refreshed(2));
+        let id = beamcraft_model::id::Uuid7::parse("019a7bf0-0000-7000-8000-0000000000aa").unwrap();
+        app.views
+            .book
+            .insert(ModelView::new(id, "Plan 0", WorkPlane::default(), 20_000.0))
+            .unwrap();
+        app.activate_view(Some(id));
+        assert!(app.views.active_pane().unwrap().camera.is_aligned());
+        let ctx = egui::Context::default();
+        super::inter(&ctx);
+        crate::theme::install(&ctx);
+        let (mut labels, mut rects) = (Vec::new(), Vec::new());
+        views_frame(&mut app, &ctx, vec![], &mut labels, &mut rects);
+        app.toggle_view_plane();
+        assert!(!app.views.active_pane().unwrap().camera.is_aligned());
+        let body = app.views.active_pane().unwrap().body;
+        let start = body.center();
+        let before = app
+            .views
+            .active_pane()
+            .unwrap()
+            .camera
+            .view(1.0)
+            .unwrap()
+            .right;
+        let ctrl = egui::Modifiers::CTRL;
+        let press = |pressed, pos| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Middle,
+            pressed,
+            modifiers: ctrl,
+        };
+        let mut frames = vec![vec![
+            egui::Event::ModifiersChanged(ctrl),
+            egui::Event::PointerMoved(start),
+            press(true, start),
+        ]];
+        for step in 1..=6 {
+            frames.push(vec![egui::Event::PointerMoved(
+                start + egui::vec2(20.0 * step as f32, 0.0),
+            )]);
+        }
+        frames.push(vec![press(false, start + egui::vec2(120.0, 0.0))]);
+        for events in frames {
+            let output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1400.0, 900.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    app.ribbon(ui);
+                    app.project_browser(ui);
+                    app.inspector(ui);
+                    egui::CentralPanel::default().show(ui, |ui| app.work_area(ui, false, false));
+                },
+            );
+            output.drop_without_applying_deltas();
+        }
+        let pane = app.views.active_pane().unwrap();
+        assert!(
+            !pane.camera.is_aligned(),
+            "the 3D camera was reset to the plane"
+        );
+        assert_ne!(
+            pane.camera.view(1.0).unwrap().right,
+            before,
+            "the view did not turn"
+        );
     }
 
     #[test]

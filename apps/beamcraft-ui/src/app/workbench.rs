@@ -66,28 +66,6 @@ const SNAP_CHEVRON_WIDTH: f32 = 16.0;
 const SNAP_CHEVRON_STEP: f32 = 72.0;
 
 impl Bench {
-    /// The inspector's title.
-    pub(crate) const fn title(self) -> &'static str {
-        match self {
-            Self::Select => "Properties",
-            Self::Plate => "New plate",
-            Self::Beam => "New beam",
-            Self::Column => "New column",
-            Self::Grid => "Rectangular grid",
-            Self::Move => "Move",
-            Self::Copy => "Copy",
-            Self::Delete => "Delete",
-            Self::CutPlane => "Cut plane",
-            Self::Colour => "Colour",
-            Self::Weld => "Weld",
-            Self::Fit => "Fit end",
-            Self::Bolt => "Bolt group",
-            Self::Annotations => "Annotations",
-            Self::View => "View properties",
-            Self::Levels => "Levels",
-        }
-    }
-
     /// The edit action of a Move, Copy or Delete bench.
     pub(crate) const fn edit(self) -> Option<EditKind> {
         match self {
@@ -1088,37 +1066,35 @@ impl App {
                     ],
                     Stroke::new(1.0, palette.rule),
                 );
-                ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new(if self.grid_edit.is_some() {
-                            "Grid properties"
-                        } else if self.bench == Bench::View {
-                            self.views.subject.title()
-                        } else {
-                            self.bench.title()
-                        })
-                        .size(12.0),
-                    );
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if self.bench == Bench::Select
-                            && theme::icon_button(
+                // No panel carries a text heading: each starts with its own type row (an icon
+                // and the kind), which says what is shown. Only an element's properties keep
+                // their reload button, at the right.
+                if self.bench == Bench::Select
+                    && self.grid_edit.is_none()
+                    && self.props.selected().is_some()
+                {
+                    let row = egui::vec2(ui.available_width(), 26.0);
+                    ui.allocate_ui_with_layout(
+                        row,
+                        egui::Layout::right_to_left(egui::Align::Center),
+                        |ui| {
+                            if theme::icon_button(
                                 ui,
                                 Icon::Refresh,
                                 "Reload properties",
                                 // A source window reads no properties from a store: the facts
                                 // panel follows the file's own refresh (issue 614 review).
-                                self.props.selected().is_some()
-                                    && !self.source.read_only()
+                                !self.source.read_only()
                                     && !self.other_command_running()
                                     && !self.props.busy(),
                             )
                             .clicked()
-                        {
-                            self.reread();
-                        }
-                    });
-                });
-                ui.separator();
+                            {
+                                self.reread();
+                            }
+                        },
+                    );
+                }
                 if self.bench == Bench::Grid
                     || self.bench == Bench::Select && self.grid_edit.is_some()
                 {

@@ -609,10 +609,20 @@ impl App {
     /// where it orbits; a 3D camera looks straight at the active view's plane (or the work
     /// plane). Pressed again, the camera from before comes back.
     pub(crate) fn toggle_view_plane(&mut self) {
+        // Every press says what it did, so a press that reached another pane than the one
+        // looked at is seen at once.
+        let three_d = "3D: Ctrl + wheel-button drag rotates. Ctrl+P looks at the plane again.";
+        let plane_note = "Plane: looking straight at the view plane. Ctrl+P returns to 3D.";
         if let Some(pane) = self.views.active_pane_mut()
             && let Some(previous) = pane.toggled.take()
         {
             pane.camera = previous;
+            let note = if previous.is_aligned() {
+                plane_note
+            } else {
+                three_d
+            };
+            self.view_note(Ok(note.into()));
             return;
         }
         let Some(camera) = self.views.active_pane().map(|p| p.camera) else {
@@ -623,6 +633,7 @@ impl App {
                 pane.toggled = Some(pane.camera);
                 pane.camera = camera.orbiting();
             }
+            self.view_note(Ok(three_d.into()));
             return;
         }
         let origin = self.view_origin();
@@ -640,6 +651,7 @@ impl App {
                     pane.toggled = Some(pane.camera);
                     pane.camera = aligned;
                 }
+                self.view_note(Ok(plane_note.into()));
             }
             Err(e) => self.view_note(Err(e.to_string())),
         }
@@ -2964,7 +2976,124 @@ impl App {
                     let form = &mut self.views.form;
                     // The type box at the top, as Revit's properties palette shows the kind of
                     // what is selected: the view's kind and its name.
-                    type_box(ui, &header);
+                    ui.add_space(2.0);
+                    // Like the part presets of a beam or a column: picking one fills the form,
+                    // every field stays editable, and Apply keeps it.
+                    // Tekla's properties panel starts with its preset row: the list of
+                    // saved presets and the save button, above every section.
+                    let palette = theme::Palette::current(ui);
+                    egui::Frame::new()
+                        .stroke(egui::Stroke::new(1.0, palette.rule))
+                        .fill(palette.surface)
+                        .inner_margin(egui::Margin::symmetric(8, 6))
+                        .corner_radius(4)
+                        .show(ui, |ui| {
+                            ui.set_width((ui.available_width() - FIT).max(40.0));
+                            ui.horizontal(|ui| {
+                                // The view's kind, as Revit's type box shows what is selected.
+                                theme::icon(ui, header.icon, 22.0, palette.text);
+                                ui.add(
+                                    egui::Label::new(
+                                        egui::RichText::new(&header.kind).strong().size(13.0),
+                                    )
+                                    .truncate(),
+                                );
+                                // The presets as a drop-down list; the popup is tall enough for the
+                                // Export all and Import buttons under the list.
+                                egui::ComboBox::from_id_salt("view-presets")
+                                    .selected_text("Presets…")
+                                    .width((ui.available_width() - 34.0).max(80.0))
+                                    .height(600.0)
+                                    .show_ui(ui, |ui| {
+                                        // The panel is narrow; the list needs room for the name, the
+                                        // two icons and the Export all / Import buttons. A right-to-left
+                                        // row would take all the width a menu offers, so it is fixed.
+                                        ui.set_width(240.0);
+                                        ui.horizontal(|ui| {
+                                            ui.label(egui::RichText::new("Saved presets").strong());
+                                            count_pill(ui, presets.len());
+                                        });
+                                        if presets.is_empty() {
+                                            ui.label(
+                                    "No view presets yet. Press + to save this view's display.",
+                                );
+                                        }
+                                        for preset in &presets {
+                                            let own =
+                                                own_presets.contains(&preset.name.to_lowercase());
+                                            ui.horizontal(|ui| {
+                                                if ui
+                                                    .button(&preset.name)
+                                                    .on_hover_text("Fill the form from this preset")
+                                                    .clicked()
+                                                {
+                                                    chosen_preset = Some(preset.clone());
+                                                }
+                                                ui.with_layout(
+                                                    egui::Layout::right_to_left(
+                                                        egui::Align::Center,
+                                                    ),
+                                                    |ui| {
+                                                        if own {
+                                                            if small_icon(
+                                                                ui,
+                                                                theme::Icon::Delete,
+                                                                "Delete this preset",
+                                                            )
+                                                            .clicked()
+                                                            {
+                                                                delete_preset =
+                                                                    Some(preset.name.clone());
+                                                            }
+                                                            if small_icon(
+                                                                ui,
+                                                                theme::Icon::Rename,
+                                                                "Rename this preset",
+                                                            )
+                                                            .clicked()
+                                                            {
+                                                                rename_preset_from =
+                                                                    Some(preset.name.clone());
+                                                            }
+                                                        } else {
+                                                            ui.small("environment");
+                                                        }
+                                                    },
+                                                );
+                                            });
+                                        }
+                                        ui.separator();
+                                        ui.horizontal(|ui| {
+                                            if ui
+                                                .button("Export all")
+                                                .on_hover_text(
+                                                    "Write your presets to a file in a folder",
+                                                )
+                                                .clicked()
+                                            {
+                                                export_presets_all = true;
+                                            }
+                                            if ui
+                                                .button("Import…")
+                                                .on_hover_text("Add the presets of a file")
+                                                .clicked()
+                                            {
+                                                import_presets_file = true;
+                                            }
+                                        });
+                                    });
+                                if theme::icon_toggle(
+                                    ui,
+                                    theme::Icon::Plus,
+                                    "Save this view's display as a view preset",
+                                    preset_field,
+                                )
+                                .clicked()
+                                {
+                                    toggle_preset_field = true;
+                                }
+                            });
+                        });
                     if form.id.is_none() {
                         ui.separator();
                         ui.label(egui::RichText::new(form.construction.label()).strong());
@@ -3140,99 +3269,6 @@ impl App {
                                 }
                             });
                     }
-                    ui.add_space(2.0);
-                    // Like the part presets of a beam or a column: picking one fills the form,
-                    // every field stays editable, and Apply keeps it.
-                    // Tekla's properties panel starts with its preset row: the list of
-                    // saved presets and the save button, above every section.
-                    ui.horizontal(|ui| {
-                        // Widen the menu button to the row: the menu opens from it.
-                        ui.spacing_mut().button_padding.x =
-                            ((ui.available_width() - 34.0 - FIT - 56.0) / 2.0).max(6.0);
-                        // A menu, not a combo box: it sizes to its rows, so the Export all and
-                        // Import buttons at the bottom are never cut off.
-                        ui.menu_button("Presets…", |ui| {
-                            // The panel is narrow; the list needs room for the name, the
-                            // two icons and the Export all / Import buttons. A right-to-left
-                            // row would take all the width a menu offers, so it is fixed.
-                            ui.set_width(240.0);
-                            ui.horizontal(|ui| {
-                                ui.label(egui::RichText::new("Saved presets").strong());
-                                count_pill(ui, presets.len());
-                            });
-                            if presets.is_empty() {
-                                ui.label(
-                                    "No view presets yet. Press + to save this view's display.",
-                                );
-                            }
-                            for preset in &presets {
-                                let own = own_presets.contains(&preset.name.to_lowercase());
-                                ui.horizontal(|ui| {
-                                    if ui
-                                        .button(&preset.name)
-                                        .on_hover_text("Fill the form from this preset")
-                                        .clicked()
-                                    {
-                                        chosen_preset = Some(preset.clone());
-                                    }
-                                    ui.with_layout(
-                                        egui::Layout::right_to_left(egui::Align::Center),
-                                        |ui| {
-                                            if own {
-                                                if small_icon(
-                                                    ui,
-                                                    theme::Icon::Delete,
-                                                    "Delete this preset",
-                                                )
-                                                .clicked()
-                                                {
-                                                    delete_preset = Some(preset.name.clone());
-                                                }
-                                                if small_icon(
-                                                    ui,
-                                                    theme::Icon::Rename,
-                                                    "Rename this preset",
-                                                )
-                                                .clicked()
-                                                {
-                                                    rename_preset_from = Some(preset.name.clone());
-                                                }
-                                            } else {
-                                                ui.small("environment");
-                                            }
-                                        },
-                                    );
-                                });
-                            }
-                            ui.separator();
-                            ui.horizontal(|ui| {
-                                if ui
-                                    .button("Export all")
-                                    .on_hover_text("Write your presets to a file in a folder")
-                                    .clicked()
-                                {
-                                    export_presets_all = true;
-                                }
-                                if ui
-                                    .button("Import…")
-                                    .on_hover_text("Add the presets of a file")
-                                    .clicked()
-                                {
-                                    import_presets_file = true;
-                                }
-                            });
-                        });
-                        if theme::icon_toggle(
-                            ui,
-                            theme::Icon::Plus,
-                            "Save this view's display as a view preset",
-                            preset_field,
-                        )
-                        .clicked()
-                        {
-                            toggle_preset_field = true;
-                        }
-                    });
                     if let Some(name) = preset_name.as_mut() {
                         // The field takes the whole value column and Save sits under it: the
                         // two on one line left the name a few letters wide.
@@ -3397,57 +3433,12 @@ impl App {
                                     );
                                 });
                         });
-                        // The field follows the pane's zoom while it has never been edited,
-                        // so the form never holds a height the user zoomed away from and
-                        // Apply cannot re-zoom the viewport with a stale one. Once the user
-                        // types a height, their text stays until the panel reopens.
-                        let span_id = egui::Id::unique("view-form-span");
-                        let edited_id = egui::Id::unique(("view-form-span-edited", form.id));
-                        let mut span_edited =
-                            ui.data(|d| d.get_temp::<bool>(edited_id).unwrap_or(false));
-                        if !span_edited
-                            && !ui.memory(|m| m.has_focus(span_id))
-                            && let Some(live) = &live_span
-                        {
+                        // The height is the pane's zoom and the rotation the saved view's: neither
+                        // is typed here. The form follows the zoom, so Apply never re-zooms the
+                        // viewport to a height the user zoomed away from.
+                        if let Some(live) = &live_span {
                             form.span.clone_from(live);
                         }
-                        crate::kit::mark_next_changed(
-                            ui,
-                            saved.as_ref().is_some_and(|o| o.span != form.span),
-                        );
-                        let mut typed = None;
-                        row(ui, "Height, mm", |ui| {
-                            typed = Some(
-                                ui.add(
-                                    egui::TextEdit::singleline(&mut form.span)
-                                        .id_salt(span_id)
-                                        .desired_width((ui.available_width() - FIT).max(40.0))
-                                        .char_limit(crate::views::FIELD),
-                                ),
-                            );
-                        });
-                        if typed.is_some_and(|r| r.changed()) {
-                            span_edited = true;
-                        }
-                        ui.data_mut(|d| d.insert_temp(edited_id, span_edited));
-                        crate::kit::mark_next_changed(
-                            ui,
-                            saved.as_ref().is_some_and(|o| o.rotation != form.rotation),
-                        );
-                        row(ui, "Rotation, °", |ui| {
-                            let [z, x] = &mut form.rotation;
-                            let half = ((ui.available_width() - 8.0 - FIT) / 2.0).max(30.0);
-                            ui.add(
-                                egui::TextEdit::singleline(z)
-                                    .hint_text("about Z")
-                                    .desired_width(half),
-                            );
-                            ui.add(
-                                egui::TextEdit::singleline(x)
-                                    .hint_text("about X")
-                                    .desired_width(half),
-                            );
-                        });
                     });
                     section(ui, "Extents", true, |ui| {
                         crate::kit::mark_next_changed(
