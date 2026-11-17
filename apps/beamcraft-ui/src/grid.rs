@@ -80,6 +80,96 @@ pub(crate) fn project(
     })
 }
 
+/// The screen segment of the world segment `points`, cut to what the camera can show: the part
+/// behind a perspective eye is cut at the near plane, and the screen line is cut to a band a few
+/// panes wide around `rect`. Projecting the two ends alone dropped the whole line once either
+/// end left that range, so a zoomed-in view lost the grid lines running through it.
+pub(crate) fn project_segment(
+    points: [[f64; 3]; 2],
+    rect: egui::Rect,
+    view: &View,
+    origin: [f64; 3],
+) -> Option<[egui::Pos2; 2]> {
+    let local = |p: [f64; 3]| -> [f32; 3] {
+        std::array::from_fn(|i| {
+            (p.get(i).copied().unwrap_or(0.0) - origin.get(i).copied().unwrap_or(0.0)) as f32
+        })
+    };
+    let [mut a, mut b] = points.map(local);
+    let [ex, ey, ez, _] = view.eye;
+    let [bx, by, bz, _] = view.back;
+    let [_, _, near, _] = view.params;
+    let depth = |[x, y, z]: [f32; 3]| -((x - ex) * bx + (y - ey) * by + (z - ez) * bz);
+    if view.mode[0] < 0.5 {
+        // Perspective: keep the part in front of the near plane.
+        let limit = near * 1.01;
+        let (da, db) = (depth(a), depth(b));
+        if !(da.is_finite() && db.is_finite()) || (da < limit && db < limit) {
+            return None;
+        }
+        let cut = |from: [f32; 3], to: [f32; 3], df: f32, dt: f32| {
+            let t = (limit - df) / (dt - df);
+            {
+                let [fx, fy, fz] = from;
+                let [tx, ty, tz] = to;
+                [fx + (tx - fx) * t, fy + (ty - fy) * t, fz + (tz - fz) * t]
+            }
+        };
+        if da < limit {
+            a = cut(a, b, da, db);
+        } else if db < limit {
+            b = cut(b, a, db, da);
+        }
+    }
+    let [ax, ay, _] = view.project(a);
+    let [bx2, by2, _] = view.project(b);
+    if ![ax, ay, bx2, by2].iter().all(|v| v.is_finite()) {
+        return None;
+    }
+    // Liang-Barsky against a band of a few panes: the visible part is kept exactly, and the
+    // painted coordinates stay small.
+    const BAND: f32 = 8.0;
+    let (dx, dy) = (bx2 - ax, by2 - ay);
+    let (mut t0, mut t1) = (0.0f32, 1.0f32);
+    for (p, q) in [
+        (-dx, ax + BAND),
+        (dx, BAND - ax),
+        (-dy, ay + BAND),
+        (dy, BAND - ay),
+    ] {
+        if p == 0.0 {
+            if q < 0.0 {
+                return None;
+            }
+        } else {
+            let r = q / p;
+            if p < 0.0 {
+                t0 = t0.max(r);
+            } else {
+                t1 = t1.min(r);
+            }
+        }
+    }
+    if t0 > t1 {
+        return None;
+    }
+    let screen = |t: f32| {
+        egui::pos2(
+            rect.left() + (ax + dx * t + 1.0) * rect.width() / 2.0,
+            rect.top() + (1.0 - (ay + dy * t)) * rect.height() / 2.0,
+        )
+    };
+    Some([screen(t0), screen(t1)])
+}
+
+/// Whether `view` looks horizontally with the world Z up the screen, orthographically: an
+/// elevation or a section, where a grid line seen end-on stands for its vertical grid plane.
+fn upright_view(view: &View) -> bool {
+    let [.., up_z, _] = view.up;
+    let [.., back_z, _] = view.back;
+    view.mode[0] > 0.5 && up_z.abs() > 0.999 && back_z.abs() < 0.001
+}
+
 /// Clearance between a grid bubble and the pane edge, in points: the pane's frame stroke (2
 /// points) plus a margin, so no bubble is painted under the frame.
 const BUBBLE_FRAME_CLEARANCE: f32 = 4.0;
@@ -218,7 +308,7 @@ pub fn paint_preview(
     let palette = theme::Palette::current(ui);
     let stroke = egui::Stroke::new(1.0, theme::BRAND.gamma_multiply(0.8));
     for line in lines {
-        let [Some(a), Some(b)] = line.points.map(|p| project(p, rect, view, origin)) else {
+        let Some([a, b]) = project_segment(line.points, rect, view, origin) else {
             continue;
         };
         painter.extend(egui::Shape::dashed_line(&[a, b], stroke, 8.0, 5.0));
@@ -1038,7 +1128,7 @@ impl GridScene {
                 if !line_in_view(shown, &line.points) {
                     continue;
                 }
-                let [Some(a), Some(b)] = line.points.map(|p| project(p, rect, view, origin)) else {
+                let Some([a, b]) = project_segment(line.points, rect, view, origin) else {
                     continue;
                 };
                 let delta = b - a;
@@ -1160,9 +1250,10 @@ impl GridScene {
         elevations: &[f64],
     ) -> Vec<egui::Rect> {
         let in_view = |points: &[[f64; 3]; 2]| line_in_view(shown, points);
-        // What each line draws as. A line seen end-on (a crossing axis in a section or an
-        // elevation) stands for its vertical grid plane, so it draws upright through the levels,
-        // as a drawing's grid does, instead of collapsing to a dot.
+        // What each line draws as. A line seen end-on in an elevation or a section (a crossing
+        // axis) stands for its vertical grid plane, so it draws upright through the levels, as
+        // a drawing's grid does, instead of collapsing to a dot. A plan or the 3D view never
+        // draws a grid line upright: there the lines lie in the XY plane.
         let segments: Vec<Option<[[f64; 3]; 2]>> = self
             .lines
             .iter()
@@ -1171,13 +1262,14 @@ impl GridScene {
                     return None;
                 }
                 let long = |points: &[[f64; 3]; 2]| {
-                    matches!(
-                        points.map(|p| project(p, rect, view, origin)),
-                        [Some(a), Some(b)] if (b - a).length_sq() >= 4.0
-                    )
+                    project_segment(*points, rect, view, origin)
+                        .is_some_and(|[a, b]| (b - a).length_sq() >= 4.0)
                 };
                 if long(&line.points) {
                     return Some(line.points);
+                }
+                if !upright_view(view) {
+                    return None;
                 }
                 let [[x, y, z], _] = line.points;
                 let [low, high] = upright_span(z, elevations);
@@ -1202,7 +1294,7 @@ impl GridScene {
             } else {
                 palette.link.gamma_multiply(0.6)
             };
-            if let [Some(a), Some(b)] = points.map(|p| project(p, rect, view, origin)) {
+            if let Some([a, b]) = project_segment(*points, rect, view, origin) {
                 painter.line_segment(
                     [a, b],
                     egui::Stroke::new(if active { 2.5 } else { 1.0 }, color),
@@ -1228,7 +1320,7 @@ impl GridScene {
             let active = selected_lines
                 .as_ref()
                 .is_some_and(|range| range.contains(&index));
-            let [Some(a), Some(b)] = points.map(|p| project(p, rect, view, origin)) else {
+            let Some([a, b]) = project_segment(*points, rect, view, origin) else {
                 continue;
             };
             let toward = b - a;
@@ -1757,6 +1849,63 @@ mod form_tests {
             Some("main".to_owned()),
             "line B at {on_line_b:?}"
         );
+    }
+
+    #[test]
+    fn a_zoomed_in_view_keeps_a_grid_line_whose_ends_are_far_off_screen() {
+        let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+        let plan = beamcraft_engine::work_plane::WorkPlane::parallel("xy", 0.0).unwrap();
+        // A 100 mm wide window on a 100 m line through its middle.
+        let view = crate::camera::Camera::aligned_to(plan, [0.0; 3], 100.0, 200_000.0)
+            .unwrap()
+            .view(800.0 / 600.0)
+            .unwrap();
+        let line = [[-50_000.0, 10.0, 0.0], [50_000.0, 10.0, 0.0]];
+        let [a, b] = super::project_segment(line, rect, &view, [0.0; 3]).unwrap();
+        assert!(a.x < rect.left() && b.x > rect.right(), "{a:?} {b:?}");
+        // The perspective 3D view: an end behind the eye is cut, not the whole line.
+        let mut camera = crate::camera::Camera::new([0.0; 3], 1000.0, 1.0).unwrap();
+        camera.navigate([0.0, -0.8], [0.0, 0.0], 0.0).unwrap();
+        let view = camera.view(800.0 / 600.0).unwrap();
+        let [ex, ey, ez, _] = view.eye;
+        let through = [
+            [f64::from(ex) * 3.0, f64::from(ey) * 3.0, 0.0],
+            [-f64::from(ex) * 3.0, -f64::from(ey) * 3.0, 0.0],
+        ];
+        assert!(ez.is_finite());
+        let ends = through.map(|p| super::project(p, rect, &view, [0.0; 3]));
+        assert!(
+            ends.iter().any(Option::is_none),
+            "one end is behind the eye: {ends:?}"
+        );
+        assert!(super::project_segment(through, rect, &view, [0.0; 3]).is_some());
+    }
+
+    #[test]
+    fn a_grid_line_seen_end_on_in_3d_never_stands_upright() {
+        // A plan grid line along the view direction of a free camera projects to a dot; only
+        // an elevation or a section draws such a line upright.
+        let scene = GridScene {
+            lines: vec![GridLine {
+                label: "A".into(),
+                points: [[0.0, -5000.0, 0.0], [0.0, 5000.0, 0.0]],
+            }],
+            ..GridScene::default()
+        };
+        let looking_along_y = beamcraft_engine::work_plane::WorkPlane::new(
+            [0.0; 3],
+            [1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0],
+        )
+        .unwrap();
+        // The orthographic elevation draws it upright with its two bubbles.
+        assert_eq!(painted_labels(&scene, looking_along_y, None).len(), 2);
+        // The same direction in a perspective 3D camera draws nothing.
+        let mut camera =
+            crate::camera::Camera::aligned_to(looking_along_y, [0.0; 3], 20_000.0, 100.0).unwrap();
+        camera = camera.orbiting();
+        let view = camera.view(1.0).unwrap();
+        assert!(!super::upright_view(&view));
     }
 
     #[test]

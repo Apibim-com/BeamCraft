@@ -12281,6 +12281,187 @@ mod navigation_tests {
     }
 
     #[test]
+    fn every_create_view_menu_entry_makes_its_view_on_a_real_model() {
+        use crate::views::Construction;
+        let Some(mut app) = headless() else { return };
+        let cli = super::tests::workspace_cli();
+        assert!(cli.is_file(), "build beamcraft-cli before native tests");
+        let root = std::env::temp_dir().join(format!(
+            "bc-every-view-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let store = root.to_str().unwrap().to_owned();
+        let config = root.join("config");
+        let run = |command: &str, args: &[&str]| {
+            let out = std::process::Command::new(&cli)
+                .arg(command)
+                .args(["--store", &store])
+                .args(args)
+                .env("BEAMCRAFT_CONFIG_DIR", &config)
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "{command}: {}",
+                String::from_utf8_lossy(&out.stdout)
+            );
+        };
+        run(
+            "create-grid",
+            &[
+                "--name",
+                "G",
+                "--u-expression",
+                "0 6000",
+                "--u-labels",
+                "1 2",
+                "--v-expression",
+                "0 5000",
+                "--v-labels",
+                "A B",
+            ],
+        );
+        run("create-level", &["--name", "Ground", "--elevation", "0"]);
+        run("create-level", &["--name", "Roof", "--elevation", "4000"]);
+        run(
+            "create-plate",
+            &[
+                "--contour",
+                "0,0;2000,0;2000,1000;0,1000",
+                "--thickness",
+                "20",
+                "--name",
+                "P",
+            ],
+        );
+        // Assembly views need an assembly; the window has no command that makes one yet.
+        let assembly = "01990000-0000-7000-8000-00000000a001";
+        let plate_id = "01990000-0000-7000-8000-00000000a002";
+        run("create-assembly", &["--name", "A1", "--new-id", assembly]);
+        run(
+            "create-plate",
+            &[
+                "--contour",
+                "3000,0;3500,0;3500,500;3000,500",
+                "--thickness",
+                "10",
+                "--new-id",
+                plate_id,
+            ],
+        );
+        run(
+            "attach-to-assembly",
+            &["--id", plate_id, "--assembly-id", assembly],
+        );
+        app.source.cli = cli.clone();
+        app.source.store = root.clone();
+        let reloaded = crate::source::reload(
+            &cli,
+            &root,
+            &crate::source::Known::default(),
+            None,
+            &app.stats,
+        );
+        deliver(&mut app, reloaded);
+        let plate = {
+            let loaded = app.loaded.as_ref().unwrap();
+            loaded.snapshot.elements().first().unwrap().id.to_string()
+        };
+        assert!(
+            !app.grid_scene.query_grids.is_empty(),
+            "the grid reached the window"
+        );
+        let down = |x: f64, y: f64| crate::edit::Ray {
+            origin: [x, y, 5000.0],
+            direction: [0.0, 0.0, -1.0],
+        };
+        for (construction, label) in Construction::ALL {
+            let before = app.views.book.len();
+            // Each entry starts from the free 3D view, where the picks below aim straight down;
+            // the view made by the entry before stays open in its own tab.
+            app.activate_view(None);
+            app.begin_view(construction);
+            match construction {
+                Construction::Level => app.views.form.level = "Roof".into(),
+                Construction::GridAxes => app.views.form.axis = "1".into(),
+                _ => {}
+            }
+            if !matches!(construction, Construction::Level | Construction::GridAxes) {
+                app.views.form.name = label.into();
+            }
+            if matches!(construction, Construction::Part | Construction::Assembly) {
+                app.editor.select(crate::edit::ElementInfo {
+                    id: if construction == Construction::Assembly {
+                        plate_id.to_owned()
+                    } else {
+                        plate.clone()
+                    },
+                    kind: "plate".into(),
+                    name: "P".into(),
+                    translation_mm: [0.0; 3],
+                    contour: None,
+                });
+            }
+            let clicks: &[(f64, f64)] = match construction {
+                Construction::TwoPoints => &[(100.0, 100.0), (1900.0, 100.0)],
+                Construction::ThreePoints => &[(100.0, 100.0), (1900.0, 100.0), (100.0, 900.0)],
+                Construction::Surface => &[(500.0, 500.0)],
+                Construction::SurfaceEdge => &[(500.0, 500.0), (100.0, 100.0), (1900.0, 100.0)],
+                _ => &[],
+            };
+            for (x, y) in clicks {
+                app.view_click(down(*x, *y));
+            }
+            app.submit_view();
+            for _ in 0..600 {
+                if app.views.job.is_none() {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                app.poll_view_job();
+            }
+            assert!(
+                matches!(app.views.note, Some(Ok(_))),
+                "{label}: {:?}",
+                app.views.note
+            );
+            assert!(app.views.book.len() > before, "{label}: no view was added");
+        }
+        // Plans for all levels: one plan per level of the project, from the menu's first entry.
+        app.tools.definitions.levels = ["Ground", "Roof"]
+            .iter()
+            .zip([0.0, 4000.0])
+            .map(|(name, elevation_mm)| crate::tools::LevelChoice {
+                id: (*name).into(),
+                name: (*name).into(),
+                elevation_mm,
+                elements: 0,
+            })
+            .collect();
+        let before = app.views.book.len();
+        app.activate_view(None);
+        app.plans_for_all_levels();
+        for _ in 0..600 {
+            if app.views.job.is_none() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            app.poll_view_job();
+        }
+        assert!(
+            matches!(app.views.note, Some(Ok(_))),
+            "{:?}",
+            app.views.note
+        );
+        assert_eq!(app.views.book.len(), before + 2, "a plan for each level");
+    }
+
+    #[test]
     fn a_view_that_hides_the_grid_kind_hides_its_snap_targets() {
         use beamcraft_engine::query::pick::SnapKind;
         use beamcraft_model::grid::{DrawnGridLine, Grid, GridFamily};
