@@ -28,8 +28,9 @@ fn pair(json: &Json, key: &str) -> Option<[f64; 2]> {
 /// with no saved view shows every line. A grid line stands for the vertical grid plane through
 /// it (the engine snaps to grid guides the same way). A plane that is not vertical meets that
 /// grid plane at every distance, so its slab always crosses it; in a vertical view the distance
-/// does not depend on height, and the line's two ground endpoints carry the whole plane. One
-/// rule for drawing and picking, so a line is clickable exactly where it is drawn.
+/// does not depend on height, and the line's two ground endpoints carry the whole plane: the line
+/// belongs when its segment crosses the slab, so the axes a section cuts through stay, as on a
+/// drawing. One rule for drawing and picking, so a line is clickable exactly where it is drawn.
 fn line_in_view(
     shown: Option<&beamcraft_engine::views::ModelView>,
     points: &[[f64; 3]; 2],
@@ -41,11 +42,19 @@ fn line_in_view(
         if crate::views::view_kind(v) != crate::views::ViewKind::Vertical {
             return true;
         }
-        points.iter().all(|p| {
-            let d = v.plane_distance(*p);
-            d >= -below && d <= above
-        })
+        let [d0, d1] = points.map(|p| v.plane_distance(p));
+        d0.max(d1) >= -below && d0.min(d1) <= above
     })
+}
+
+/// The heights an end-on grid line spans when it draws upright: the levels and the grid's own
+/// height, with a metre's overhang below and above, and at least four metres tall when there
+/// are no levels to measure.
+fn upright_span(z: f64, elevations: &[f64]) -> [f64; 2] {
+    let finite = elevations.iter().copied().filter(|e| e.is_finite());
+    let low = finite.clone().fold(z, f64::min) - 1000.0;
+    let high = finite.fold(z, f64::max) + 1000.0;
+    [low, high.max(low + 5000.0)]
 }
 
 pub(crate) fn project(
@@ -1139,6 +1148,7 @@ impl GridScene {
     /// endpoints sit at the model limits, so requiring the endpoints inside would drop every
     /// guide from a work-area view (PR 587 review). Returns the screen rectangles of the
     /// bubbles it drew.
+    #[allow(clippy::too_many_arguments)]
     pub fn paint(
         &self,
         ui: &egui::Ui,
@@ -1147,17 +1157,43 @@ impl GridScene {
         origin: [f64; 3],
         selected: Option<&str>,
         shown: Option<&beamcraft_engine::views::ModelView>,
+        elevations: &[f64],
     ) -> Vec<egui::Rect> {
         let in_view = |points: &[[f64; 3]; 2]| line_in_view(shown, points);
+        // What each line draws as. A line seen end-on (a crossing axis in a section or an
+        // elevation) stands for its vertical grid plane, so it draws upright through the levels,
+        // as a drawing's grid does, instead of collapsing to a dot.
+        let segments: Vec<Option<[[f64; 3]; 2]>> = self
+            .lines
+            .iter()
+            .map(|line| {
+                if !in_view(&line.points) {
+                    return None;
+                }
+                let long = |points: &[[f64; 3]; 2]| {
+                    matches!(
+                        points.map(|p| project(p, rect, view, origin)),
+                        [Some(a), Some(b)] if (b - a).length_sq() >= 4.0
+                    )
+                };
+                if long(&line.points) {
+                    return Some(line.points);
+                }
+                let [[x, y, z], _] = line.points;
+                let [low, high] = upright_span(z, elevations);
+                let upright = [[x, y, low], [x, y, high]];
+                long(&upright).then_some(upright)
+            })
+            .collect();
         let painter = ui.painter_at(rect);
         let palette = theme::Palette::current(ui);
         let selected_lines = selected
             .and_then(|id| self.get(id))
             .map(|g| g.lines.clone());
-        for (index, line) in self.lines.iter().enumerate() {
-            if !in_view(&line.points) {
+        for (index, points) in segments.iter().enumerate() {
+            let Some(points) = points else {
                 continue;
-            }
+            };
             let active = selected_lines
                 .as_ref()
                 .is_some_and(|range| range.contains(&index));
@@ -1166,15 +1202,11 @@ impl GridScene {
             } else {
                 palette.link.gamma_multiply(0.6)
             };
-            if let [Some(a), Some(b)] = line.points.map(|p| project(p, rect, view, origin)) {
-                // A line seen end-on projects to a dot; drawing it adds nothing (a plan grid
-                // in an elevation, issue 562 item 38).
-                if (b - a).length_sq() >= 4.0 {
-                    painter.line_segment(
-                        [a, b],
-                        egui::Stroke::new(if active { 2.5 } else { 1.0 }, color),
-                    );
-                }
+            if let [Some(a), Some(b)] = points.map(|p| project(p, rect, view, origin)) {
+                painter.line_segment(
+                    [a, b],
+                    egui::Stroke::new(if active { 2.5 } else { 1.0 }, color),
+                );
             }
         }
         // Labels in a second pass, the selected grid first, so its bubbles claim their places;
@@ -1189,16 +1221,14 @@ impl GridScene {
         });
         let mut placed: Vec<egui::Rect> = Vec::new();
         for index in order {
-            let Some(line) = self.lines.get(index) else {
+            let (Some(line), Some(Some(points))) = (self.lines.get(index), segments.get(index))
+            else {
                 continue;
             };
-            if !in_view(&line.points) {
-                continue;
-            }
             let active = selected_lines
                 .as_ref()
                 .is_some_and(|range| range.contains(&index));
-            let [Some(a), Some(b)] = line.points.map(|p| project(p, rect, view, origin)) else {
+            let [Some(a), Some(b)] = points.map(|p| project(p, rect, view, origin)) else {
                 continue;
             };
             let toward = b - a;
@@ -1345,7 +1375,7 @@ mod form_tests {
                 ..Default::default()
             },
             |ui| {
-                scene.paint(ui, rect, &view, [0.0; 3], None, None);
+                scene.paint(ui, rect, &view, [0.0; 3], None, None, &[]);
             },
         );
         output.textures_delta.clear();
@@ -1450,7 +1480,7 @@ mod form_tests {
     }
 
     #[test]
-    fn plan_bubbles_never_cover_each_other_and_an_elevation_keeps_one_pair() {
+    fn plan_bubbles_never_cover_each_other_and_an_elevation_labels_each_crossing_axis() {
         let scene = demo_scene();
         // Plan: looking straight down. Every crossing is a shared corner; the bubbles hang
         // outward and none covers another (issue 562 item 35). The ends that fall on the pane
@@ -1471,8 +1501,9 @@ mod form_tests {
                 assert!(!a.intersects(*b), "bubbles {a:?} and {b:?} overlap");
             }
         }
-        // Elevation: looking along -Y. The U lines are end-on (no labels) and the V lines all
-        // project onto one segment, so only the first pair of labels is kept (item 38).
+        // Elevation: looking along -Y. The V lines all project onto one segment, so only the
+        // first pair of their labels is kept (item 38); the three U lines are end-on and stand
+        // upright through the levels, each with its own pair, as a drawing's section shows.
         let elevation = beamcraft_engine::work_plane::WorkPlane::new(
             [0.0; 3],
             [1.0, 0.0, 0.0],
@@ -1482,8 +1513,8 @@ mod form_tests {
         let bubbles = painted_bubbles(&scene, elevation);
         assert_eq!(
             bubbles.len(),
-            2,
-            "one pair of labels on the horizontal line: {bubbles:?}"
+            8,
+            "a pair on the horizontal line and on each upright axis: {bubbles:?}"
         );
         for (i, a) in bubbles.iter().enumerate() {
             for b in bubbles.iter().skip(i + 1) {
@@ -1513,7 +1544,7 @@ mod form_tests {
                 ..Default::default()
             },
             |ui| {
-                scene.paint(ui, rect, &view, [0.0; 3], None, shown);
+                scene.paint(ui, rect, &view, [0.0; 3], None, shown, &[]);
             },
         );
         output.textures_delta.clear();
@@ -1555,18 +1586,20 @@ mod form_tests {
         fn as_str(labels: &[String]) -> Vec<&str> {
             labels.iter().map(String::as_str).collect()
         }
-        // A free view keeps the shared-corner rule: one pair, and the family head wins it.
+        // A free view keeps the shared-corner rule for the flattened family: one pair, and
+        // the family head wins it; the crossing U lines stand upright with their own labels.
         let labels = painted_labels(&scene, on_a, None);
         assert_eq!(
             as_str(&labels),
-            ["A", "A"],
+            ["1", "1", "2", "2", "3", "3", "A", "A"],
             "the uncut elevation keeps one pair: {labels:?}"
         );
-        // The elevation on B shows only line B: the slab excludes A at v=0 and the U lines.
+        // The elevation on B shows line B and the U lines it cuts through; the slab excludes
+        // A at v=0.
         let labels = painted_labels(&scene, on_b, Some(&elevation_b));
         assert_eq!(
             as_str(&labels),
-            ["B", "B"],
+            ["1", "1", "2", "2", "3", "3", "B", "B"],
             "the elevation on B labels B: {labels:?}"
         );
         // A work area is not part of the test: its box may lie strictly inside the spans
@@ -1641,7 +1674,8 @@ mod form_tests {
             as_str(&free),
             "a depth-limited inclined view keeps the whole grid: {labels:?}"
         );
-        // A vertical view still tests its slab: the section on line 2 labels 2 alone.
+        // A vertical view still tests its slab: the section on line 2 labels 2 and the lines
+        // it cuts through, not the parallel lines 1 and 3.
         let on_2 = beamcraft_engine::work_plane::WorkPlane::new(
             [4000.0, 0.0, 0.0],
             [0.0, 1.0, 0.0],
@@ -1652,8 +1686,8 @@ mod form_tests {
         let labels = painted_labels(&scene, on_2, Some(&section));
         assert_eq!(
             as_str(&labels),
-            ["2", "2"],
-            "the section on 2 labels 2: {labels:?}"
+            ["2", "2", "A", "A", "B", "B", "C", "C"],
+            "the section on 2 labels 2 and the axes it cuts: {labels:?}"
         );
     }
 
@@ -1705,7 +1739,8 @@ mod form_tests {
         };
         // A pane without a saved view draws every line, and picks every line.
         assert_eq!(picked(on_line_a, None), Some("main".to_owned()));
-        // The elevation on B leaves A and line 2 out: nothing is drawn there, nothing is picked.
+        // The elevation on B leaves the parallel line A out: nothing is drawn there, nothing
+        // is picked. Line 2 crosses the slab, so it is drawn and picked.
         assert_eq!(
             picked(on_line_a, Some(&elevation_b)),
             None,
@@ -1713,7 +1748,7 @@ mod form_tests {
         );
         assert_eq!(
             picked(on_line_2, Some(&elevation_b)),
-            None,
+            Some("main".to_owned()),
             "line 2 at {on_line_2:?}"
         );
         // The drawn line B stays pickable.
@@ -1754,7 +1789,7 @@ mod form_tests {
                 ..Default::default()
             },
             |ui| {
-                scene.paint(ui, rect, &view, [0.0; 3], None, None);
+                scene.paint(ui, rect, &view, [0.0; 3], None, None, &[]);
             },
         );
         output.textures_delta.clear();

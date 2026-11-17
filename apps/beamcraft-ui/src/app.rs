@@ -8911,7 +8911,15 @@ pub(crate) mod tests {
         position(&edited, "Grid");
         // An existing grid is deleted from its panel too, not only with the Delete key.
         position(&edited, "Delete grid");
-        for removed in ["Fit grid extents", "Reload properties", "Show grids"] {
+        // A regular grid opens in its own tools: no switch to the drawn-grid line tools, which
+        // the engine refuses on a regular grid.
+        for removed in [
+            "Fit grid extents",
+            "Reload properties",
+            "Show grids",
+            "Line tools",
+            "Drawn grid",
+        ] {
             assert!(!edited.shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Text(text) if text.galley.job.text == removed)));
         }
         draw(&mut app, click(position(&edited, "Cancel")));

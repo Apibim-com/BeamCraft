@@ -1268,6 +1268,13 @@ impl App {
                     l.summary.origin_mm,
                     self.grid_edit.as_ref().map(|edit| edit.id.as_str()),
                     shown,
+                    &self
+                        .tools
+                        .definitions
+                        .levels
+                        .iter()
+                        .map(|level| level.elevation_mm)
+                        .collect::<Vec<_>>(),
                 );
                 crate::levels::paint_sections(
                     ui,
@@ -1386,6 +1393,7 @@ impl App {
         let view = &draw.view;
         let mut picked = None;
         let mut picked_grid = None;
+        let mut picked_level = None;
         // The contour grips (V18) see the pointer before any click: a grip drag is not a
         // selection or a camera move, and its release commits one contour edit. The corner
         // editor's window belongs to the active pane too.
@@ -1447,7 +1455,28 @@ impl App {
                     )
                     .map(|grid| grid.id.clone());
             }
-            if picked_grid.is_none() {
+            // A level drawn edge-on in a section is drawn with the grid guides; clicking its
+            // line or caption opens its properties, as clicking a grid bubble does.
+            if picked_grid.is_none()
+                && !self.beam_mode
+                && !self.plate_mode
+                && self.views.picking.is_none()
+                && self.grid_line.click.is_none()
+                && self.two_point.is_none()
+                && self.grids_shown()
+                && shown.is_none_or(|v| v.shows_kind(beamcraft_engine::ElementKind::Grid))
+                && let Some(l) = &self.loaded
+            {
+                picked_level = crate::levels::hit_section(
+                    view,
+                    response.rect,
+                    l.summary.origin_mm[2],
+                    self.grid_scene.bounds(&l.summary),
+                    &self.tools.definitions.levels,
+                    pos,
+                );
+            }
+            if picked_grid.is_none() && picked_level.is_none() {
                 picked = Some(ray);
             }
         }
@@ -1627,6 +1656,10 @@ impl App {
         if let Some(id) = picked_grid {
             if !self.other_command_running() {
                 self.select_grid(&id);
+            }
+        } else if let Some(id) = picked_level {
+            if !self.other_command_running() {
+                self.select_level(&id);
             }
         } else if let Some(ray) = picked {
             if self.views.picking.is_some() {

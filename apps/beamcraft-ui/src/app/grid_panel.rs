@@ -348,15 +348,18 @@ impl App {
         if self.grid_edit.as_ref().is_some_and(|edit| edit.stale) {
             ui.colored_label(Palette::current(ui).error, "This grid changed while you were editing. Select it again before applying changes.");
         }
-        if !editing || editable {
-            ui.horizontal(|ui| {
-                ui.selectable_value(&mut self.grid_drawn, false, "Regular grid");
-                ui.selectable_value(
-                    &mut self.grid_drawn,
-                    true,
-                    if editing { "Line tools" } else { "Drawn grid" },
-                );
-            });
+        // The kind is chosen once, when the grid is made: a regular grid (positions by
+        // spacing) and a drawn grid (lines one by one) never convert into each other, so an
+        // existing grid opens in its own kind's tools, never in the other's, which the engine
+        // would refuse.
+        if !editing {
+            crate::kit::prop_choice(
+                ui,
+                "grid-kind",
+                "Kind",
+                &mut self.grid_drawn,
+                &[(false, "Regular grid"), (true, "Drawn grid")],
+            );
         }
         ui.add_space(8.0);
         // The action bar keeps one height; the outcome goes to the status bar.
