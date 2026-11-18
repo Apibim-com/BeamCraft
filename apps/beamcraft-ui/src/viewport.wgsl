@@ -110,7 +110,8 @@ fn cut_verdict(world: vec3f, cap: f32) -> CutVerdict {
         }
     }
     if (inside || !front) { discard; }
-    let n = normalize(o.normal);
+    // A back face is only seen where a cut opened the body: it is lit as the side it shows.
+    let n = select(-1.0, 1.0, front) * normalize(o.normal);
     let base = view_colour(mix(vec3f(0.38, 0.51, 0.59), vec3f(0.74, 0.80, 0.84), clamp(n.z, 0.0, 1.0)));
     let light = 0.55 + 0.45 * max(dot(n, normalize(vec3f(0.3, -0.4, 0.85))), 0.0);
     return vec4f(overlay(base, o.tint.rgb, n) * light, 0.22);
@@ -138,14 +139,15 @@ fn cut_shade(front: bool, verdict: CutVerdict, lit: vec3f, alpha: f32) -> vec4f 
     if (!verdict.kept || (!front && clip.count == 0u)) { discard; }
     if (verdict.cap > 0.5) { return vec4f(CUT_OUTLINE, alpha); }
     if (verdict.edge) { return vec4f(CUT_OUTLINE, alpha); }
-    return vec4f(select(lit, lit * 0.55, !front), alpha);
+    return vec4f(select(lit, lit * 0.8, !front), alpha);
 }
 // Cool steel faces keep the engineering model distinct from the application chrome. The
 // overlay tint replaces the base colour (also in wireframe, which shares this fragment); a
 // white tint leaves the face untouched.
 @fragment fn shade(o: Out, @builtin(front_facing) front: bool) -> @location(0) vec4f {
     let verdict = cut_verdict(o.world, o.cap);
-    let n = normalize(o.normal);
+    // A back face is only seen where a cut opened the body: it is lit as the side it shows.
+    let n = select(-1.0, 1.0, front) * normalize(o.normal);
     let base = view_colour(mix(vec3f(0.38, 0.51, 0.59), vec3f(0.74, 0.80, 0.84), clamp(n.z, 0.0, 1.0)));
     let light = 0.55 + 0.45 * max(dot(n, normalize(vec3f(0.3, -0.4, 0.85))), 0.0);
     return cut_shade(front, verdict, overlay(base, o.tint.rgb, n) * light, 1.0);
@@ -154,14 +156,16 @@ fn cut_shade(front: bool, verdict: CutVerdict, lit: vec3f, alpha: f32) -> vec4f 
 // not-yet-committed shape never reads as a model element.
 @fragment fn shade_ghost(o: Out, @builtin(front_facing) front: bool) -> @location(0) vec4f {
     let verdict = cut_verdict(o.world, o.cap);
-    let n = normalize(o.normal);
+    // A back face is only seen where a cut opened the body: it is lit as the side it shows.
+    let n = select(-1.0, 1.0, front) * normalize(o.normal);
     let light = 0.55 + 0.45 * max(dot(n, normalize(vec3f(0.3, -0.4, 0.85))), 0.0);
     return cut_shade(front, verdict, vec3f(0.85, 0.55, 0.1) * light, 1.0);
 }
 // The grey mode: the same lighting on one neutral grey, without the part colours.
 @fragment fn shade_grey(o: Out, @builtin(front_facing) front: bool) -> @location(0) vec4f {
     let verdict = cut_verdict(o.world, o.cap);
-    let n = normalize(o.normal);
+    // A back face is only seen where a cut opened the body: it is lit as the side it shows.
+    let n = select(-1.0, 1.0, front) * normalize(o.normal);
     let light = 0.55 + 0.45 * max(dot(n, normalize(vec3f(0.3, -0.4, 0.85))), 0.0);
     return cut_shade(front, verdict, view_colour(vec3f(0.62, 0.62, 0.62)) * light, 1.0);
 }
@@ -170,7 +174,8 @@ fn cut_shade(front: bool, verdict: CutVerdict, lit: vec3f, alpha: f32) -> vec4f 
 // its own transparency on top of the mode's base opacity.
 @fragment fn shade_transparent(o: Out, @builtin(front_facing) front: bool) -> @location(0) vec4f {
     let verdict = cut_verdict(o.world, o.cap);
-    let n = normalize(o.normal);
+    // A back face is only seen where a cut opened the body: it is lit as the side it shows.
+    let n = select(-1.0, 1.0, front) * normalize(o.normal);
     let base = view_colour(mix(vec3f(0.47, 0.71, 0.77), vec3f(0.96, 0.94, 0.88), clamp(n.z, 0.0, 1.0)));
     let light = 0.55 + 0.45 * max(dot(n, normalize(vec3f(0.3, -0.4, 0.85))), 0.0);
     return cut_shade(front, verdict, overlay(base, o.tint.rgb, n) * light, 0.45 * o.tint.a * camera.tint.a);
