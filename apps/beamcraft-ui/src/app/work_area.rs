@@ -1336,6 +1336,30 @@ impl App {
                     &self.many_edges.1,
                     cut.as_ref(),
                 );
+                if let Some(selected) = self.editor.selected()
+                    && let Some(asm) = self.assembly_for_part(&selected.id)
+                    && let Some(main_id) = asm.main.as_deref()
+                    && let Some(centre) = element_centre(&l.snapshot, main_id)
+                    && let Some(at) =
+                        crate::grid::project(centre, response.rect, &view, l.summary.origin_mm)
+                {
+                    let painter = ui.painter_at(response.rect);
+                    let palette = crate::theme::Palette::current(ui);
+                    let galley = painter.layout_no_wrap(
+                        format!("MAIN · {}", asm.name),
+                        egui::FontId::proportional(10.5),
+                        palette.text,
+                    );
+                    let badge = egui::Rect::from_center_size(at, galley.size() + vec2(10.0, 5.0));
+                    painter.rect_filled(badge, 3, palette.head);
+                    painter.rect_stroke(
+                        badge,
+                        3,
+                        Stroke::new(1.5, theme::BRAND),
+                        StrokeKind::Inside,
+                    );
+                    painter.galley(badge.min + vec2(5.0, 2.5), galley, palette.text);
+                }
             }
             if let Some(selected) = self.editor.selected() {
                 let key = (selected.id.clone(), l.snapshot.token().as_str().to_owned());

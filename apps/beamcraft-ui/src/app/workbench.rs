@@ -1209,19 +1209,48 @@ impl App {
                     return;
                 }
                 // The tools' action bars stay pinned under their forms, like the properties'.
-                if matches!(self.bench, Bench::Bolt | Bench::Weld) {
+                if matches!(
+                    self.bench,
+                    Bench::Bolt
+                        | Bench::Weld
+                        | Bench::Assembly
+                        | Bench::Numbering
+                        | Bench::Reference
+                        | Bench::Array
+                        | Bench::Fit
+                        | Bench::Cut
+                        | Bench::Hole
+                        | Bench::Move
+                        | Bench::Copy
+                        | Bench::Delete
+                        | Bench::Plate
+                        | Bench::Beam
+                        | Bench::Column
+                        | Bench::Brace
+                        | Bench::Colour
+                ) {
                     egui::Panel::bottom("tool-actions")
                         .frame(
                             egui::Frame::new()
                                 .fill(palette.surface)
                                 .inner_margin(egui::Margin::symmetric(0, 4)),
                         )
-                        .show(ui, |ui| {
-                            if self.bench == Bench::Bolt {
-                                self.bolt_actions(ui);
-                            } else {
-                                self.weld_actions(ui);
+                        .show(ui, |ui| match self.bench {
+                            Bench::Bolt => self.bolt_actions(ui),
+                            Bench::Weld => self.weld_actions(ui),
+                            Bench::Assembly => self.assembly_actions(ui),
+                            Bench::Numbering => self.numbering_actions(ui),
+                            Bench::Reference => self.reference_actions(ui),
+                            Bench::Array => self.array_actions(ui),
+                            Bench::Fit => self.fit_actions(ui),
+                            Bench::Cut => self.cut_part_actions(ui),
+                            Bench::Hole => self.hole_actions(ui),
+                            Bench::Move | Bench::Copy | Bench::Delete => self.edit_actions(ui),
+                            Bench::Plate | Bench::Beam | Bench::Column | Bench::Brace => {
+                                self.creation_actions(ui)
                             }
+                            Bench::Colour => self.colour_actions(ui),
+                            _ => {}
                         });
                 }
                 // A kind with no editable properties (a bolt group) offers no Apply or Reset:
@@ -1453,12 +1482,53 @@ impl App {
                     });
                 });
                 ui.horizontal(|ui| {
+                    // Tekla-style Part vs. Assembly selection mode toggle.
+                    let asm_mode = self.selection.assembly_select_mode();
+                    if ui
+                        .selectable_label(!asm_mode, RichText::new("Parts").size(10.0))
+                        .on_hover_text("Select individual parts")
+                        .clicked()
+                    {
+                        self.selection.assembly_mode = false;
+                        self.selection.set(
+                            beamcraft_engine::query::pick::SelectionClass::Parts,
+                            true,
+                        );
+                    }
+                    if ui
+                        .selectable_label(asm_mode, RichText::new("Assemblies").size(10.0))
+                        .on_hover_text("Select whole assemblies (highlights all member parts)")
+                        .clicked()
+                    {
+                        self.selection.assembly_mode = true;
+                        self.selection.set(
+                            beamcraft_engine::query::pick::SelectionClass::Assemblies,
+                            true,
+                        );
+                        if let Some(sel) = self.editor.selected().map(|s| s.id.clone())
+                            && let Some(row) = self.assembly_for_part(&sel).cloned()
+                        {
+                            self.select_assembly_row(&row);
+                        }
+                    }
+                    ui.separator();
                     let selection = if let Some(grid) = self
                         .grid_edit
                         .as_ref()
                         .and_then(|edit| self.grid_scene.get(&edit.id))
                     {
                         format!("1 selected · Grid {}", grid.form.name)
+                    } else if asm_mode
+                        && let Some(sel) = self.editor.selected()
+                        && let Some(row) = self.assembly_for_part(&sel.id)
+                    {
+                        format!(
+                            "Assembly {} · {} part(s)",
+                            row.name,
+                            row.parts.len().max(1)
+                        )
+                    } else if self.selected_many.len() > 1 {
+                        format!("{} selected", self.selected_many.len())
                     } else {
                         match self.editor.selected() {
                             Some(info) => format!("1 selected · {} {}", info.kind, info.name),

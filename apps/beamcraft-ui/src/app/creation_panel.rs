@@ -905,6 +905,30 @@ impl App {
         }
     }
 
+    /// Bottom action bar for `Bench::Plate | Bench::Beam | Bench::Column | Bench::Brace`.
+    pub(super) fn creation_actions(&mut self, ui: &mut egui::Ui) {
+        let busy = self.tools.busy() || self.other_command_running();
+        let (primary, enabled) = match self.tools.active {
+            ToolKind::Plate if !self.tools.plate.by_size => {
+                ("Finish plate", self.plate_draft.points().len() >= 3)
+            }
+            ToolKind::Plate => ("Create plate", true),
+            ToolKind::Member => ("Create member", true),
+        };
+        let done = crate::kit::actions(ui, primary, !busy && enabled, "Cancel", busy);
+        if done.primary {
+            match self.tools.active {
+                ToolKind::Plate if !self.tools.plate.by_size => self.finish_plate(),
+                _ => self.create_from_form(),
+            }
+        }
+        if done.cancel {
+            self.tools.cancel();
+            self.set_bench(Bench::Select);
+            self.tool_note = None;
+        }
+    }
+
     pub(super) fn tools_panel(&mut self, ui: &mut egui::Ui) {
         let busy = self.tools.busy() || self.other_command_running();
         ui.add_enabled_ui(!busy, |ui| {
@@ -917,6 +941,10 @@ impl App {
                         field(ui, "Thickness, mm", &mut self.tools.plate.thickness, 80.0);
                         token_combo(ui, "plate-thickness-side", "Thickness from", &mut self.tools.plate.thickness_side, THICKNESS_SIDES);
                         choice_combo(ui, "plate-material", "Material", &mut self.tools.plate.material, &self.tools.definitions.materials, false);
+                    });
+                    crate::kit::section(ui, "plate", "Numbering series", false, |ui| {
+                        field(ui, "Part prefix", &mut self.numbering.plate_prefix, 80.0);
+                        field(ui, "Start number", &mut self.numbering.plate_start, 80.0);
                     });
                     crate::kit::section(ui, "plate", "Placement", true, |ui| {
                     crate::kit::prop_choice(ui, "plate-mode", "Shape", &mut self.tools.plate.by_size, &[(false, "By contour"), (true, "By size")]);
@@ -977,6 +1005,15 @@ impl App {
                         choice_combo(ui, "column-top-level", "Top level", &mut self.tools.member.top_level, &levels, false);
                     }
                     });
+                    crate::kit::section(ui, "member", "Numbering series", false, |ui| {
+                        if column {
+                            field(ui, "Part prefix", &mut self.numbering.column_prefix, 80.0);
+                            field(ui, "Start number", &mut self.numbering.column_start, 80.0);
+                        } else {
+                            field(ui, "Part prefix", &mut self.numbering.beam_prefix, 80.0);
+                            field(ui, "Start number", &mut self.numbering.beam_start, 80.0);
+                        }
+                    });
                     crate::kit::section(ui, "member", "Position", true, |ui| {
                         let member = &mut self.tools.member;
                         field(ui, "Rotation, °", &mut member.roll, 80.0);
@@ -1002,7 +1039,6 @@ impl App {
                         }
                         field(ui, "Start expression", &mut self.tools.member.start_input, 160.0);
                         field(ui, "End expression", &mut self.tools.member.end_input, 160.0);
-                        if ui.button("Create member").clicked() { self.create_from_form(); }
                     });
                     });
                 }
@@ -1016,7 +1052,6 @@ impl App {
                 Err(error) => self.tool_note = Some(Err(error.to_string())),
                 _ => {}
             }
-            if ui.button("Cancel").clicked() { self.tools.cancel(); self.set_bench(Bench::Select); self.tool_note = None; }
         });
         if busy {
             ui.spinner();

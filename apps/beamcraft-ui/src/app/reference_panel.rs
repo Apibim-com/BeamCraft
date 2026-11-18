@@ -382,10 +382,34 @@ impl App {
         }
     }
 
+    /// Bottom action bar for `Bench::Reference`.
+    pub(crate) fn reference_actions(&mut self, ui: &mut egui::Ui) {
+        let busy = self.reference.busy() || self.other_command_running();
+        let done = crate::kit::actions(ui, "Attach reference", !busy, "Cancel", busy);
+        if done.primary {
+            match attach_args(
+                &self.source.store,
+                self.source.actor.as_deref(),
+                &self.reference.source_path,
+                &self.reference.name,
+                &self.reference.translation,
+                &self.reference.rotation_z_deg,
+            ) {
+                Ok(args) => {
+                    self.run_reference_cmd(args, "Read-only USD reference attached.".into())
+                }
+                Err(msg) => self.reference.note = Some(Err(msg)),
+            }
+        }
+        if done.cancel {
+            self.set_bench(super::workbench::Bench::Select);
+        }
+    }
+
     /// Renders the USD Reference Models inspector panel.
     pub(crate) fn reference_panel(&mut self, ui: &mut egui::Ui) {
         use crate::kit;
-        use crate::theme::{self, Icon, Kind, Palette};
+        use crate::theme::{self, Icon, Palette};
         let palette = Palette::current(ui);
         ui.set_max_width(ui.available_width());
         kit::type_header(ui, Icon::Reference, "USD references", |ui| {
@@ -439,23 +463,6 @@ impl App {
                 &mut self.reference.rotation_z_deg,
                 110.0,
             );
-            kit::prop_row(ui, "", |ui| {
-                if theme::button(ui, Kind::Primary, "Attach reference", !busy).clicked() {
-                    match attach_args(
-                        &self.source.store,
-                        self.source.actor.as_deref(),
-                        &self.reference.source_path,
-                        &self.reference.name,
-                        &self.reference.translation,
-                        &self.reference.rotation_z_deg,
-                    ) {
-                        Ok(args) => {
-                            self.run_reference_cmd(args, "Read-only USD reference attached.".into())
-                        }
-                        Err(msg) => self.reference.note = Some(Err(msg)),
-                    }
-                }
-            });
         });
 
         kit::section(ui, "ref", "Attached references", true, |ui| {

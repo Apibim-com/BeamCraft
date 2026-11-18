@@ -407,6 +407,68 @@ impl App {
         }
     }
 
+    /// Bottom action bar for `Bench::Assembly`.
+    pub(crate) fn assembly_actions(&mut self, ui: &mut egui::Ui) {
+        let busy = self.assembly.busy() || self.other_command_running();
+        let done = crate::kit::actions(ui, "Create assembly", !busy, "Cancel", busy);
+        if done.primary {
+            self.start_create_assembly();
+        }
+        if done.cancel {
+            self.assembly.clear_picks();
+            self.set_bench(super::workbench::Bench::Select);
+        }
+    }
+
+    fn start_create_assembly(&mut self) {
+        let new_id = crate::sheet::fresh_id();
+        match create_args(
+            &self.source.store,
+            self.source.actor.as_deref(),
+            &self.assembly.name,
+            new_id.as_deref(),
+        ) {
+            Ok(create) => {
+                let mut steps = vec![create];
+                if let Some(asm_id) = new_id.as_deref() {
+                    if let Some(main) = self.assembly.main_part.clone() {
+                        if let Ok(att) = attach_args(
+                            &self.source.store,
+                            self.source.actor.as_deref(),
+                            asm_id,
+                            &main,
+                        ) {
+                            steps.push(att);
+                        }
+                        if let Ok(set_m) = set_main_args(
+                            &self.source.store,
+                            self.source.actor.as_deref(),
+                            asm_id,
+                            &main,
+                        ) {
+                            steps.push(set_m);
+                        }
+                    }
+                    for sec in &self.assembly.parts {
+                        if let Ok(att) = attach_args(
+                            &self.source.store,
+                            self.source.actor.as_deref(),
+                            asm_id,
+                            sec,
+                        ) {
+                            steps.push(att);
+                        }
+                    }
+                    self.assembly.selected_assembly = Some(asm_id.to_owned());
+                }
+                let label = self.assembly.name.trim().to_owned();
+                self.assembly.clear_picks();
+                self.run_assembly_batch(steps, format!("Assembly \"{label}\" created."));
+            }
+            Err(msg) => self.assembly.note = Some(Err(msg)),
+        }
+    }
+
     /// Renders the Assemblies inspector panel.
     pub(crate) fn assembly_panel(&mut self, ui: &mut egui::Ui) {
         use crate::kit;
@@ -435,9 +497,9 @@ impl App {
             super::field(ui, "Name", &mut self.assembly.name, 140.0);
             kit::prop_info(
                 ui,
-                "Main part",
+                "1. Main part",
                 self.assembly.main_part.as_deref(),
-                "Click in view",
+                "Click main part in view",
             );
             let count_text = if self.assembly.parts.is_empty() {
                 None
@@ -446,7 +508,7 @@ impl App {
             };
             kit::prop_info(
                 ui,
-                "Secondary parts",
+                "2. Secondary",
                 count_text.as_deref(),
                 "Click parts in view",
             );
@@ -473,59 +535,16 @@ impl App {
                     }
                 });
             });
-            kit::prop_row(ui, "", |ui| {
-                if theme::button(ui, Kind::Primary, "Create assembly", !busy).clicked() {
-                    let new_id = crate::sheet::fresh_id();
-                    match create_args(
-                        &self.source.store,
-                        self.source.actor.as_deref(),
-                        &self.assembly.name,
-                        new_id.as_deref(),
-                    ) {
-                        Ok(create) => {
-                            let mut steps = vec![create];
-                            if let Some(asm_id) = new_id.as_deref() {
-                                if let Some(main) = self.assembly.main_part.clone() {
-                                    if let Ok(att) = attach_args(
-                                        &self.source.store,
-                                        self.source.actor.as_deref(),
-                                        asm_id,
-                                        &main,
-                                    ) {
-                                        steps.push(att);
-                                    }
-                                    if let Ok(set_m) = set_main_args(
-                                        &self.source.store,
-                                        self.source.actor.as_deref(),
-                                        asm_id,
-                                        &main,
-                                    ) {
-                                        steps.push(set_m);
-                                    }
-                                }
-                                for sec in &self.assembly.parts {
-                                    if let Ok(att) = attach_args(
-                                        &self.source.store,
-                                        self.source.actor.as_deref(),
-                                        asm_id,
-                                        sec,
-                                    ) {
-                                        steps.push(att);
-                                    }
-                                }
-                                self.assembly.selected_assembly = Some(asm_id.to_owned());
-                            }
-                            let label = self.assembly.name.trim().to_owned();
-                            self.assembly.clear_picks();
-                            self.run_assembly_batch(
-                                steps,
-                                format!("Assembly \"{label}\" created."),
-                            );
-                        }
-                        Err(msg) => self.assembly.note = Some(Err(msg)),
-                    }
-                }
-            });
+        });
+
+        kit::section(ui, "asm", "Numbering series", true, |ui| {
+            super::field(
+                ui,
+                "Assembly prefix",
+                &mut self.numbering.assembly_prefix,
+                80.0,
+            );
+            super::field(ui, "Start number", &mut self.numbering.assembly_start, 80.0);
         });
 
         kit::section(ui, "asm", "Assemblies in model", true, |ui| {
@@ -576,6 +595,13 @@ impl App {
                     kit::prop_info(ui, "Main part", active.main.as_deref(), "Not set");
                     let members_summary = format!("{} part(s)", active.parts.len());
                     kit::prop_info(ui, "Parts", Some(&members_summary), "0");
+                    if !active.parts.is_empty() {
+                        kit::prop_row(ui, "", |ui| {
+                            if ui.button("Highlight in view").clicked() {
+                                self.select_assembly_row(&active);
+                            }
+                        });
+                    }
 
                     if self.assembly.target_part.is_empty()
                         && let Some(sel) = selected_element.as_deref()

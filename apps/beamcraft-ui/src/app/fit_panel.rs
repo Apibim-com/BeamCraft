@@ -649,6 +649,53 @@ impl App {
         }
     }
 
+    /// Bottom action bar for `Bench::Fit`.
+    pub(crate) fn fit_actions(&mut self, ui: &mut egui::Ui) {
+        let busy = self.fit.busy() || self.other_command_running();
+        let can_apply = !busy && self.fit.part.is_some() && self.fit.tool.is_some();
+        let done = crate::kit::actions(ui, "Fit end", can_apply, "Cancel", busy);
+        if done.primary {
+            self.start_fit_commit();
+        }
+        if done.cancel {
+            self.fit.clear_placement();
+            self.set_bench(super::workbench::Bench::Select);
+        }
+    }
+
+    /// Bottom action bar for `Bench::Cut`.
+    pub(crate) fn cut_part_actions(&mut self, ui: &mut egui::Ui) {
+        let busy = self.fit.busy() || self.other_command_running();
+        let primary = match self.fit.cut_mode {
+            CutMode::ByPart | CutMode::ByPlane => "Apply cut",
+            CutMode::Split => "Split part",
+            CutMode::Combine => "Combine",
+        };
+        let can_apply = !busy && self.fit.part.is_some();
+        let done = crate::kit::actions(ui, primary, can_apply, "Cancel", busy);
+        if done.primary {
+            self.start_cut_commit();
+        }
+        if done.cancel {
+            self.fit.clear_placement();
+            self.set_bench(super::workbench::Bench::Select);
+        }
+    }
+
+    /// Bottom action bar for `Bench::Hole`.
+    pub(crate) fn hole_actions(&mut self, ui: &mut egui::Ui) {
+        let busy = self.fit.busy() || self.other_command_running();
+        let can_apply = !busy && self.fit.part.is_some();
+        let done = crate::kit::actions(ui, "Create hole", can_apply, "Cancel", busy);
+        if done.primary {
+            self.start_hole_commit();
+        }
+        if done.cancel {
+            self.fit.clear_placement();
+            self.set_bench(super::workbench::Bench::Select);
+        }
+    }
+
     /// The inspector panel of the Fit end bench (`Bench::Fit`).
     pub(crate) fn fit_panel(&mut self, ui: &mut egui::Ui) {
         use crate::kit;
@@ -692,10 +739,9 @@ impl App {
     /// The inspector panel of the Cut & Split bench (`Bench::Cut`).
     pub(crate) fn cut_part_panel(&mut self, ui: &mut egui::Ui) {
         use crate::kit;
-        use crate::theme::{self, Icon, Kind};
+        use crate::theme::Icon;
         ui.set_max_width(ui.available_width());
         kit::type_box(ui, Icon::Cut, "Cut & split part");
-        let busy = self.fit.busy() || self.other_command_running();
         if self.fit.part.is_none()
             && let Some(sel) = self.editor.selected()
         {
@@ -765,30 +811,6 @@ impl App {
                     );
                 }
             }
-            kit::prop_row(ui, "", |ui| {
-                ui.horizontal(|ui| {
-                    if theme::button(
-                        ui,
-                        Kind::Primary,
-                        match self.fit.cut_mode {
-                            CutMode::ByPart | CutMode::ByPlane => "Apply cut",
-                            CutMode::Split => "Split part",
-                            CutMode::Combine => "Combine",
-                        },
-                        !busy && self.fit.part.is_some(),
-                    )
-                    .clicked()
-                    {
-                        self.start_cut_commit();
-                    }
-                    if ui
-                        .add_enabled(!busy && self.fit.part.is_some(), egui::Button::new("Clear"))
-                        .clicked()
-                    {
-                        self.fit.clear_placement();
-                    }
-                });
-            });
         });
     }
 
@@ -856,26 +878,6 @@ impl App {
                     super::field(ui, "Height, mm", rh, 110.0);
                 }
             }
-            kit::prop_row(ui, "", |ui| {
-                ui.horizontal(|ui| {
-                    if theme::button(
-                        ui,
-                        Kind::Primary,
-                        "Create hole",
-                        !busy && self.fit.part.is_some(),
-                    )
-                    .clicked()
-                    {
-                        self.start_hole_commit();
-                    }
-                    if ui
-                        .add_enabled(!busy && self.fit.part.is_some(), egui::Button::new("Clear"))
-                        .clicked()
-                    {
-                        self.fit.clear_placement();
-                    }
-                });
-            });
         });
 
         kit::section(ui, "hole", "Remove hole", false, |ui| {

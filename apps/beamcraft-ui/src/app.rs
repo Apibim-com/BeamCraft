@@ -1661,6 +1661,9 @@ impl App {
             }
         }
         self.sync_grid_selection();
+        if !self.source.read_only() && self.loaded.is_some() && self.perf.is_none() {
+            self.assembly_load();
+        }
         if std::mem::take(&mut self.reload_queued) {
             self.reload();
         }
@@ -1734,7 +1737,13 @@ impl App {
         let (cli, store) = (self.source.cli.clone(), self.source.store.clone());
         let (tx, rx) = std::sync::mpsc::channel();
         let cancel = self.begin_select(rx);
-        let selection = self.selection.filter();
+        let selection = if self.selection.assembly_select_mode() {
+            self.selection
+                .filter()
+                .with(beamcraft_engine::query::pick::SelectionClass::Parts, true)
+        } else {
+            self.selection.filter()
+        };
         // With an active model view only what it shows can be picked (V12).
         let view = self.views.active_view().cloned();
         // What its filter overrides hide cannot be picked either.
@@ -1921,6 +1930,11 @@ impl App {
                     self.props_note = None;
                 }
                 self.props.load(&id, details);
+                if self.selection.assembly_select_mode()
+                    && let Some(row) = self.assembly_for_part(&id).cloned()
+                {
+                    self.apply_assembly_highlight(&row);
+                }
             }
             Err(e) => self.edit_note = Some(Err(e.to_string())),
         }
@@ -2572,6 +2586,37 @@ impl App {
         );
     }
 
+    /// Finds the assembly that contains `part_id` (either as main part or member part).
+    pub(crate) fn assembly_for_part(&self, part_id: &str) -> Option<&assembly_panel::AssemblyRow> {
+        self.assembly
+            .list
+            .iter()
+            .find(|a| a.main.as_deref() == Some(part_id) || a.parts.iter().any(|p| p == part_id))
+    }
+
+    /// Highlights every part belonging to `row` in the 3D viewport without changing the active
+    /// primary selection if it already belongs to the assembly.
+    fn apply_assembly_highlight(&mut self, row: &assembly_panel::AssemblyRow) {
+        let mut members = row.parts.clone();
+        if let Some(main) = &row.main
+            && !members.contains(main)
+        {
+            members.insert(0, main.clone());
+        }
+        self.selected_many = members;
+        self.assembly.selected_assembly = Some(row.id.clone());
+    }
+
+    /// Selects an assembly from the list or properties panel and highlights all its parts in 3D.
+    pub(crate) fn select_assembly_row(&mut self, row: &assembly_panel::AssemblyRow) {
+        self.drop_grid_edit();
+        self.apply_assembly_highlight(row);
+        if let Some(primary) = row.main.as_ref().or_else(|| row.parts.first()).cloned() {
+            self.editor.select_id(primary);
+            self.refresh_selection();
+        }
+    }
+
     /// The neutral note shown instead of an error for a selected kind the properties editor
     /// reads nothing from, or `None` when the selection is not such a kind.
     fn unsupported_kind_note(&self) -> Option<String> {
@@ -2598,6 +2643,17 @@ impl App {
                 .size(12.0)
                 .color(palette.muted),
             );
+            if let Some(loaded) = &self.loaded {
+                ui.add_space(crate::kit::SPACE_S);
+                crate::kit::section(ui, "model", "Model overview", true, |ui| {
+                    let elems = loaded.snapshot.elements().len().to_string();
+                    let asms = self.assembly.list.len().to_string();
+                    let lvls = self.tools.definitions.levels.len().to_string();
+                    crate::kit::prop_info(ui, "Elements", Some(&elems), "0");
+                    crate::kit::prop_info(ui, "Assemblies", Some(&asms), "0");
+                    crate::kit::prop_info(ui, "Levels", Some(&lvls), "0");
+                });
+            }
             return;
         };
         let state = self.props.state();
@@ -2655,6 +2711,30 @@ impl App {
                 first.make_ascii_uppercase();
             }
             crate::kit::type_box(ui, icon, &kind);
+            if let Some(asm) = self.assembly_for_part(&details.id).cloned() {
+                crate::kit::section(ui, "part", "Assembly", true, |ui| {
+                    crate::kit::prop_info(ui, "Assembly", Some(&asm.name), "—");
+                    let role = if asm.main.as_deref() == Some(details.id.as_str()) {
+                        "Main part"
+                    } else {
+                        "Secondary part"
+                    };
+                    crate::kit::prop_info(ui, "Role", Some(role), "—");
+                    let count = format!("{} part(s)", asm.parts.len());
+                    crate::kit::prop_info(ui, "Members", Some(&count), "—");
+                    crate::kit::prop_row(ui, "", |ui| {
+                        ui.horizontal(|ui| {
+                            if ui.button("Select assembly").clicked() {
+                                self.select_assembly_row(&asm);
+                            }
+                            if ui.button("Open Assemblies").clicked() {
+                                self.assembly.selected_assembly = Some(asm.id.clone());
+                                self.set_bench(workbench::Bench::Assembly);
+                            }
+                        });
+                    });
+                });
+            }
             // Borrowed beside the form (disjoint fields), never copied: the panel is laid out in
             // every frame the window draws.
             let materials = &self.tools.definitions.materials;
@@ -2667,6 +2747,22 @@ impl App {
                     field(ui, "Name", &mut self.props.form.name, 170.0);
                     mark(ui, self.props.form.class != base.class);
                     field(ui, "Class", &mut self.props.form.class, 80.0);
+                });
+                crate::kit::section(ui, "part", "Numbering series", false, |ui| {
+                    match details.kind.as_str() {
+                        "plate" => {
+                            field(ui, "Part prefix", &mut self.numbering.plate_prefix, 80.0);
+                            field(ui, "Start number", &mut self.numbering.plate_start, 80.0);
+                        }
+                        "column" => {
+                            field(ui, "Part prefix", &mut self.numbering.column_prefix, 80.0);
+                            field(ui, "Start number", &mut self.numbering.column_start, 80.0);
+                        }
+                        _ => {
+                            field(ui, "Part prefix", &mut self.numbering.beam_prefix, 80.0);
+                            field(ui, "Start number", &mut self.numbering.beam_start, 80.0);
+                        }
+                    }
                 });
                 crate::kit::section(ui, "part", "Section and material", true, |ui| {
                     if !details.is_plate() {
@@ -2965,6 +3061,56 @@ impl App {
         }
     }
 
+    /// Bottom action bar for `Bench::Colour`.
+    fn colour_actions(&mut self, ui: &mut egui::Ui) {
+        let busy = self.colour_job.is_some();
+        let pick = self.colour_pick.clone();
+        let has_applied = self.colour.is_some();
+        let mut show = false;
+        let mut hide = false;
+        ui.add_space(crate::kit::SPACE_S);
+        ui.separator();
+        ui.add_space(crate::kit::SPACE_XS);
+        ui.columns(2, |columns| {
+            if let [left, right] = columns {
+                show = left
+                    .with_layout(
+                        egui::Layout::top_down_justified(egui::Align::Center),
+                        |ui| {
+                            crate::theme::button(
+                                ui,
+                                crate::theme::Kind::Primary,
+                                "Show colours",
+                                !busy && !pick.is_empty(),
+                            )
+                            .clicked()
+                        },
+                    )
+                    .inner;
+                hide = right
+                    .with_layout(
+                        egui::Layout::top_down_justified(egui::Align::Center),
+                        |ui| {
+                            crate::theme::button(
+                                ui,
+                                crate::theme::Kind::Secondary,
+                                "Hide colours",
+                                !busy && has_applied,
+                            )
+                            .clicked()
+                        },
+                    )
+                    .inner;
+            }
+        });
+        if show {
+            self.apply_colour(&pick);
+        }
+        if hide {
+            self.clear_colour();
+        }
+    }
+
     /// The V17 colour inspector: pick a saved representation set, apply or clear the overlay.
     /// Everything here is display state: the overlay is never written to the model, and a set
     /// lives in the user's colour-sets file, not in the store.
@@ -3006,20 +3152,6 @@ impl App {
                         ui.selectable_value(&mut self.colour_pick, set.name.clone(), &set.name);
                     }
                 });
-            ui.horizontal(|ui| {
-                if ui
-                    .add_enabled(!pick.is_empty(), egui::Button::new("Show colours"))
-                    .clicked()
-                {
-                    self.apply_colour(&pick);
-                }
-                if ui
-                    .add_enabled(applied.is_some(), egui::Button::new("Hide colours"))
-                    .clicked()
-                {
-                    self.clear_colour();
-                }
-            });
         });
         if busy {
             // The colours on screen and the legend below are still the previous set while the
@@ -3322,6 +3454,36 @@ impl App {
         self.loaded = Some(loaded);
     }
 
+    /// Bottom action bar for `Bench::Move | Bench::Copy | Bench::Delete`.
+    fn edit_actions(&mut self, ui: &mut egui::Ui) {
+        let selected = self.editor.selected().is_some();
+        let action = self.editor.action();
+        let busy = self.editor.busy() || self.other_command_running();
+        let primary = match action {
+            EditKind::Move => "Move",
+            EditKind::Copy => "Copy",
+            _ => "Delete",
+        };
+        let done = crate::kit::actions(ui, primary, selected && !busy, "Cancel", busy);
+        if done.primary {
+            let target = Target {
+                store: &self.source.store,
+                workspace: self.source.workspace.as_deref(),
+            };
+            match self.editor.preview(action, target) {
+                Ok(_) => self.start_edit(None),
+                Err(error) => {
+                    self.editor.cancel();
+                    self.edit_note = Some(Err(error.to_string()));
+                }
+            }
+        }
+        if done.cancel {
+            self.editor.cancel();
+            self.set_bench(workbench::Bench::Select);
+        }
+    }
+
     fn edit_panel(&mut self, ui: &mut egui::Ui) {
         let (icon, kind) = match self.bench {
             workbench::Bench::Copy => (crate::theme::Icon::Copy, "Copy"),
@@ -3362,40 +3524,7 @@ impl App {
                 ui.label("Deletes the element (refused while another element links to it).");
             }
         });
-        let busy = self.editor.busy();
-        let busy = busy || self.other_command_running();
-        let mut apply = false;
-        let mut cancel = false;
-        ui.horizontal(|ui| {
-            apply = ui
-                .add_enabled(
-                    selected && !busy,
-                    egui::Button::new(match action {
-                        EditKind::Move => "Move",
-                        EditKind::Copy => "Copy",
-                        _ => "Delete",
-                    }),
-                )
-                .clicked();
-            cancel = ui.add_enabled(!busy, egui::Button::new("Cancel")).clicked();
-        });
-        if apply {
-            let target = Target {
-                store: &self.source.store,
-                workspace: self.source.workspace.as_deref(),
-            };
-            match self.editor.preview(action, target) {
-                Ok(_) => self.start_edit(None),
-                Err(error) => {
-                    self.editor.cancel();
-                    self.edit_note = Some(Err(error.to_string()));
-                }
-            }
-        }
-        if cancel {
-            self.editor.cancel();
-            self.set_bench(workbench::Bench::Select);
-        }
+        let busy = self.editor.busy() || self.other_command_running();
         if busy {
             ui.label("Running…");
         }
@@ -4051,6 +4180,7 @@ impl eframe::App for App {
             self.inspector(ui);
             self.project_browser(ui);
             self.details_window(&ctx);
+            self.numbering_preview_window(&ctx);
             self.publish_dialog(&ctx);
             self.sheet_editor.window(
                 &ctx,

@@ -299,13 +299,25 @@ impl App {
         }
     }
 
+    /// Bottom action bar for `Bench::Array`.
+    pub(crate) fn array_actions(&mut self, ui: &mut egui::Ui) {
+        let busy = self.array.busy() || self.other_command_running();
+        let has_sel = self.editor.selected().is_some();
+        let done = crate::kit::actions(ui, "Create array", !busy && has_sel, "Cancel", busy);
+        if done.primary {
+            self.start_array_commit();
+        }
+        if done.cancel {
+            self.set_bench(super::workbench::Bench::Select);
+        }
+    }
+
     /// Renders the Array inspector panel (`Bench::Array`).
     pub(crate) fn array_panel(&mut self, ui: &mut egui::Ui) {
         use crate::kit;
-        use crate::theme::{self, Icon, Kind};
+        use crate::theme::Icon;
         ui.set_max_width(ui.available_width());
         kit::type_box(ui, Icon::Array, "Array copies");
-        let busy = self.array.busy() || self.other_command_running();
         let selected_label = self
             .editor
             .selected()
@@ -332,50 +344,31 @@ impl App {
             super::field(ui, "Name prefix", &mut self.array.name, 130.0);
         });
 
-        kit::section(ui, "array", "Geometry", true, |ui| {
-            match self.array.kind {
-                ArrayKind::Linear => {
-                    for (label, val) in ["Direction X", "Direction Y", "Direction Z"]
-                        .into_iter()
-                        .zip(&mut self.array.direction)
-                    {
-                        super::field(ui, label, val, 110.0);
-                    }
-                    super::field(ui, "Spacing, mm", &mut self.array.spacing, 110.0);
+        kit::section(ui, "array", "Geometry", true, |ui| match self.array.kind {
+            ArrayKind::Linear => {
+                for (label, val) in ["Direction X", "Direction Y", "Direction Z"]
+                    .into_iter()
+                    .zip(&mut self.array.direction)
+                {
+                    super::field(ui, label, val, 110.0);
                 }
-                ArrayKind::Polar => {
-                    for (label, val) in ["Center X, mm", "Center Y, mm", "Center Z, mm"]
-                        .into_iter()
-                        .zip(&mut self.array.point)
-                    {
-                        super::field(ui, label, val, 110.0);
-                    }
-                    for (label, val) in ["Axis X", "Axis Y", "Axis Z"]
-                        .into_iter()
-                        .zip(&mut self.array.axis)
-                    {
-                        super::field(ui, label, val, 110.0);
-                    }
-                    super::field(ui, "Step angle, °", &mut self.array.angle_deg, 110.0);
-                }
+                super::field(ui, "Spacing, mm", &mut self.array.spacing, 110.0);
             }
-            kit::prop_row(ui, "", |ui| {
-                ui.horizontal(|ui| {
-                    if theme::button(
-                        ui,
-                        Kind::Primary,
-                        "Create array",
-                        !busy && selected_label.is_some(),
-                    )
-                    .clicked()
-                    {
-                        self.start_array_commit();
-                    }
-                    if ui.add_enabled(!busy, egui::Button::new("Cancel")).clicked() {
-                        self.set_bench(super::workbench::Bench::Select);
-                    }
-                });
-            });
+            ArrayKind::Polar => {
+                for (label, val) in ["Center X, mm", "Center Y, mm", "Center Z, mm"]
+                    .into_iter()
+                    .zip(&mut self.array.point)
+                {
+                    super::field(ui, label, val, 110.0);
+                }
+                for (label, val) in ["Axis X", "Axis Y", "Axis Z"]
+                    .into_iter()
+                    .zip(&mut self.array.axis)
+                {
+                    super::field(ui, label, val, 110.0);
+                }
+                super::field(ui, "Step angle, °", &mut self.array.angle_deg, 110.0);
+            }
         });
     }
 }
