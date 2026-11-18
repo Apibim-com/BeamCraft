@@ -9668,6 +9668,8 @@ pub(crate) mod tests {
         use beamcraft_engine::work_plane::WorkPlane;
         let Some(mut app) = headless() else { return };
         deliver(&mut app, refreshed(2));
+        // Ctrl+middle drag is the mouse mapping; macOS starts on the trackpad one.
+        app.preset = Preset::Mouse;
         let id = beamcraft_model::id::Uuid7::parse("019a7bf0-0000-7000-8000-0000000000aa").unwrap();
         app.views
             .book

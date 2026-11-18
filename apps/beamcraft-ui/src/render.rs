@@ -125,9 +125,11 @@ pub(crate) fn feature_edges(vertices: &[u8]) -> Vec<u8> {
             .filter(|x| x.is_finite())
     };
     let positions: Vec<[f32; 3]> = vertices
-        .chunks_exact(VERTEX_BYTES)
+        .as_chunks::<VERTEX_BYTES>()
+        .0
+        .iter()
         .filter_map(|v| {
-            let mut position = v.chunks_exact(4).take(3).map(float);
+            let mut position = v.as_chunks::<4>().0.iter().take(3).map(|b| float(b));
             Some([position.next()??, position.next()??, position.next()??])
         })
         .collect();
@@ -136,10 +138,7 @@ pub(crate) fn feature_edges(vertices: &[u8]) -> Vec<u8> {
     }
     let key = |p: [f32; 3]| p.map(|c| (f64::from(c) * 1000.0).round() as i64);
     let mut edges: BTreeMap<(Key, Key), Sides> = BTreeMap::new();
-    for triangle in positions.chunks_exact(3) {
-        let &[a, b, c] = triangle else {
-            continue;
-        };
+    for &[a, b, c] in positions.as_chunks::<3>().0 {
         let u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
         let v = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
         let n = [
