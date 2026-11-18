@@ -9,6 +9,8 @@
 //! the cursor, F fits and R reloads.
 
 pub mod annotation_panel;
+mod array_panel;
+mod assembly_panel;
 mod bolt_panel;
 mod contour_grips;
 mod creation_panel;
@@ -17,6 +19,8 @@ mod fit_panel;
 mod grid_panel;
 mod level_panel;
 mod member_grips;
+mod numbering_panel;
+mod reference_panel;
 mod switches;
 mod view_panel;
 mod weld_panel;
@@ -242,10 +246,18 @@ pub struct App {
     annotation: annotation_panel::Panel,
     /// The V10 Weld bench: the picked pair, the form and its commit job.
     weld: weld_panel::Panel,
-    /// The Fit end bench: the picked part and plate, and the running fit.
+    /// The Fit end, Cut and Hole benches: picked parts/points and running commit job.
     fit: fit_panel::Panel,
     /// The V19 Bolt bench: the picked parts and points, the form and its jobs.
     bolt: bolt_panel::Panel,
+    /// The Assemblies bench (#844).
+    assembly: assembly_panel::Panel,
+    /// The Numbering bench (#846).
+    numbering: numbering_panel::Panel,
+    /// The USD Reference Models bench (#850).
+    reference: reference_panel::Panel,
+    /// The Linear and Polar Array bench (#845).
+    array: array_panel::Panel,
     /// The bottom bar's selection switches and snap panel (V11): picking-only state.
     selection: crate::selection::Selection,
     /// The selected plate's contour grips (V18): the drag in progress and the commit in flight.
@@ -1141,6 +1153,10 @@ impl App {
             weld: weld_panel::Panel::empty(),
             fit: fit_panel::Panel::empty(),
             bolt: bolt_panel::Panel::empty(),
+            assembly: assembly_panel::Panel::empty(),
+            numbering: numbering_panel::Panel::empty(),
+            reference: reference_panel::Panel::empty(),
+            array: array_panel::Panel::empty(),
             menu_section: workbench::MenuSection::default(),
             menu_note: None,
             menu_new: crate::library::NewModelForm::new(),
@@ -2278,6 +2294,10 @@ impl App {
             || self.bolt.entries_job.is_some()
             || self.bolt.groups_job.is_some()
             || self.bolt.spec_job.is_some()
+            || self.assembly.commit_job.is_some()
+            || self.numbering.approve_job.is_some()
+            || self.reference.commit_job.is_some()
+            || self.array.commit_job.is_some()
     }
 
     /// Starts the committed property edit on a worker: the same `update-element` the CLI runs.
@@ -2585,6 +2605,17 @@ impl App {
             let palette = crate::theme::Palette::current(ui);
             ui.add_space(crate::kit::SPACE_S);
             ui.label(egui::RichText::new(note).color(palette.muted));
+            ui.add_space(crate::kit::SPACE_S);
+            if crate::theme::button(
+                ui,
+                crate::theme::Kind::Secondary,
+                "Edit in Bolt tool",
+                !self.other_command_running(),
+            )
+            .clicked()
+            {
+                self.set_bench(workbench::Bench::Bolt);
+            }
             return;
         }
         match &state {
@@ -3188,6 +3219,10 @@ impl App {
             || self.weld.commit_job.is_some()
             || self.fit.commit_job.is_some()
             || self.bolt.commit_job.is_some()
+            || self.assembly.commit_job.is_some()
+            || self.numbering.approve_job.is_some()
+            || self.reference.commit_job.is_some()
+            || self.array.commit_job.is_some()
     }
 
     /// Clears the overlay and colours nothing again. The Hide is a colour choice: the
@@ -3942,6 +3977,10 @@ impl eframe::App for App {
         self.poll_weld();
         self.poll_fit();
         self.poll_bolt();
+        self.poll_assembly();
+        self.poll_numbering();
+        self.poll_reference();
+        self.poll_array();
         self.poll_contour();
         self.poll_edit();
         self.poll_props();

@@ -953,7 +953,14 @@ impl App {
                 }
                 ToolKind::Member => {
                     let column = self.bench == Bench::Column;
-                    let (icon, kind) = if column { (crate::theme::Icon::Column, "Column") } else { (crate::theme::Icon::Beam, "Beam") };
+                    let brace = self.bench == Bench::Brace;
+                    let (icon, kind) = if column {
+                        (crate::theme::Icon::Column, "Column")
+                    } else if brace {
+                        (crate::theme::Icon::Brace, "Brace")
+                    } else {
+                        (crate::theme::Icon::Beam, "Beam")
+                    };
                     crate::kit::type_header(ui, icon, kind, |ui| preset_combo(ui, &mut self.tools));
                     crate::kit::section(ui, "member", "Part", true, |ui| {
                     field(ui, "Name", &mut self.tools.member.name, 160.0);

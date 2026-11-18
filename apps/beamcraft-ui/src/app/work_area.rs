@@ -1694,8 +1694,13 @@ impl App {
                 self.annotation_click(ray);
             } else if self.bench == workbench::Bench::Weld {
                 self.weld_click(ray);
-            } else if self.bench == workbench::Bench::Fit {
+            } else if matches!(
+                self.bench,
+                workbench::Bench::Fit | workbench::Bench::Cut | workbench::Bench::Hole
+            ) {
                 self.fit_click(ray);
+            } else if self.bench == workbench::Bench::Assembly {
+                self.assembly_click(ray);
             } else if self.bench == workbench::Bench::Bolt {
                 self.bolt_click(ray);
             } else if !self.other_command_running() {
