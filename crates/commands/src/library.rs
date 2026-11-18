@@ -6352,7 +6352,7 @@ mod tests {
         let refused: Vec<&str> = layer
             .refused
             .iter()
-            .map(|r| r.path.rsplit('/').next().unwrap())
+            .map(|r| r.path.rsplit(['/', '\\']).next().unwrap())
             .collect();
         assert_eq!(
             refused,
