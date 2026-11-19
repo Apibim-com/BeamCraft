@@ -745,6 +745,55 @@ fn field(ui: &mut egui::Ui, label: &str, text: &mut String, width: f32) {
     });
 }
 
+/// Shared Class input + live USD/viewport class colour swatch (Tekla-style feedback).
+pub(super) fn class_field(ui: &mut egui::Ui, text: &mut String) {
+    crate::kit::prop_row(ui, "Class", |ui| {
+        let parsed = text.trim();
+        let class = if parsed.is_empty() {
+            Ok(0)
+        } else {
+            parsed.parse::<i32>()
+        };
+        let swatch = match class {
+            Ok(c) => {
+                let [r, g, b] = crate::colour_sets::class_rgb(c);
+                Some((c, egui::Color32::from_rgb(r, g, b)))
+            }
+            Err(_) => None,
+        };
+        ui.horizontal(|ui| {
+            let swatch_space = 24.0;
+            ui.add(
+                egui::TextEdit::singleline(text)
+                    .desired_width(
+                        (ui.available_width() - crate::kit::FIT - swatch_space).clamp(40.0, 140.0),
+                    )
+                    .char_limit(MAX_TEXT),
+            );
+            let (rect, resp) = ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::hover());
+            if let Some((c, fill)) = swatch {
+                let slot = u64::from(c.unsigned_abs()) % 8;
+                ui.painter().rect_filled(rect, 3.0, fill);
+                ui.painter().rect_stroke(
+                    rect,
+                    3.0,
+                    egui::Stroke::new(1.0, crate::theme::Palette::current(ui).rule),
+                    egui::StrokeKind::Inside,
+                );
+                resp.on_hover_text(format!("Class {c} · USD PartClass{slot}"));
+            } else {
+                ui.painter().rect_stroke(
+                    rect,
+                    3.0,
+                    egui::Stroke::new(1.0, crate::theme::Palette::current(ui).error),
+                    egui::StrokeKind::Inside,
+                );
+                resp.on_hover_text("Enter an integer class");
+            }
+        });
+    });
+}
+
 /// Frames a pane's first scene. A default view saved with its own target opens on its own
 /// camera (`own_camera`, see `default_view_camera`), as a double click opens any other view, so
 /// its height, projection and orbit stay the saved ones (the 584 recheck on master: the fit
@@ -1611,35 +1660,29 @@ impl App {
             }
             Err(e) => self.error = Some(e.to_string()),
         }
-        // The built-in catalogue set is kind-based: every delivery re-derives its overlay from
-        // the snapshot's own kinds, so elements another process added since the set was applied
-        // colour with this refresh like the rest (issue 562 item 20). Replacing the overlay
-        // makes the delivery stale below, so the scene is rebuilt with it exactly once.
+        // Built-in synchronous overlays (Catalogue by element kind, Part classes by `steel:class`
+        // matching USD `primvars:displayColor` and Tekla class colouring): every delivery
+        // re-derives the active overlay from the pinned inspection so created parts and `Class`
+        // edits change colour on the very next frame with zero CLI round trips.
         if self.colour_job.is_none()
-            && self
-                .colour
-                .as_ref()
-                .is_some_and(|(name, _)| name == crate::colour_sets::CATALOGUE_SET_NAME)
+            && let Some((active_name, _)) = self.colour.as_ref()
             && let Some(loaded) = self.loaded.as_ref()
         {
-            let derived = crate::colour_sets::catalogue_overlay(loaded.snapshot.elements());
-            let unchanged = self
-                .colour
-                .as_ref()
-                .is_some_and(|(_, overlay)| **overlay == derived);
-            if !unchanged {
-                self.colour = Some((
-                    crate::colour_sets::CATALOGUE_SET_NAME.to_owned(),
-                    Arc::new(derived),
-                ));
+            let rederived = self.derive_builtin_overlay(active_name, loaded);
+            if let Some(derived) = rederived {
+                let unchanged = self
+                    .colour
+                    .as_ref()
+                    .is_some_and(|(_, overlay)| **overlay == derived);
+                if !unchanged {
+                    let name = active_name.clone();
+                    self.colour = Some((name, Arc::new(derived)));
+                }
             }
         }
-        // The default catalogue colours ride the delivered scene (issue 526): while the user
-        // keeps no colour set of their own, the first shown model opens coloured, with no
-        // setup. An explicit Show or Hide (or a set in their colour-sets file) is a choice
-        // this default never overrides, so it runs only while nothing was touched yet — and
-        // never inside a perf run (issue 526 review): the perf driver reloads through this
-        // hook, and its query-elements processes would race the measured phases.
+        // First shown model opens coloured with no setup: store models with classed steel parts
+        // default to `Part classes` (so beams, columns and plates reflect their USD `Class` right
+        // away like Tekla Structures), while unclassed / IFC models fall back to `Catalogue`.
         if self.loaded.is_some()
             && self.perf.is_none()
             && !self.colour_touched
@@ -1647,7 +1690,13 @@ impl App {
             && self.colour.is_none()
             && self.colour_job.is_none()
         {
-            self.start_colour(crate::colour_sets::CATALOGUE_SET_NAME, true);
+            let default_set = if !self.grid_scene.part_classes.is_empty() {
+                crate::colour_sets::CLASS_SET_NAME
+            } else {
+                crate::colour_sets::CATALOGUE_SET_NAME
+            };
+            self.colour_pick = default_set.to_owned();
+            self.start_colour(default_set, true);
         }
         // The delivered scene was built with the overlay captured at spawn (V17): when the user
         // changed or cleared the set while the refresh ran, the delivery is recoloured once, so
@@ -2832,7 +2881,7 @@ impl App {
                     mark(ui, self.props.form.name != base.name);
                     field(ui, "Name", &mut self.props.form.name, 170.0);
                     mark(ui, self.props.form.class != base.class);
-                    field(ui, "Class", &mut self.props.form.class, 80.0);
+                    class_field(ui, &mut self.props.form.class);
                 });
                 crate::kit::section(ui, "part", "Numbering series", false, |ui| {
                     match details.kind.as_str() {
@@ -3319,6 +3368,28 @@ impl App {
         }
     }
 
+    fn derive_builtin_overlay(
+        &self,
+        name: &str,
+        loaded: &Loaded,
+    ) -> Option<crate::colour_sets::Overlay> {
+        if name == crate::colour_sets::CATALOGUE_SET_NAME {
+            Some(crate::colour_sets::catalogue_overlay(
+                loaded.snapshot.elements(),
+            ))
+        } else if name == crate::colour_sets::CLASS_SET_NAME
+            && !self.source.read_only()
+            && !self.grid_scene.part_classes.is_empty()
+        {
+            Some(crate::colour_sets::class_overlay(
+                loaded.snapshot.elements(),
+                &self.grid_scene.part_classes,
+            ))
+        } else {
+            None
+        }
+    }
+
     /// Evaluates the named set on a worker (one paged `query-elements` per rule) and applies
     /// the resulting overlay when it answers. The model is never written: the queries are the
     /// CLI's own read-only command.
@@ -3336,19 +3407,21 @@ impl App {
             }
             return;
         }
-        // The built-in catalogue set is the snapshot's own kinds (issue 562 items 20 and 34):
-        // derived where the kinds already are, so it applies at once — the model opens
-        // coloured on its first frame, with no CLI round trip to wait for.
-        if name == crate::colour_sets::CATALOGUE_SET_NAME {
+        // Built-in synchronous overlays (`Catalogue` from element kinds and `Part classes` from
+        // the inspection's `steel:class` map) apply on the spot with no CLI round trip.
+        let instant = name == crate::colour_sets::CATALOGUE_SET_NAME
+            || (name == crate::colour_sets::CLASS_SET_NAME
+                && !self.source.read_only()
+                && !self.grid_scene.part_classes.is_empty());
+        if instant {
             self.colour_touched = true;
             let Some(loaded) = self.loaded.as_ref() else {
                 return;
             };
-            let derived = crate::colour_sets::catalogue_overlay(loaded.snapshot.elements());
+            let derived = self
+                .derive_builtin_overlay(name, loaded)
+                .unwrap_or_default();
             if derived.is_empty() {
-                // The automatic default matching nothing stays quiet (issue 526 review); an
-                // explicit Show of an empty set says so and colours nothing, as the evaluated
-                // path does.
                 if !auto {
                     self.colour_note = Some(Err(format!(
                         "no element in `{name}` matches: nothing to colour"
@@ -3359,14 +3432,10 @@ impl App {
                 return;
             }
             self.colour_note = Some(Ok(format!(
-                "`{}` colours {} element(s).",
-                crate::colour_sets::CATALOGUE_SET_NAME,
+                "`{name}` colours {} element(s).",
                 derived.len()
             )));
-            self.colour = Some((
-                crate::colour_sets::CATALOGUE_SET_NAME.to_owned(),
-                Arc::new(derived),
-            ));
+            self.colour = Some((name.to_owned(), Arc::new(derived)));
             self.recolour();
             return;
         }
@@ -4194,6 +4263,27 @@ impl App {
             self.error = Some(why);
         }
     }
+
+    pub(super) fn handle_escape(&mut self) {
+        self.grid_line.click = None;
+        self.plane_pick = false;
+        // Esc closes the publish dialog or clears the Ctrl reference point first;
+        // it clears the selection only when none is open.
+        if self.publisher.phase() == Phase::Confirming {
+            self.publisher.cancel();
+        } else if self.ctrl_reference.is_some() {
+            self.ctrl_reference = None;
+            self.distance_input.clear();
+            self.distance_aim = None;
+            self.tool_note = Some(Ok("Reference point cleared.".into()));
+        } else {
+            self.invalidate_select();
+            self.editor.deselect();
+            self.props.clear();
+            self.set_bench(workbench::Bench::Select);
+            self.drop_grid_edit();
+        }
+    }
 }
 
 impl eframe::App for App {
@@ -4253,24 +4343,7 @@ impl eframe::App for App {
             && !self.other_command_running()
             && ui.input(|i| i.key_pressed(egui::Key::Escape))
         {
-            self.grid_line.click = None;
-            self.plane_pick = false;
-            // Esc closes the publish dialog or clears the Ctrl reference point first;
-            // it clears the selection only when none is open.
-            if self.publisher.phase() == Phase::Confirming {
-                self.publisher.cancel();
-            } else if self.ctrl_reference.is_some() {
-                self.ctrl_reference = None;
-                self.distance_input.clear();
-                self.distance_aim = None;
-                self.tool_note = Some(Ok("Reference point cleared.".into()));
-            } else {
-                self.invalidate_select();
-                self.editor.deselect();
-                self.props.clear();
-                self.set_bench(workbench::Bench::Select);
-                self.drop_grid_edit();
-            }
+            self.handle_escape();
         }
         // Another process committed to the store: refresh, exactly as the `R` key does.
         let store_changed = self
@@ -6734,10 +6807,11 @@ pub(crate) mod tests {
         };
         refresh(&mut app);
         {
-            let (_, overlay) = app.colour.as_ref().expect("the default rode the delivery");
+            let (name, overlay) = app.colour.as_ref().expect("the default rode the delivery");
+            assert_eq!(name, crate::colour_sets::CLASS_SET_NAME);
             assert_eq!(overlay.len(), 1, "{:?}", app.colour_note);
         }
-        // Another process adds a plate while the window shows the model.
+        // Another process adds a plate with class 2 while the window shows the model.
         let second = run(&[
             "create-plate",
             "--store",
@@ -6750,11 +6824,13 @@ pub(crate) mod tests {
             "10",
             "--name",
             "P2",
+            "--class",
+            "2",
             "--translation",
             "6000,2000,0",
         ]);
         refresh(&mut app);
-        let (_, overlay) = app.colour.as_ref().expect("still coloured");
+        let (_, overlay) = app.colour.as_ref().expect("still coloured by class");
         assert_eq!(overlay.len(), 2, "the added plate must colour too");
         let added = second
             .get("plate")
@@ -6763,9 +6839,37 @@ pub(crate) mod tests {
             .and_then(|j| j.string().ok())
             .and_then(|s| beamcraft_model::id::ElementId::parse(s).ok())
             .expect("the added plate's id");
+        let class_tint = |class: i32| {
+            let [r, g, b] = crate::colour_sets::class_rgb(class);
+            [
+                f32::from(r) / 255.0,
+                f32::from(g) / 255.0,
+                f32::from(b) / 255.0,
+                1.0,
+            ]
+        };
+        assert_eq!(overlay.tint_of(added), class_tint(2));
+
+        // Changing the element's class (e.g. from Properties) immediately changes its viewport
+        // colour on refresh, matching the USD class palette.
+        run(&[
+            "update-element",
+            "--store",
+            store.to_str().unwrap(),
+            "--id",
+            &added.to_string(),
+            "--class",
+            "6",
+        ]);
+        refresh(&mut app);
+        let (_, updated_overlay) = app.colour.as_ref().expect("still coloured by class");
+        assert_eq!(updated_overlay.tint_of(added), class_tint(6));
+
+        // Explicit Catalogue mode still overrides with kind colours cleanly.
+        app.apply_colour(crate::colour_sets::CATALOGUE_SET_NAME);
         let plate_tint =
             crate::colour_sets::Set::tint(&crate::colour_sets::catalogue_set().rules[1]);
-        assert_eq!(overlay.tint_of(added), plate_tint);
+        assert_eq!(app.colour.as_ref().unwrap().1.tint_of(added), plate_tint);
         let _ = first;
         drop(app);
         std::fs::remove_dir_all(root).unwrap();
@@ -13365,5 +13469,158 @@ mod navigation_tests {
 
         app.set_bench(super::workbench::Bench::Select);
         assert_eq!(app.two_point, None);
+    }
+
+    #[test]
+    fn ortho_key_and_ctrl_enter_chain_place_column_at_exact_offset_and_esc_clears() {
+        let Some(mut app) = headless() else { return };
+        app.set_bench(super::workbench::Bench::Column);
+        assert!(app.beam_mode);
+        let ctx = egui::Context::default();
+
+        // `O` toggles orthogonal mode in construction keyboard handling.
+        assert!(!app.selection.orthogonal);
+        let send_events = |app: &mut App, events: Vec<egui::Event>| {
+            let raw = egui::RawInput {
+                events,
+                ..Default::default()
+            };
+            let output = ctx.run_ui(raw, |ui| {
+                app.construction_keyboard(ui.ctx());
+            });
+            output.drop_without_applying_deltas();
+        };
+        send_events(
+            &mut app,
+            vec![
+                egui::Event::Key {
+                    key: egui::Key::O,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+                egui::Event::Key {
+                    key: egui::Key::O,
+                    physical_key: None,
+                    pressed: false,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+        assert!(app.selection.orthogonal, "`O` toggles Ortho ON");
+
+        // Ortho constrains cursor aim to dominant +X axis from a reference point.
+        app.set_ctrl_reference(
+            crate::edit::Ray {
+                origin: [1000.0, 2000.0, 1000.0],
+                direction: [0.0, 0.0, -1.0],
+            },
+            false,
+        );
+        assert_eq!(app.ctrl_reference, Some([1000.0, 2000.0, 0.0]));
+        let (ortho_pt, _) = app
+            .creation_hit(
+                crate::edit::Ray {
+                    origin: [2000.0, 2120.0, 1000.0],
+                    direction: [0.0, 0.0, -1.0],
+                },
+                false,
+            )
+            .unwrap();
+        assert!((ortho_pt[0] - 2000.0).abs() < 1e-6);
+        assert!((ortho_pt[1] - 2000.0).abs() < 1e-6);
+
+        // Chained offset: aim +X, type 500, Ctrl+Enter -> ctrl_reference advances to (1500, 2000, 0) without placing.
+        app.beam_hover = Some([2000.0, 2000.0, 0.0]);
+        send_events(
+            &mut app,
+            vec![
+                egui::Event::Text("500".into()),
+                egui::Event::Key {
+                    key: egui::Key::Enter,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::CTRL,
+                },
+                egui::Event::Key {
+                    key: egui::Key::Enter,
+                    physical_key: None,
+                    pressed: false,
+                    repeat: false,
+                    modifiers: egui::Modifiers::CTRL,
+                },
+            ],
+        );
+        assert_eq!(app.ctrl_reference, Some([1500.0, 2000.0, 0.0]));
+        assert!(app.distance_input.is_empty());
+        assert!(app.job.is_none(), "Ctrl+Enter chains without placing");
+
+        // Second leg: aim +Y, type 400, Enter -> places column start at (1500, 2400, 0) and clears ref.
+        app.beam_hover = Some([1500.0, 3000.0, 0.0]);
+        send_events(
+            &mut app,
+            vec![
+                egui::Event::Text("400".into()),
+                egui::Event::Key {
+                    key: egui::Key::Enter,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+        assert_eq!(app.ctrl_reference, None);
+        assert_eq!(app.tools.member.start, ["1500", "2400", "0"]);
+
+        // Esc drops a pending temporary reference without placing anything.
+        app.ctrl_reference = Some([1000.0, 2000.0, 0.0]);
+        app.distance_input = "250".into();
+        app.distance_aim = Some([2000.0, 2000.0, 0.0]);
+        app.handle_escape();
+        assert_eq!(app.ctrl_reference, None);
+        assert!(app.distance_input.is_empty());
+        assert_eq!(app.distance_aim, None);
+        assert!(app.job.is_none());
+    }
+
+    #[test]
+    fn grid_line_supports_ctrl_reference_and_typed_offsets() {
+        let Some(mut app) = headless() else { return };
+        app.set_bench(super::workbench::Bench::Grid);
+        app.grid_line.click = Some(false);
+        app.set_ctrl_reference(
+            crate::edit::Ray {
+                origin: [1000.0, 2000.0, 1000.0],
+                direction: [0.0, 0.0, -1.0],
+            },
+            false,
+        );
+        assert_eq!(app.ctrl_reference, Some([1000.0, 2000.0, 0.0]));
+        app.member_cursor = Some([2500.0, 2000.0, 0.0]);
+        let ctx = egui::Context::default();
+        let raw = egui::RawInput {
+            events: vec![
+                egui::Event::Text("500".into()),
+                egui::Event::Key {
+                    key: egui::Key::Enter,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+            ..Default::default()
+        };
+        let output = ctx.run_ui(raw, |ui| {
+            app.construction_keyboard(ui.ctx());
+        });
+        output.drop_without_applying_deltas();
+        assert_eq!(app.grid_line.points[0], ["1500", "2000"]);
+        assert_eq!(app.grid_line.click, Some(true));
+        assert_eq!(app.ctrl_reference, None);
     }
 }

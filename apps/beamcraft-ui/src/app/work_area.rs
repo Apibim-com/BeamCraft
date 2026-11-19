@@ -1693,24 +1693,31 @@ impl App {
         // A grid line being drawn shows where its next end snaps.
         if self.grid_line.click.is_some()
             && let Some(loaded) = self.loaded.as_ref()
-            && let Some(ray) = response.hover_pos().and_then(|pos| {
-                ndc_of(
-                    [pos.x, pos.y],
-                    [response.rect.min.x, response.rect.min.y],
-                    [response.rect.width(), response.rect.height()],
-                )
-                .and_then(|ndc| ray_through(view, ndc, loaded.summary.origin_mm))
-            })
-            && let Ok((point, Some(kind))) = self.grid_line_hit(ray)
-            && let Some(at) =
-                crate::grid::project(point, response.rect, view, loaded.summary.origin_mm)
         {
-            super::creation_panel::paint_snap_marker(
-                &ui.painter_at(response.rect),
-                at,
-                kind,
-                theme::BRAND,
-            );
+            let hover_hit = response
+                .hover_pos()
+                .and_then(|pos| {
+                    ndc_of(
+                        [pos.x, pos.y],
+                        [response.rect.min.x, response.rect.min.y],
+                        [response.rect.width(), response.rect.height()],
+                    )
+                    .and_then(|ndc| ray_through(view, ndc, loaded.summary.origin_mm))
+                })
+                .and_then(|ray| self.grid_line_hit(ray).ok());
+            self.member_cursor = hover_hit.map(|(p, _)| p);
+            self.paint_ctrl_reference(ui, response.rect, view, hover_hit.map(|(p, _)| p));
+            if let Some((point, Some(kind))) = hover_hit
+                && let Some(at) =
+                    crate::grid::project(point, response.rect, view, loaded.summary.origin_mm)
+            {
+                super::creation_panel::paint_snap_marker(
+                    &ui.painter_at(response.rect),
+                    at,
+                    kind,
+                    theme::BRAND,
+                );
+            }
         }
         if self.views.picking.is_some() {
             let hover = response.hover_pos().and_then(|pos| {
@@ -1759,7 +1766,12 @@ impl App {
                     }
                 }
             } else if self.grid_line.click.is_some() {
-                self.place_grid_line(ray);
+                if ui.input(|i| i.modifiers.ctrl) {
+                    self.set_ctrl_reference(ray, false);
+                } else {
+                    self.place_grid_line(ray);
+                    self.ctrl_reference = None;
+                }
             } else if self.plate_mode {
                 if ui.input(|i| i.modifiers.ctrl) {
                     self.set_ctrl_reference(ray, true);

@@ -991,6 +991,7 @@ mod tests {
             deactivated: false,
             placement,
             part_of: None,
+            class: None,
             mesh: None,
         }
     }

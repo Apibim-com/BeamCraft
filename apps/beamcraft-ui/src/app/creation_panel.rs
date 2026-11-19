@@ -553,7 +553,7 @@ impl App {
         }
     }
 
-    fn constrain_creation(
+    pub(super) fn constrain_creation(
         &self,
         point: [f64; 3],
         kind: Option<SnapKind>,
@@ -567,6 +567,7 @@ impl App {
                 self.beam
                     .start()
                     .or_else(|| self.two_point.and_then(|t| t.from))
+                    .or_else(|| self.grid_line_start_point())
             }
         });
         let Some(reference) = reference else {
@@ -615,13 +616,19 @@ impl App {
             || !(self.plate_mode
                 || self.beam_mode
                 || self.two_point.is_some()
+                || self.grid_line.click.is_some()
                 || self.picking_point())
         {
             return;
         }
+        let typing_mode = self.plate_mode
+            || self.beam_mode
+            || self.two_point.is_some()
+            || self.grid_line.click.is_some();
         let has_ref = (self.plate_mode && !self.plate_draft.points().is_empty())
             || (self.beam_mode && self.beam.start().is_some())
             || self.two_point.and_then(|t| t.from).is_some()
+            || self.grid_line_start_point().is_some()
             || self.ctrl_reference.is_some();
         let events = ctx.input(|i| i.events.clone());
         for event in events {
@@ -635,7 +642,7 @@ impl App {
                 } if !modifiers.ctrl && !modifiers.alt && !modifiers.command => {
                     self.selection.orthogonal = !self.selection.orthogonal;
                 }
-                egui::Event::Text(text) if has_ref => {
+                egui::Event::Text(text) if has_ref && typing_mode => {
                     if !text.is_empty()
                         && text
                             .chars()
@@ -656,7 +663,7 @@ impl App {
                     key: egui::Key::Backspace,
                     pressed: true,
                     ..
-                } if self.plate_mode || self.beam_mode || self.two_point.is_some() => {
+                } if typing_mode => {
                     if self.distance_input.is_empty() {
                         if self.plate_mode {
                             self.plate_draft.back();
@@ -673,14 +680,16 @@ impl App {
                     key: egui::Key::Enter,
                     pressed: true,
                     repeat: false,
+                    modifiers,
                     ..
-                } if self.plate_mode || self.beam_mode || self.two_point.is_some() => {
+                } if typing_mode => {
+                    let chain = modifiers.ctrl || modifiers.command;
                     if self.distance_input.is_empty() {
-                        if self.plate_mode {
+                        if self.plate_mode && !chain {
                             self.finish_plate();
                         }
                     } else {
-                        self.accept_distance();
+                        self.accept_distance(chain);
                     }
                 }
                 _ => {}
@@ -688,7 +697,7 @@ impl App {
         }
     }
 
-    fn accept_distance(&mut self) {
+    fn accept_distance(&mut self, chain: bool) {
         let result = (|| {
             let reference = self
                 .ctrl_reference
@@ -697,6 +706,8 @@ impl App {
                         self.plate_draft.points().last().copied()
                     } else if self.beam_mode {
                         self.beam.start()
+                    } else if self.grid_line.click == Some(true) {
+                        self.grid_line_start_point()
                     } else {
                         self.two_point.and_then(|t| t.from)
                     }
@@ -704,9 +715,16 @@ impl App {
                 .ok_or_else(|| {
                     "Pick the first point (or Ctrl+click a reference point).".to_owned()
                 })?;
-            let aim = self.distance_aim.ok_or_else(|| {
-                "Aim in the next segment direction before entering a distance.".to_owned()
-            })?;
+            let aim = self
+                .distance_aim
+                .or(if self.plate_mode {
+                    self.plate_hover
+                } else {
+                    self.beam_hover.or(self.member_cursor)
+                })
+                .ok_or_else(|| {
+                    "Aim in the next segment direction before entering a distance.".to_owned()
+                })?;
             let distance = self
                 .distance_input
                 .parse::<f64>()
@@ -719,6 +737,10 @@ impl App {
                 self.tools.plane,
             )
             .map_err(|e| e.message.to_owned())?;
+            if chain {
+                self.ctrl_reference = Some(point);
+                return Ok::<bool, String>(true);
+            }
             if self.plate_mode {
                 if self.tools.plate.by_size {
                     self.place_plate_by_size_at(point);
@@ -727,19 +749,30 @@ impl App {
                 }
             } else if self.beam_mode {
                 self.accept_member_point(point);
+            } else if self.grid_line.click.is_some() {
+                self.accept_grid_point(point);
             } else if self.two_point.is_some() {
                 self.accept_two_point(point);
             }
-            Ok::<(), String>(())
+            Ok::<bool, String>(false)
         })();
         match result {
-            Ok(()) => {
+            Ok(chained) => {
                 self.distance_input.clear();
                 self.distance_aim = None;
-                self.ctrl_reference = None;
                 self.plate_hover = None;
-                if self.plate_mode {
-                    self.tool_note = None;
+                if chained {
+                    if let Some(point) = self.ctrl_reference {
+                        self.tool_note = Some(Ok(format!(
+                            "Reference {}. Aim next offset + Ctrl+Enter, or Enter / click to place (Esc clears).",
+                            super::PointText(point)
+                        )));
+                    }
+                } else {
+                    self.ctrl_reference = None;
+                    if self.plate_mode {
+                        self.tool_note = None;
+                    }
                 }
             }
             Err(error) => self.tool_note = Some(Err(error)),
@@ -1074,7 +1107,7 @@ impl App {
                     crate::kit::type_header(ui, crate::theme::Icon::Plate, "Plate", |ui| preset_combo(ui, &mut self.tools));
                     crate::kit::section(ui, "plate", "Part", true, |ui| {
                         field(ui, "Name", &mut self.tools.plate.name, 160.0);
-                        field(ui, "Class", &mut self.tools.plate.class, 80.0);
+                        super::class_field(ui, &mut self.tools.plate.class);
                         field(ui, "Thickness, mm", &mut self.tools.plate.thickness, 80.0);
                         token_combo(ui, "plate-thickness-side", "Thickness from", &mut self.tools.plate.thickness_side, THICKNESS_SIDES);
                         choice_combo(ui, "plate-material", "Material", &mut self.tools.plate.material, &self.tools.definitions.materials, false);
@@ -1129,7 +1162,7 @@ impl App {
                     crate::kit::type_header(ui, icon, kind, |ui| preset_combo(ui, &mut self.tools));
                     crate::kit::section(ui, "member", "Part", true, |ui| {
                     field(ui, "Name", &mut self.tools.member.name, 160.0);
-                    field(ui, "Class", &mut self.tools.member.class, 80.0);
+                    super::class_field(ui, &mut self.tools.member.class);
                     choice_combo(ui, "member-profile", "Profile", &mut self.tools.member.profile, &self.tools.definitions.profiles, true);
                     choice_combo(ui, "member-material", "Material", &mut self.tools.member.material, &self.tools.definitions.materials, false);
                     if column {
