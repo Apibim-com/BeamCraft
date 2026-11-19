@@ -517,6 +517,32 @@ impl App {
         self.constrain_creation(point, None, ray, planar)
     }
 
+    /// Sets a temporary Ctrl+Click reference origin without placing a part, so the user can
+    /// aim and type an offset distance in millimetres before committing the placement point.
+    pub(super) fn set_ctrl_reference(&mut self, ray: crate::edit::Ray, planar: bool) {
+        if self.other_command_running() {
+            return;
+        }
+        let prev_ref = self.ctrl_reference.take();
+        let prev_dist = std::mem::take(&mut self.distance_input);
+        let prev_aim = self.distance_aim.take();
+        match self.creation_point(ray, planar) {
+            Ok(point) => {
+                self.ctrl_reference = Some(point);
+                self.tool_note = Some(Ok(format!(
+                    "Reference {}. Aim, type offset in mm and press Enter, or click next point (Esc clears).",
+                    super::PointText(point)
+                )));
+            }
+            Err(error) => {
+                self.ctrl_reference = prev_ref;
+                self.distance_input = prev_dist;
+                self.distance_aim = prev_aim;
+                self.tool_note = Some(Err(error.to_string()));
+            }
+        }
+    }
+
     fn constrain_creation(
         &self,
         point: [f64; 3],
@@ -524,11 +550,13 @@ impl App {
         ray: crate::edit::Ray,
         planar: bool,
     ) -> Result<([f64; 3], Option<SnapKind>), ToolError> {
-        let reference = if planar {
-            self.plate_draft.points().last().copied()
-        } else {
-            self.beam.start()
-        };
+        let reference = self.ctrl_reference.or_else(|| {
+            if planar {
+                self.plate_draft.points().last().copied()
+            } else {
+                self.beam.start()
+            }
+        });
         let Some(reference) = reference else {
             return Ok((point, kind));
         };
@@ -590,7 +618,8 @@ impl App {
                 }
                 egui::Event::Text(text)
                     if (self.plate_mode && !self.plate_draft.points().is_empty())
-                        || (self.beam_mode && self.beam.start().is_some()) =>
+                        || (self.beam_mode && self.beam.start().is_some())
+                        || self.ctrl_reference.is_some() =>
                 {
                     if !text.is_empty()
                         && text
@@ -602,7 +631,7 @@ impl App {
                             self.distance_aim = if self.plate_mode {
                                 self.plate_hover
                             } else {
-                                self.beam_hover
+                                self.beam_hover.or(self.member_cursor)
                             };
                         }
                         self.distance_input.push_str(&text.replace(',', "."));
@@ -646,12 +675,18 @@ impl App {
 
     fn accept_distance(&mut self) {
         let result = (|| {
-            let reference = if self.plate_mode {
-                self.plate_draft.points().last().copied()
-            } else {
-                self.beam.start()
-            }
-            .ok_or_else(|| "Pick the first point.".to_owned())?;
+            let reference = self
+                .ctrl_reference
+                .or_else(|| {
+                    if self.plate_mode {
+                        self.plate_draft.points().last().copied()
+                    } else {
+                        self.beam.start()
+                    }
+                })
+                .ok_or_else(|| {
+                    "Pick the first point (or Ctrl+click a reference point).".to_owned()
+                })?;
             let aim = self.distance_aim.ok_or_else(|| {
                 "Aim in the next segment direction before entering a distance.".to_owned()
             })?;
@@ -668,7 +703,11 @@ impl App {
             )
             .map_err(|e| e.message.to_owned())?;
             if self.plate_mode {
-                self.plate_draft.push(point).map_err(|e| e.to_string())?;
+                if self.tools.plate.by_size {
+                    self.place_plate_by_size_at(point);
+                } else {
+                    self.plate_draft.push(point).map_err(|e| e.to_string())?;
+                }
             } else {
                 self.accept_member_point(point);
             }
@@ -678,6 +717,7 @@ impl App {
             Ok(()) => {
                 self.distance_input.clear();
                 self.distance_aim = None;
+                self.ctrl_reference = None;
                 self.plate_hover = None;
                 if self.plate_mode {
                     self.tool_note = None;
@@ -733,25 +773,30 @@ impl App {
     /// One click by size: the clicked point (snapped) is the centre of the typed rectangle, on
     /// the work plane, else the active view's plane, else level with the point.
     fn place_plate_by_size(&mut self, ray: crate::edit::Ray) {
-        let result = self.creation_point(ray, false).and_then(|centre| {
-            let plane = self
-                .tools
-                .plane
-                .or_else(|| {
-                    self.views
-                        .active_view()
-                        .filter(|view| !view.is_default)
-                        .map(|view| view.plane)
-                })
-                .unwrap_or_default();
-            crate::creation::rectangle_corners(
-                centre,
-                &plane,
-                &self.tools.plate.width,
-                &self.tools.plate.length,
-            )
-            .map_err(|e| ToolError::local("INVALID_ARGUMENT", e.to_string()))
-        });
+        match self.creation_point(ray, false) {
+            Ok(centre) => self.place_plate_by_size_at(centre),
+            Err(error) => self.tool_note = Some(Err(error.to_string())),
+        }
+    }
+
+    fn place_plate_by_size_at(&mut self, centre: [f64; 3]) {
+        let plane = self
+            .tools
+            .plane
+            .or_else(|| {
+                self.views
+                    .active_view()
+                    .filter(|view| !view.is_default)
+                    .map(|view| view.plane)
+            })
+            .unwrap_or_default();
+        let result = crate::creation::rectangle_corners(
+            centre,
+            &plane,
+            &self.tools.plate.width,
+            &self.tools.plate.length,
+        )
+        .map_err(|e| ToolError::local("INVALID_ARGUMENT", e.to_string()));
         match result {
             Ok(corners) => {
                 self.plate_draft.clear();
@@ -807,6 +852,7 @@ impl App {
         };
         let painter = ui.painter_at(rect);
         self.paint_distance_entry(ui, rect);
+        self.paint_ctrl_reference(ui, rect, view, self.plate_hover);
         let stroke = egui::Stroke::new(2.0, crate::theme::Palette::current(ui).link);
         for pair in self.plate_draft.points().windows(2) {
             if let [a, b] = pair
@@ -844,6 +890,7 @@ impl App {
 
     pub(super) fn paint_member_draft(&self, ui: &egui::Ui, rect: egui::Rect, view: &View) {
         self.paint_distance_entry(ui, rect);
+        self.paint_ctrl_reference(ui, rect, view, self.beam_hover.or(self.member_cursor));
         let origin = self
             .loaded
             .as_ref()
@@ -880,6 +927,77 @@ impl App {
             painter.line_segment([a, b], egui::Stroke::new(2.0, color));
             painter.circle_filled(a, 4.0, color);
             painter.circle_filled(b, 4.0, color);
+        }
+    }
+
+    fn paint_ctrl_reference(
+        &self,
+        ui: &egui::Ui,
+        rect: egui::Rect,
+        view: &View,
+        hover: Option<[f64; 3]>,
+    ) {
+        let Some(ref_pt) = self.ctrl_reference else {
+            return;
+        };
+        let origin = self
+            .loaded
+            .as_ref()
+            .map_or([0.0; 3], |l| l.summary.origin_mm);
+        let project = |point: [f64; 3]| crate::grid::project(point, rect, view, origin);
+        let Some(at) = project(ref_pt) else {
+            return;
+        };
+        let painter = ui.painter_at(rect);
+        let accent = egui::Color32::from_rgb(0xFF, 0xB3, 0x00);
+        let stroke = egui::Stroke::new(1.8, accent);
+        painter.rect_stroke(
+            egui::Rect::from_center_size(at, egui::vec2(10.0, 10.0)),
+            1,
+            stroke,
+            egui::StrokeKind::Inside,
+        );
+        painter.line_segment(
+            [at - egui::vec2(8.0, 0.0), at + egui::vec2(8.0, 0.0)],
+            stroke,
+        );
+        painter.line_segment(
+            [at - egui::vec2(0.0, 8.0), at + egui::vec2(0.0, 8.0)],
+            stroke,
+        );
+        painter.text(
+            at + egui::vec2(10.0, 10.0),
+            egui::Align2::LEFT_TOP,
+            "Ref (Ctrl)",
+            egui::FontId::proportional(11.0),
+            accent,
+        );
+        if let Some(target) = hover
+            && let Some(target_px) = project(target)
+        {
+            painter.add(egui::Shape::dashed_line(
+                &[at, target_px],
+                egui::Stroke::new(1.5, accent),
+                5.0,
+                4.0,
+            ));
+            let dx = target[0] - ref_pt[0];
+            let dy = target[1] - ref_pt[1];
+            let dz = target[2] - ref_pt[2];
+            let dist = (dx * dx + dy * dy + dz * dz).sqrt();
+            if dist > 1e-3 {
+                let mid = egui::pos2(
+                    (at.x + target_px.x) * 0.5,
+                    (at.y + target_px.y) * 0.5 - 10.0,
+                );
+                painter.text(
+                    mid,
+                    egui::Align2::CENTER_BOTTOM,
+                    format!("{dist:.0} mm"),
+                    egui::FontId::proportional(11.0),
+                    accent,
+                );
+            }
         }
     }
 
@@ -951,9 +1069,9 @@ impl App {
                     if self.tools.plate.by_size {
                         field(ui, "Width, mm", &mut self.tools.plate.width, 80.0);
                         field(ui, "Length, mm", &mut self.tools.plate.length, 80.0);
-                        ui.label("Click the centre of the plate. Width runs along the work plane's X, length along its Y.");
+                        ui.label("Click the centre of the plate (or Ctrl+click a reference point, aim, type offset + Enter). Width runs along the work plane's X, length along its Y.");
                     } else {
-                    ui.label("Pick contour vertices in 3D. Aim, type a length and press Enter to add a point. O toggles orthogonal X/Y/Z. Enter without a length, right-click, wheel-click or Finish creates the plate. Backspace removes a digit or point.");
+                    ui.label("Pick contour vertices in 3D (Ctrl+click sets a reference point for offset). Aim, type a length and press Enter to add a point. O toggles orthogonal X/Y/Z. Enter without a length, right-click, wheel-click or Finish creates the plate.");
                     ui.checkbox(&mut self.selection.orthogonal,"Orthogonal X/Y/Z (O)");
                     ui.label(format!("{} vertices", self.plate_draft.points().len()));
                     // Wrapped: three actions exceed the panel's width, and an unwrapped row
@@ -1025,7 +1143,7 @@ impl App {
                         field(ui, "End offset, mm", &mut member.end_offset, 80.0);
                     });
                     crate::kit::section(ui, "member", "Placement", true, |ui| {
-                    ui.label(if column && self.beam.start().is_none() { "Click the base point. The top follows the chosen level, or the height when no level is chosen." } else if self.beam.start().is_some() { "Aim, type a length in mm and press Enter, or pick the end point. O toggles orthogonal X/Y/Z." } else { "Pick the start point, then the end point in the model view." });
+                    ui.label(if column && self.beam.start().is_none() { "Click the base point (or Ctrl+click a reference point, aim, type offset + Enter). Top follows level or height." } else if self.beam.start().is_some() { "Aim, type a length in mm and press Enter, or pick the end point. Ctrl+click sets a reference point. O toggles orthogonal X/Y/Z." } else { "Pick the start point (or Ctrl+click a reference point for offset), then the end point in the model view." });
                     if ui.button("Pick new points").clicked() {
                         self.beam.reset(); self.beam_mode = true; self.beam_hover = None;
                         self.distance_input.clear(); self.distance_aim = None;

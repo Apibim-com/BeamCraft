@@ -168,6 +168,8 @@ pub struct App {
     member_cursor: Option<[f64; 3]>,
     distance_input: String,
     distance_aim: Option<[f64; 3]>,
+    /// Temporary Tekla-style Ctrl+Click reference origin for relative offset placement.
+    pub(crate) ctrl_reference: Option<[f64; 3]>,
     plate_input: [String; 2],
     plane_form: crate::work_plane::Form,
     plane_pick: bool,
@@ -1188,6 +1190,7 @@ impl App {
             member_cursor: None,
             distance_input: String::new(),
             distance_aim: None,
+            ctrl_reference: None,
             plate_input: ["0".into(), "0".into()],
             plane_form: crate::work_plane::Form::default(),
             plane_pick: false,
@@ -2027,8 +2030,72 @@ impl App {
         }
     }
 
-    /// Delete the current grid or part using the same engine command as the CLI.
+    /// Builds CLI steps to delete `ids`, automatically handling assembly rules:
+    /// - if an assembly keeps <= 1 part (e.g. deleting either part of a 2-part assembly, or
+    ///   deleting the entire assembly), dissolve it first via `explode-assembly`;
+    /// - if an assembly keeps >= 2 parts and its main part is deleted, reassign `set-main-part`
+    ///   to a remaining part first.
+    fn build_delete_commands(
+        &self,
+        ids: &[String],
+        target: crate::edit::Target<'_>,
+    ) -> Vec<Vec<String>> {
+        let mut commands = Vec::new();
+        let mut exploded_assemblies = std::collections::BTreeSet::new();
+        for asm in &self.assembly.list {
+            let touches_asm = ids.iter().any(|id| {
+                id == &asm.id
+                    || asm.main.as_deref() == Some(id.as_str())
+                    || asm.parts.iter().any(|p| p == id)
+            });
+            if !touches_asm {
+                continue;
+            }
+            let remaining: Vec<&String> = asm
+                .parts
+                .iter()
+                .filter(|p| !ids.iter().any(|id| id == *p))
+                .collect();
+            if ids.iter().any(|id| id == &asm.id) || remaining.len() <= 1 {
+                if let Ok(args) = assembly_panel::explode_args(
+                    target.store,
+                    self.source.actor.as_deref(),
+                    &asm.id,
+                ) {
+                    commands.push(args);
+                    exploded_assemblies.insert(asm.id.clone());
+                }
+            } else if let Some(main_id) = asm.main.as_deref()
+                && ids.iter().any(|id| id == main_id)
+                && let Some(next_main) = remaining.first()
+                && let Ok(args) = assembly_panel::set_main_args(
+                    target.store,
+                    self.source.actor.as_deref(),
+                    &asm.id,
+                    next_main,
+                )
+            {
+                commands.push(args);
+            }
+        }
+        for id in ids {
+            if exploded_assemblies.contains(id) {
+                continue;
+            }
+            commands.push(self.editor.delete_args(id.clone(), target));
+        }
+        commands
+    }
+
+    /// Delete the current grid, part, or assembly unit using the same engine commands as the CLI.
     fn delete_selection(&mut self) {
+        if self.source.read_only() {
+            self.edit_note = Some(Err(
+                "Read-only: this window shows a received IFC file, there is nothing to edit."
+                    .into(),
+            ));
+            return;
+        }
         if self.other_command_running() {
             return;
         }
@@ -2036,20 +2103,18 @@ impl App {
             self.editor.select_id(edit.id.clone());
         }
         let ids = self.selection_ids();
-        if ids.len() > 1 {
-            let target = crate::edit::Target {
-                store: &self.source.store,
-                workspace: self.source.workspace.as_deref(),
-            };
-            let commands = ids
-                .into_iter()
-                .map(|id| self.editor.delete_args(id, target))
-                .collect();
-            self.spawn_batch(EditKind::Delete, commands);
+        if ids.is_empty() {
             return;
         }
-        if self.editor.selected().is_some() {
+        let target = crate::edit::Target {
+            store: &self.source.store,
+            workspace: self.source.workspace.as_deref(),
+        };
+        let commands = self.build_delete_commands(&ids, target);
+        if commands.len() == 1 && ids.len() == 1 && self.editor.selected().is_some() {
             self.start_edit(Some(EditKind::Delete));
+        } else if !commands.is_empty() {
+            self.spawn_batch(EditKind::Delete, commands);
         }
     }
 
@@ -3466,6 +3531,10 @@ impl App {
         };
         let done = crate::kit::actions(ui, primary, selected && !busy, "Cancel", busy);
         if done.primary {
+            if action == EditKind::Delete {
+                self.delete_selection();
+                return;
+            }
             let target = Target {
                 store: &self.source.store,
                 workspace: self.source.workspace.as_deref(),
@@ -3598,11 +3667,15 @@ impl App {
                     self.tools.plate_plane = None;
                     self.distance_input.clear();
                     self.distance_aim = None;
+                    self.ctrl_reference = None;
                     self.plate_mode = self.bench == workbench::Bench::Plate;
                 } else {
+                    self.distance_input.clear();
+                    self.distance_aim = None;
+                    self.ctrl_reference = None;
                     self.beam_mode = matches!(
                         self.bench,
-                        workbench::Bench::Beam | workbench::Bench::Column
+                        workbench::Bench::Beam | workbench::Bench::Column | workbench::Bench::Brace
                     );
                 }
                 self.tool_note = Some(Ok(format!(
@@ -3747,13 +3820,14 @@ impl App {
         self.tools.plate_plane = None;
         self.distance_input.clear();
         self.distance_aim = None;
+        self.ctrl_reference = None;
         self.plate_draft.clear();
         self.plate_hover = None;
         self.tools.plate.contour.clear();
         self.plane_pick = false;
         self.beam_mode = matches!(
             self.bench,
-            workbench::Bench::Beam | workbench::Bench::Column
+            workbench::Bench::Beam | workbench::Bench::Column | workbench::Bench::Brace
         );
         self.beam.reset();
         self.beam_hover = None;
@@ -4133,9 +4207,15 @@ impl eframe::App for App {
         {
             self.grid_line.click = None;
             self.plane_pick = false;
-            // Esc closes the publish dialog first; it clears the selection only when none is open.
+            // Esc closes the publish dialog or clears the Ctrl reference point first;
+            // it clears the selection only when none is open.
             if self.publisher.phase() == Phase::Confirming {
                 self.publisher.cancel();
+            } else if self.ctrl_reference.is_some() {
+                self.ctrl_reference = None;
+                self.distance_input.clear();
+                self.distance_aim = None;
+                self.tool_note = Some(Ok("Reference point cleared.".into()));
             } else {
                 self.invalidate_select();
                 self.editor.deselect();
@@ -13118,5 +13198,84 @@ mod navigation_tests {
             PointText([0.0, 0.0, -0.06]).to_string(),
             "(0.0, 0.0, -0.1) mm"
         );
+    }
+
+    #[test]
+    fn deleting_assembly_parts_dissolves_two_part_or_reassigns_main_of_three_part() {
+        let Some(mut app) = headless() else { return };
+        let target = crate::edit::Target {
+            store: &app.source.store,
+            workspace: None,
+        };
+        app.assembly.list = vec![
+            super::assembly_panel::AssemblyRow {
+                id: "asm-2".into(),
+                name: "Two".into(),
+                parent: None,
+                main: Some("p1".into()),
+                parts: vec!["p1".into(), "p2".into()],
+            },
+            super::assembly_panel::AssemblyRow {
+                id: "asm-3".into(),
+                name: "Three".into(),
+                parent: None,
+                main: Some("q1".into()),
+                parts: vec!["q1".into(), "q2".into(), "q3".into()],
+            },
+        ];
+
+        // 2-part assembly: deleting either part dissolves the assembly first.
+        let cmds_two = app.build_delete_commands(&["p1".into()], target);
+        assert_eq!(cmds_two.len(), 2);
+        assert_eq!(cmds_two[0][0], "explode-assembly");
+        assert_eq!(cmds_two[0][4], "asm-2");
+        assert_eq!(cmds_two[1][0], "delete-element");
+        assert_eq!(cmds_two[1][4], "p1");
+
+        // 3-part assembly: deleting main part reassigns main part to q2, then deletes q1.
+        let cmds_three_main = app.build_delete_commands(&["q1".into()], target);
+        assert_eq!(cmds_three_main.len(), 2);
+        assert_eq!(cmds_three_main[0][0], "set-main-part");
+        assert!(cmds_three_main[0].contains(&"q2".to_owned()));
+        assert_eq!(cmds_three_main[1][0], "delete-element");
+        assert_eq!(cmds_three_main[1][4], "q1");
+
+        // 3-part assembly: deleting secondary part keeps the assembly and main part.
+        let cmds_three_sec = app.build_delete_commands(&["q3".into()], target);
+        assert_eq!(cmds_three_sec.len(), 1);
+        assert_eq!(cmds_three_sec[0][0], "delete-element");
+        assert_eq!(cmds_three_sec[0][4], "q3");
+
+        // Whole-assembly deletion (e.g. from Assemblies selection mode): explodes then deletes all.
+        let cmds_whole =
+            app.build_delete_commands(&["q1".into(), "q2".into(), "q3".into()], target);
+        assert_eq!(cmds_whole[0][0], "explode-assembly");
+        assert_eq!(cmds_whole[0][4], "asm-3");
+        assert_eq!(cmds_whole.len(), 4);
+    }
+
+    #[test]
+    fn ctrl_reference_anchors_offset_creation_without_placing_first() {
+        let Some(mut app) = headless() else { return };
+        app.set_bench(super::workbench::Bench::Column);
+        assert!(app.beam_mode);
+        let ray = crate::edit::Ray {
+            origin: [1000.0, 2000.0, 1000.0],
+            direction: [0.0, 0.0, -1.0],
+        };
+        app.set_ctrl_reference(ray, false);
+        assert_eq!(app.ctrl_reference, Some([1000.0, 2000.0, 0.0]));
+        assert!(
+            app.job.is_none(),
+            "Ctrl+click sets ref without placing column"
+        );
+
+        // Aim +500 mm along +X with typed distance 500 mm: resolves at (1500, 2000, 0).
+        app.distance_input = "500".into();
+        app.distance_aim = Some([2500.0, 2000.0, 0.0]);
+        let (pt, _) = app.creation_hit(ray, false).unwrap();
+        assert!((pt[0] - 1500.0).abs() < 1e-6);
+        assert!((pt[1] - 2000.0).abs() < 1e-6);
+        assert!(pt[2].abs() < 1e-6);
     }
 }

@@ -444,6 +444,7 @@ impl App {
         self.tools.plate_plane = None;
         self.distance_input.clear();
         self.distance_aim = None;
+        self.ctrl_reference = None;
         self.plate_hover = None;
         self.tools.plate.contour.clear();
         if self.tools.plate.thickness.is_empty() {

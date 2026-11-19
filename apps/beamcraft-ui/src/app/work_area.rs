@@ -1336,30 +1336,6 @@ impl App {
                     &self.many_edges.1,
                     cut.as_ref(),
                 );
-                if let Some(selected) = self.editor.selected()
-                    && let Some(asm) = self.assembly_for_part(&selected.id)
-                    && let Some(main_id) = asm.main.as_deref()
-                    && let Some(centre) = element_centre(&l.snapshot, main_id)
-                    && let Some(at) =
-                        crate::grid::project(centre, response.rect, &view, l.summary.origin_mm)
-                {
-                    let painter = ui.painter_at(response.rect);
-                    let palette = crate::theme::Palette::current(ui);
-                    let galley = painter.layout_no_wrap(
-                        format!("MAIN · {}", asm.name),
-                        egui::FontId::proportional(10.5),
-                        palette.text,
-                    );
-                    let badge = egui::Rect::from_center_size(at, galley.size() + vec2(10.0, 5.0));
-                    painter.rect_filled(badge, 3, palette.head);
-                    painter.rect_stroke(
-                        badge,
-                        3,
-                        Stroke::new(1.5, theme::BRAND),
-                        StrokeKind::Inside,
-                    );
-                    painter.galley(badge.min + vec2(5.0, 2.5), galley, palette.text);
-                }
             }
             if let Some(selected) = self.editor.selected() {
                 let key = (selected.id.clone(), l.snapshot.token().as_str().to_owned());
@@ -1396,6 +1372,37 @@ impl App {
                 self.paint_member_grips(&painter, response.rect, &view, l.summary.origin_mm);
             } else {
                 self.selection_edges = Default::default();
+            }
+            // Draw the assembly MAIN badge last (after all selection edges and grips) offset
+            // cleanly with a leader line so wireframe lines never cross through the label.
+            if ids.len() > 1
+                && let Some(selected) = self.editor.selected()
+                && let Some(asm) = self.assembly_for_part(&selected.id)
+                && let Some(main_id) = asm.main.as_deref()
+                && let Some(centre) = element_centre(&l.snapshot, main_id)
+                && let Some(at) =
+                    crate::grid::project(centre, response.rect, &view, l.summary.origin_mm)
+            {
+                let painter = ui.painter_at(response.rect);
+                let palette = crate::theme::Palette::current(ui);
+                let galley = painter.layout_no_wrap(
+                    format!("MAIN · {}", asm.name),
+                    egui::FontId::proportional(10.5),
+                    palette.text,
+                );
+                let size = galley.size() + vec2(10.0, 5.0);
+                let safe = response.rect.shrink2(size * 0.5 + vec2(6.0, 6.0));
+                let badge_center = if safe.is_positive() {
+                    (at + vec2(44.0, -26.0)).clamp(safe.min, safe.max)
+                } else {
+                    at + vec2(44.0, -26.0)
+                };
+                let badge = egui::Rect::from_center_size(badge_center, size);
+                painter.circle_filled(at, 3.0, theme::BRAND);
+                painter.line_segment([at, badge.left_center()], Stroke::new(1.2, theme::BRAND));
+                painter.rect_filled(badge, 3, palette.head);
+                painter.rect_stroke(badge, 3, Stroke::new(1.5, theme::BRAND), StrokeKind::Inside);
+                painter.galley(badge.min + vec2(5.0, 2.5), galley, palette.text);
             }
         }
         Some(PaneDraw {
@@ -1711,9 +1718,19 @@ impl App {
             } else if self.grid_line.click.is_some() {
                 self.place_grid_line(ray);
             } else if self.plate_mode {
-                self.place_plate(ray);
+                if ui.input(|i| i.modifiers.ctrl) {
+                    self.set_ctrl_reference(ray, true);
+                } else {
+                    self.place_plate(ray);
+                    self.ctrl_reference = None;
+                }
             } else if self.beam_mode {
-                self.place_beam(ray);
+                if ui.input(|i| i.modifiers.ctrl) {
+                    self.set_ctrl_reference(ray, false);
+                } else {
+                    self.place_beam(ray);
+                    self.ctrl_reference = None;
+                }
             } else if self.bench == workbench::Bench::Annotations {
                 self.annotation_click(ray);
             } else if self.bench == workbench::Bench::Weld {
