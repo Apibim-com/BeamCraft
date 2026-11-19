@@ -20,6 +20,7 @@ mod grid_panel;
 mod level_panel;
 mod member_grips;
 mod numbering_panel;
+mod profile_catalog;
 mod reference_panel;
 mod switches;
 mod view_panel;
@@ -260,6 +261,8 @@ pub struct App {
     reference: reference_panel::Panel,
     /// The Linear and Polar Array bench (#845).
     array: array_panel::Panel,
+    /// Interactive Profile Catalogue and parametric section creator (#840).
+    pub(crate) profile_catalog: profile_catalog::State,
     /// The bottom bar's selection switches and snap panel (V11): picking-only state.
     selection: crate::selection::Selection,
     /// The selected plate's contour grips (V18): the drag in progress and the commit in flight.
@@ -614,6 +617,55 @@ fn choice_combo(
                 }
             });
     });
+}
+
+/// Shared profile picker row: dropdown + `…` button that opens the Profile Catalogue (#840).
+pub(super) fn profile_row(
+    ui: &mut egui::Ui,
+    id: &str,
+    current: &mut Option<String>,
+    choices: &[Choice],
+    required: bool,
+) -> bool {
+    let mut open_catalog = false;
+    let selected = current
+        .as_ref()
+        .map(|digest| {
+            choices.iter().find(|c| &c.digest == digest).map_or_else(
+                || "Definition unavailable".to_owned(),
+                |c| definition_choice_label(c, choices),
+            )
+        })
+        .unwrap_or_else(|| if required { "choose…" } else { "none" }.to_owned());
+    crate::kit::prop_row(ui, "Profile", |ui| {
+        ui.horizontal(|ui| {
+            let btn_space = 32.0;
+            egui::ComboBox::from_id_salt(id)
+                .width((ui.available_width() - crate::kit::FIT - btn_space).max(60.0))
+                .truncate()
+                .selected_text(selected)
+                .show_ui(ui, |ui| {
+                    if !required {
+                        ui.selectable_value(current, None, "none");
+                    }
+                    for choice in choices {
+                        ui.selectable_value(
+                            current,
+                            Some(choice.digest.clone()),
+                            definition_choice_label(choice, choices),
+                        );
+                    }
+                });
+            if ui
+                .button("…")
+                .on_hover_text("Open Profile Catalogue (browse, preview & create profiles)")
+                .clicked()
+            {
+                open_catalog = true;
+            }
+        });
+    });
+    open_catalog
 }
 
 fn point_fields(ui: &mut egui::Ui, point: &mut [String; 3]) {
@@ -1207,6 +1259,7 @@ impl App {
             assembly: assembly_panel::Panel::empty(),
             numbering: numbering_panel::Panel::empty(),
             reference: reference_panel::Panel::empty(),
+            profile_catalog: profile_catalog::State::default(),
             array: array_panel::Panel::empty(),
             menu_section: workbench::MenuSection::default(),
             menu_note: None,
@@ -1476,6 +1529,17 @@ impl App {
             self.refresh_timings.push(reloaded.timing);
         }
         self.refresh_error = self.tools.apply_definitions(reloaded.definitions);
+        if self.refresh_error.is_none()
+            && let Some(digest) = self.profile_catalog.pending_select_digest.take()
+            && self
+                .tools
+                .definitions
+                .profiles
+                .iter()
+                .any(|c| c.digest == digest)
+        {
+            self.apply_profile_selection(digest);
+        }
         // The body facts of a source file ride only a new snapshot: the same snapshot again
         // keeps the facts the window already holds, a failed read keeps the picture and says
         // why (issue 614).
@@ -1707,7 +1771,8 @@ impl App {
                 (Some(built), Some(active)) => !Arc::ptr_eq(built, active),
                 (Some(_), None) | (None, Some(_)) => true,
                 (None, None) => false,
-            } || self.views.active_hidden() != self.views.shown;
+            } || self.views.active_hidden() != self.views.shown
+                || self.views.active_representation() != self.views.shown_representation;
             if stale {
                 self.recolour();
             }
@@ -2873,6 +2938,7 @@ impl App {
             // Borrowed beside the form (disjoint fields), never copied: the panel is laid out in
             // every frame the window draws.
             let materials = &self.tools.definitions.materials;
+            let mut open_profile = false;
             ui.add_enabled_ui(editable && !busy, |ui| {
                 let base = self.props.baseline().clone();
                 let mark =
@@ -2905,14 +2971,15 @@ impl App {
                         // environment's profiles; the engine rebuilds the body and the mass
                         // (`update-element`).
                         mark(ui, self.props.form.profile != base.profile);
-                        choice_combo(
+                        if profile_row(
                             ui,
                             "props-profile",
-                            "Profile",
                             &mut self.props.form.profile,
                             &self.tools.definitions.profiles,
                             false,
-                        );
+                        ) {
+                            open_profile = true;
+                        }
                     }
                     mark(ui, self.props.form.material != base.material);
                     choice_combo(
@@ -3029,6 +3096,9 @@ impl App {
                     }
                 });
             });
+            if open_profile {
+                self.open_profile_catalog(profile_catalog::ProfileTarget::Properties);
+            }
             crate::kit::section(ui, "part", "Quantities", true, |ui| {
                 let quantities = &details.quantities;
                 // The volume is a raw float and keeps the panel's display rounding. The mass
@@ -3494,6 +3564,7 @@ impl App {
             || self.grid_job.is_some()
             || self.level_panel.running()
             || self.contour.running()
+            || self.profile_catalog.running()
     }
 
     /// True while a command that writes to the model is running: the header's Saving state.
@@ -3575,11 +3646,12 @@ impl App {
             return;
         };
         let overlay = self.colour.as_ref().map(|(_, overlay)| Arc::clone(overlay));
-        // The active view hides its kinds from the main scene (V12).
+        // The active view hides its kinds and chooses its geometry representation (V12 / U12).
         let shown = self.views.active_hidden();
+        let representation = self.views.active_representation();
         let scene = crate::scene::Scene::from_snapshot_showing(
             &loaded.snapshot,
-            beamcraft_engine::Representation::Full,
+            representation,
             &loaded.uploaded.resident(),
             overlay.as_deref(),
             shown,
@@ -3600,6 +3672,7 @@ impl App {
                 loaded.summary = summary;
                 loaded.uploaded = uploaded;
                 self.views.shown = shown;
+                self.views.shown_representation = representation;
             }
             Err(error) => {
                 // The device keeps the previous scene; the overlay is reported as refused.
@@ -4322,6 +4395,7 @@ impl eframe::App for App {
         self.poll_numbering();
         self.poll_reference();
         self.poll_array();
+        self.poll_profile_catalog();
         self.poll_contour();
         self.poll_edit();
         self.poll_props();
@@ -4382,6 +4456,7 @@ impl eframe::App for App {
             self.project_browser(ui);
             self.details_window(&ctx);
             self.numbering_preview_window(&ctx);
+            self.show_profile_catalog(&ctx);
             self.publish_dialog(&ctx);
             self.sheet_editor.window(
                 &ctx,
@@ -6130,7 +6205,7 @@ pub(crate) mod tests {
     }
 
     /// A refresh whose scene is `plates` synthetic kernel plates.
-    fn refreshed(plates: u32) -> Reloaded {
+    pub(super) fn refreshed(plates: u32) -> Reloaded {
         let pin = ViewPin::new(Sha256::digest(b"revision").unwrap(), 1);
         let snapshot =
             ViewSnapshot::build(pin, plate_scene(plates, false).unwrap(), &Limits::default())
@@ -6140,7 +6215,7 @@ pub(crate) mod tests {
     }
 
     /// Hands `reloaded` to the window as the result of the refresh in flight.
-    fn deliver(app: &mut App, reloaded: Reloaded) {
+    pub(super) fn deliver(app: &mut App, reloaded: Reloaded) {
         let (tx, rx) = std::sync::mpsc::channel();
         tx.send(reloaded).unwrap();
         app.reload_job = Some(rx);
@@ -13622,5 +13697,128 @@ mod navigation_tests {
         assert_eq!(app.grid_line.points[0], ["1500", "2000"]);
         assert_eq!(app.grid_line.click, Some(true));
         assert_eq!(app.ctrl_reference, None);
+    }
+
+    #[test]
+    fn profile_catalogue_defines_reads_metadata_and_selects_profile() {
+        let Some(mut app) = headless() else { return };
+        let cli = super::tests::workspace_cli();
+        if !cli.is_file() {
+            return;
+        }
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("bc-profcat-{}-{nanos}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let store = root.join("model");
+        let run = |args: &[String]| {
+            let output = std::process::Command::new(&cli)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+            output.stdout
+        };
+        run(&[
+            "create-project".into(),
+            "--parent".into(),
+            root.to_str().unwrap().into(),
+            "--name".into(),
+            "model".into(),
+        ]);
+
+        let args = super::profile_catalog::build_define_profile_args(
+            &store,
+            super::profile_catalog::CreatorFamily::IShape,
+            &super::profile_catalog::CreatorFamily::IShape.defaults(),
+        )
+        .unwrap();
+        let defined_out = run(&args);
+        let digest = super::profile_catalog::parse_defined_digest(&defined_out).unwrap();
+
+        let defs_out = run(&[
+            "definitions".into(),
+            "--store".into(),
+            store.to_str().unwrap().into(),
+        ]);
+        let defs = crate::tools::parse_definitions(Some(0), &defs_out).unwrap();
+        let meta = defs
+            .profile_meta
+            .get(&digest)
+            .expect("profile metadata populated");
+        assert_eq!(meta.designation, "I-300x150");
+        assert_eq!(meta.family, "i_shape");
+        assert!(!meta.from_environment);
+        assert!(
+            meta.parameters_mm
+                .iter()
+                .any(|(k, v)| k == "h" && (*v - 300.0).abs() < 1e-6)
+        );
+
+        app.tools.apply_definitions(Ok(defs));
+        app.open_profile_catalog(super::profile_catalog::ProfileTarget::MemberTool);
+        assert!(app.profile_catalog.open);
+        app.apply_profile_selection(digest.clone());
+        assert_eq!(app.tools.member.profile.as_deref(), Some(digest.as_str()));
+
+        app.open_profile_catalog(super::profile_catalog::ProfileTarget::Properties);
+        app.apply_profile_selection(digest.clone());
+        assert_eq!(app.props.form.profile.as_deref(), Some(digest.as_str()));
+
+        drop(app);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn view_representation_toggles_between_full_and_simplified_in_form_and_scene() {
+        let Some(mut app) = headless() else { return };
+        super::tests::deliver(&mut app, super::tests::refreshed(2));
+        let mut view = beamcraft_engine::views::ModelView::new(
+            beamcraft_model::id::Uuid7::from_bytes([
+                0, 0, 0, 0, 0, 0, 0x70, 0, 0x80, 0, 0, 0, 0, 0, 0, 1,
+            ])
+            .unwrap(),
+            "Fast 3D",
+            beamcraft_engine::work_plane::WorkPlane::default(),
+            beamcraft_engine::views::DEFAULT_SPAN_MM,
+        );
+        let view_id = view.id;
+        app.views.book.insert(view.clone()).unwrap();
+        if let Some(pane) = app.views.active_pane_mut() {
+            pane.set_view(Some(&view));
+        }
+        assert_eq!(
+            app.views.active_representation(),
+            beamcraft_engine::Representation::Full
+        );
+
+        let mut form = crate::views::Form::from_view(&view);
+        assert_eq!(form.representation, beamcraft_engine::Representation::Full);
+        form.representation = beamcraft_engine::Representation::Simplified;
+        app.write_view(view_id, &form).unwrap();
+
+        assert_eq!(
+            app.views.book.get(&view_id).unwrap().representation,
+            beamcraft_engine::Representation::Simplified
+        );
+        assert_eq!(
+            app.views.active_representation(),
+            beamcraft_engine::Representation::Simplified
+        );
+        assert_eq!(
+            app.views.shown_representation,
+            beamcraft_engine::Representation::Simplified
+        );
+        view = app.views.book.get(&view_id).unwrap().clone();
+        let snap = &app.loaded.as_ref().unwrap().snapshot;
+        let simplified_scene =
+            crate::scene::Scene::from_snapshot(snap, view.representation).unwrap();
+        assert_eq!(simplified_scene.counts().1, 2);
     }
 }

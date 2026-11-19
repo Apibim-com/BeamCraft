@@ -789,6 +789,20 @@ impl App {
                                 pick = Some(b);
                             }
                         }
+                        if tool_button(
+                            ui,
+                            Icon::Table,
+                            "Profiles",
+                            self.profile_catalog.open,
+                            edits_free,
+                        )
+                        .on_hover_text("Browse Profile Catalogue or add parametric profiles")
+                        .clicked()
+                        {
+                            self.open_profile_catalog(
+                                super::profile_catalog::ProfileTarget::MemberTool,
+                            );
+                        }
                     });
                     group(ui, "Connect", &mut |ui| {
                         if tool_button(ui, Icon::Bolt, "Bolts", bench == Bench::Bolt, store_free)

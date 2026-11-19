@@ -931,15 +931,19 @@ impl App {
         let tint = crate::views::tint_of(shown);
         // The view adds its depth slab and work area to the display cut (V12).
         let cut = crate::views::display_clip(self.cut.as_ref(), shown);
-        // The loaded scene follows the active pane's hidden kinds; another pane whose view hides
-        // other kinds draws its own filtered upload.
+        // The loaded scene follows the active pane's hidden kinds and representation; another pane
+        // whose view differs draws its own filtered upload.
         let hidden = shown.map_or(beamcraft_engine::KindFilter::SHOW_ALL, |v| v.hidden_kinds);
+        let representation =
+            shown.map_or(beamcraft_engine::Representation::Full, |v| v.representation);
         // A view with filter overrides draws its own scene with their colours and hidden elements.
         let view_overlay = shown
             .and_then(|v| self.views.overlays.get(&v.id))
             .map(|o| (o.key, std::sync::Arc::clone(&o.overlay)));
         let overlay_key = view_overlay.as_ref().map_or(0, |(k, _)| *k);
-        let own_scene = hidden != self.views.shown || view_overlay.is_some();
+        let own_scene = hidden != self.views.shown
+            || representation != self.views.shown_representation
+            || view_overlay.is_some();
         let scale = ui.ctx().pixels_per_point();
         let [width, height] = target_size([body.width(), body.height()], scale);
         let dark = ui.ctx().theme() == egui::Theme::Dark;
@@ -1135,10 +1139,9 @@ impl App {
         if let Some(l) = &self.loaded {
             if own_scene {
                 let token = l.snapshot.token().as_str().to_owned();
-                let stale = pane
-                    .filtered
-                    .as_ref()
-                    .is_none_or(|(t, h, k, _)| *t != token || *h != hidden || *k != overlay_key);
+                let stale = pane.filtered.as_ref().is_none_or(|(t, h, r, k, _)| {
+                    *t != token || *h != hidden || *r != representation || *k != overlay_key
+                });
                 if stale {
                     let overlay = view_overlay
                         .as_ref()
@@ -1146,7 +1149,7 @@ impl App {
                         .or_else(|| self.colour.as_ref().map(|(_, o)| std::sync::Arc::clone(o)));
                     let built = crate::scene::Scene::from_snapshot_showing(
                         &l.snapshot,
-                        beamcraft_engine::Representation::Full,
+                        representation,
                         &l.uploaded.resident(),
                         overlay.as_deref(),
                         hidden,
@@ -1161,14 +1164,17 @@ impl App {
                     });
                     match built {
                         Ok(uploaded) => {
-                            pane.filtered = Some((token, hidden, overlay_key, uploaded))
+                            pane.filtered =
+                                Some((token, hidden, representation, overlay_key, uploaded))
                         }
                         Err(e) => self.error = Some(e.to_string()),
                     }
                 }
             }
             let uploaded = match &pane.filtered {
-                Some((_, h, k, uploaded)) if own_scene && *h == hidden && *k == overlay_key => {
+                Some((_, h, r, k, uploaded))
+                    if own_scene && *h == hidden && *r == representation && *k == overlay_key =>
+                {
                     uploaded
                 }
                 _ => &l.uploaded,

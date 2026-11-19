@@ -1163,7 +1163,15 @@ impl App {
                     crate::kit::section(ui, "member", "Part", true, |ui| {
                     field(ui, "Name", &mut self.tools.member.name, 160.0);
                     super::class_field(ui, &mut self.tools.member.class);
-                    choice_combo(ui, "member-profile", "Profile", &mut self.tools.member.profile, &self.tools.definitions.profiles, true);
+                    if super::profile_row(
+                        ui,
+                        "member-profile",
+                        &mut self.tools.member.profile,
+                        &self.tools.definitions.profiles,
+                        true,
+                    ) {
+                        self.open_profile_catalog(super::profile_catalog::ProfileTarget::MemberTool);
+                    }
                     choice_combo(ui, "member-material", "Material", &mut self.tools.member.material, &self.tools.definitions.materials, false);
                     if column {
                         let levels: Vec<crate::tools::Choice> = self.tools.definitions.levels.iter().map(|l| crate::tools::Choice {
@@ -1202,7 +1210,11 @@ impl App {
                         self.clear_ghost();
                     }
                     ui.label("Right-click or wheel-click ends this tool.");
-                    if self.tools.definitions.profiles.is_empty() { ui.label("Add a profile to the model catalogue before creating a member."); }
+                    if self.tools.definitions.profiles.is_empty()
+                        && ui.button("Open Profile Catalogue…").clicked()
+                    {
+                        self.open_profile_catalog(super::profile_catalog::ProfileTarget::MemberTool);
+                    }
                     crate::kit::fold(ui, "member", "Precise placement", false, |ui| {
                         for (label, point) in [("Start (mm)", &mut self.tools.member.start), ("End (mm)", &mut self.tools.member.end)] {
                             ui.label(label); super::point_fields(ui, point);
