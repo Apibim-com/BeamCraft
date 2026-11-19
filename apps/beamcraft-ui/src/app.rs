@@ -2138,7 +2138,9 @@ impl App {
     /// A click while a copy or move by two points is armed: the first is the origin, the second
     /// the destination, which runs the command.
     pub(super) fn two_point_click(&mut self, ray: crate::edit::Ray) {
-        let Some(armed) = self.two_point else { return };
+        if self.two_point.is_none() {
+            return;
+        }
         let point = match self.creation_point(ray, false) {
             Ok(point) => point,
             Err(error) => {
@@ -2146,15 +2148,29 @@ impl App {
                 return;
             }
         };
+        self.accept_two_point(point);
+    }
+
+    /// Accepts a resolved world point for a two-point move or copy (from click or distance+Enter).
+    pub(super) fn accept_two_point(&mut self, point: [f64; 3]) {
+        let Some(armed) = self.two_point else { return };
         let Some(from) = armed.from else {
             self.two_point = Some(TwoPoint {
                 from: Some(point),
                 ..armed
             });
-            self.edit_note = Some(Ok("Pick the destination point (Esc cancels).".into()));
+            self.distance_input.clear();
+            self.distance_aim = None;
+            self.edit_note = Some(Ok(
+                "Pick destination point in view, or aim, type offset mm + Enter (Esc cancels)."
+                    .into(),
+            ));
             return;
         };
         self.two_point = None;
+        self.distance_input.clear();
+        self.distance_aim = None;
+        self.ctrl_reference = None;
         if self.other_command_running() {
             self.edit_note = Some(Err(
                 "another command is running; wait for it to finish.".into()
@@ -2302,7 +2318,12 @@ impl App {
                         self.set_bench(workbench::Bench::Select);
                     }
                     // The element may have moved, or the undo may have removed it: ask again.
-                    _ => self.refresh_selection(),
+                    _ => {
+                        self.refresh_selection();
+                        if matches!(self.bench, workbench::Bench::Move | workbench::Bench::Copy) {
+                            self.set_bench(workbench::Bench::Select);
+                        }
+                    }
                 }
                 self.refresh_status();
             }
@@ -3573,6 +3594,19 @@ impl App {
         let action = self.editor.action();
         ui.add_enabled_ui(selected, |ui| match action {
             EditKind::Move => {
+                if let Some(two) = self.two_point.filter(|t| t.kind == EditKind::Move) {
+                    ui.label(if let Some(from) = two.from {
+                        format!(
+                            "Origin: {} — pick destination point in 3D view (snap, O, or distance + Enter).",
+                            PointText(from)
+                        )
+                    } else {
+                        "Pick origin point in 3D view (snap & Ctrl+click active, or enter position below)."
+                            .into()
+                    });
+                } else if ui.button("Pick two points in view").clicked() {
+                    self.arm_two_point(EditKind::Move);
+                }
                 match self.editor.axis_point() {
                     Some((_, end)) => {
                         ui.label(format!("New {} point in mm (absolute):", end.label()))
@@ -3582,6 +3616,19 @@ impl App {
                 point_fields(ui, &mut self.editor.move_to);
             }
             EditKind::Copy => {
+                if let Some(two) = self.two_point.filter(|t| t.kind == EditKind::Copy) {
+                    ui.label(if let Some(from) = two.from {
+                        format!(
+                            "Origin: {} — pick destination point in 3D view (snap, O, or distance + Enter).",
+                            PointText(from)
+                        )
+                    } else {
+                        "Pick origin point in 3D view (snap & Ctrl+click active, or enter offset below)."
+                            .into()
+                    });
+                } else if ui.button("Pick two points in view").clicked() {
+                    self.arm_two_point(EditKind::Copy);
+                }
                 ui.checkbox(
                     &mut self.editor.copy_instance,
                     "Instance: share shape and material edits",
@@ -4170,6 +4217,7 @@ impl eframe::App for App {
                 !wants_text
                     && (!self.plate_mode || self.plate_draft.points().is_empty())
                     && (!self.beam_mode || self.beam.start().is_none())
+                    && self.two_point.is_none()
                     && i.key_pressed(egui::Key::Minus),
             )
         });
@@ -13277,5 +13325,45 @@ mod navigation_tests {
         assert!((pt[0] - 1500.0).abs() < 1e-6);
         assert!((pt[1] - 2000.0).abs() < 1e-6);
         assert!(pt[2].abs() < 1e-6);
+    }
+
+    #[test]
+    fn move_and_copy_arm_snapping_for_first_and_second_points() {
+        let Some(mut app) = headless() else { return };
+        app.editor
+            .select_id("019a7bf0-0000-7000-8000-000000000001".into());
+        app.set_bench(super::workbench::Bench::Move);
+        assert_eq!(
+            app.two_point.map(|t| t.kind),
+            Some(crate::edit::EditKind::Move)
+        );
+        assert_eq!(app.two_point.and_then(|t| t.from), None);
+        assert!(
+            app.picking_point(),
+            "Move arms snap picking for the 1st point"
+        );
+
+        app.accept_two_point([100.0, 200.0, 0.0]);
+        assert_eq!(
+            app.two_point.and_then(|t| t.from),
+            Some([100.0, 200.0, 0.0])
+        );
+        assert!(
+            app.picking_point(),
+            "Move keeps snap picking active for the 2nd point"
+        );
+
+        app.set_bench(super::workbench::Bench::Copy);
+        assert_eq!(
+            app.two_point.map(|t| t.kind),
+            Some(crate::edit::EditKind::Copy)
+        );
+        assert!(
+            app.picking_point(),
+            "Copy arms snap picking for the 1st point"
+        );
+
+        app.set_bench(super::workbench::Bench::Select);
+        assert_eq!(app.two_point, None);
     }
 }

@@ -455,6 +455,7 @@ impl App {
         }
         self.beam_mode = matches!(bench, Bench::Beam | Bench::Column | Bench::Brace);
         self.beam.reset();
+        self.two_point = None;
         self.ghost_end = None;
         self.beam_hover = None;
         self.clear_ghost();
@@ -488,6 +489,11 @@ impl App {
             Bench::Move | Bench::Copy | Bench::Delete => {
                 if let Some(kind) = bench.edit() {
                     self.editor.set_action(kind);
+                    if matches!(kind, EditKind::Move | EditKind::Copy)
+                        && self.editor.selected().is_some()
+                    {
+                        self.arm_two_point(kind);
+                    }
                 }
             }
             Bench::Array => {}

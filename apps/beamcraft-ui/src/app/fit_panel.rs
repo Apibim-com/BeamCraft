@@ -443,9 +443,10 @@ impl App {
         };
         match picked {
             Ok(Some((id, pt))) => {
+                let snapped_pt = self.creation_point(ray, false).unwrap_or(pt);
                 if self.bench == super::workbench::Bench::Hole {
                     self.fit.part = Some(id);
-                    self.fit.point = pt.map(|v| format!("{:.1}", v));
+                    self.fit.point = snapped_pt.map(|v| format!("{:.1}", v));
                     self.fit.note = Some(Ok(
                         "Part and hole point picked. Adjust parameters and click Create hole."
                             .into(),
@@ -456,7 +457,7 @@ impl App {
                     && matches!(self.fit.cut_mode, CutMode::ByPlane | CutMode::Split)
                 {
                     self.fit.part = Some(id);
-                    self.fit.point = pt.map(|v| format!("{:.1}", v));
+                    self.fit.point = snapped_pt.map(|v| format!("{:.1}", v));
                     self.fit.note = Some(Ok(
                         "Part and plane point picked. Set normal and click Apply.".into(),
                     ));

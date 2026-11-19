@@ -189,12 +189,22 @@ impl App {
     }
 
     /// Whether the pointer is picking a point outside plate and member placement: a copy or
-    /// move by two points, or the two points of a bolt group.
+    /// move by two points, the two points of a bolt group, a hole location, a cut/split plane
+    /// point, or a leader endpoint.
     pub(super) fn picking_point(&self) -> bool {
         self.two_point.is_some()
             || (self.bench == super::workbench::Bench::Bolt
                 && self.bolt.parts.len() >= 2
                 && self.bolt.point2.is_none())
+            || self.bench == super::workbench::Bench::Hole
+            || (self.bench == super::workbench::Bench::Cut
+                && matches!(
+                    self.fit.cut_mode,
+                    super::fit_panel::CutMode::ByPlane | super::fit_panel::CutMode::Split
+                ))
+            || (self.bench == super::workbench::Bench::Annotations
+                && self.annotation.tool == super::annotation_panel::Tool::Leader
+                && self.annotation.leader_end.is_none())
     }
 
     pub(super) fn creation_point(
@@ -554,7 +564,9 @@ impl App {
             if planar {
                 self.plate_draft.points().last().copied()
             } else {
-                self.beam.start()
+                self.beam
+                    .start()
+                    .or_else(|| self.two_point.and_then(|t| t.from))
             }
         });
         let Some(reference) = reference else {
@@ -600,10 +612,17 @@ impl App {
             || self.menu_open
             || self.command_search
             || self.other_command_running()
-            || !(self.plate_mode || self.beam_mode)
+            || !(self.plate_mode
+                || self.beam_mode
+                || self.two_point.is_some()
+                || self.picking_point())
         {
             return;
         }
+        let has_ref = (self.plate_mode && !self.plate_draft.points().is_empty())
+            || (self.beam_mode && self.beam.start().is_some())
+            || self.two_point.and_then(|t| t.from).is_some()
+            || self.ctrl_reference.is_some();
         let events = ctx.input(|i| i.events.clone());
         for event in events {
             match event {
@@ -616,11 +635,7 @@ impl App {
                 } if !modifiers.ctrl && !modifiers.alt && !modifiers.command => {
                     self.selection.orthogonal = !self.selection.orthogonal;
                 }
-                egui::Event::Text(text)
-                    if (self.plate_mode && !self.plate_draft.points().is_empty())
-                        || (self.beam_mode && self.beam.start().is_some())
-                        || self.ctrl_reference.is_some() =>
-                {
+                egui::Event::Text(text) if has_ref => {
                     if !text.is_empty()
                         && text
                             .chars()
@@ -641,7 +656,7 @@ impl App {
                     key: egui::Key::Backspace,
                     pressed: true,
                     ..
-                } if self.plate_mode || self.beam_mode => {
+                } if self.plate_mode || self.beam_mode || self.two_point.is_some() => {
                     if self.distance_input.is_empty() {
                         if self.plate_mode {
                             self.plate_draft.back();
@@ -659,7 +674,7 @@ impl App {
                     pressed: true,
                     repeat: false,
                     ..
-                } if self.plate_mode || self.beam_mode => {
+                } if self.plate_mode || self.beam_mode || self.two_point.is_some() => {
                     if self.distance_input.is_empty() {
                         if self.plate_mode {
                             self.finish_plate();
@@ -680,8 +695,10 @@ impl App {
                 .or_else(|| {
                     if self.plate_mode {
                         self.plate_draft.points().last().copied()
-                    } else {
+                    } else if self.beam_mode {
                         self.beam.start()
+                    } else {
+                        self.two_point.and_then(|t| t.from)
                     }
                 })
                 .ok_or_else(|| {
@@ -708,8 +725,10 @@ impl App {
                 } else {
                     self.plate_draft.push(point).map_err(|e| e.to_string())?;
                 }
-            } else {
+            } else if self.beam_mode {
                 self.accept_member_point(point);
+            } else if self.two_point.is_some() {
+                self.accept_two_point(point);
             }
             Ok::<(), String>(())
         })();
@@ -930,7 +949,7 @@ impl App {
         }
     }
 
-    fn paint_ctrl_reference(
+    pub(super) fn paint_ctrl_reference(
         &self,
         ui: &egui::Ui,
         rect: egui::Rect,
@@ -1001,7 +1020,7 @@ impl App {
         }
     }
 
-    fn paint_distance_entry(&self, ui: &egui::Ui, rect: egui::Rect) {
+    pub(super) fn paint_distance_entry(&self, ui: &egui::Ui, rect: egui::Rect) {
         if !self.distance_input.is_empty()
             && let Some(pos) = ui.ctx().pointer_hover_pos()
         {
