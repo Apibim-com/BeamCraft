@@ -347,6 +347,135 @@ fn dir_built_within(path: &Path, limit: Duration) -> Option<std::fs::ReadDir> {
     }
 }
 
+/// Records when the fixture gate's isolated target tree appears and disappears,
+/// so a CI-only absence pins itself to a gate stage instead of staying an
+/// unexplained end-state.
+struct TargetTimeline {
+    events: std::sync::Arc<std::sync::Mutex<Vec<(u128, String)>>>,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    handle: Option<std::thread::JoinHandle<()>>,
+}
+
+impl TargetTimeline {
+    fn watch(paths: Vec<PathBuf>) -> Self {
+        let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let started = Instant::now();
+        let handle = {
+            let events = std::sync::Arc::clone(&events);
+            let stop = std::sync::Arc::clone(&stop);
+            std::thread::spawn(move || {
+                let mut seen: Vec<bool> = paths.iter().map(|path| path.exists()).collect();
+                for _ in 0..2400 {
+                    if stop.load(Ordering::Relaxed) {
+                        return;
+                    }
+                    std::thread::sleep(Duration::from_millis(100));
+                    for (index, path) in paths.iter().enumerate() {
+                        let now = path.exists();
+                        if now != seen[index] {
+                            seen[index] = now;
+                            let ms = started.elapsed().as_millis();
+                            events.lock().unwrap().push((
+                                ms,
+                                format!(
+                                    "{} {}",
+                                    if now { "created" } else { "vanished" },
+                                    path.display()
+                                ),
+                            ));
+                        }
+                    }
+                }
+            })
+        };
+        Self {
+            events,
+            stop,
+            handle: Some(handle),
+        }
+    }
+
+    fn stop(&mut self) -> Vec<(u128, String)> {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+        std::mem::take(&mut *self.events.lock().unwrap())
+    }
+}
+
+impl Drop for TargetTimeline {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+    }
+}
+
+/// On a CI-only absence, prints everything needed to pin where the fixture
+/// gate's cargo actually built: the appearance timeline, per-level existence,
+/// the target root's first level, the environment handed to the gate, and
+/// cargo's own resolution of the same environment.
+fn fixture_target_probe(root: &Path, timeline: Vec<(u128, String)>) -> String {
+    let mut text = String::from("fixture target timeline:");
+    if timeline.is_empty() {
+        text.push_str("\n  (no transitions; the tree never appeared)");
+    }
+    for (ms, event) in &timeline {
+        text.push_str(&format!("\n  +{ms}ms {event}"));
+    }
+    for level in [
+        "target",
+        "target/test-gate",
+        "target/test-gate/target",
+        "target/test-gate/target/debug",
+        "target/test-gate/target/debug/deps",
+    ] {
+        text.push_str(&format!(
+            "\n  {} exists={}",
+            root.join(level).display(),
+            root.join(level).exists()
+        ));
+    }
+    match std::fs::read_dir(root.join("target")) {
+        Ok(entries) => {
+            text.push_str("\n  target first level:");
+            for entry in entries.flatten() {
+                text.push_str(&format!("\n    {}", entry.file_name().to_string_lossy()));
+            }
+        }
+        Err(error) => text.push_str(&format!("\n  target unreadable: {error}")),
+    }
+    text.push_str(&format!(
+        "\n  handed to the gate as CARGO_TARGET_DIR: {:?}",
+        root.join("target")
+    ));
+    match beamcraft_test_gate::capture(
+        Command::new("cargo")
+            .current_dir(root)
+            .env("CARGO_TARGET_DIR", root.join("target"))
+            .args([
+                "metadata",
+                "--format-version",
+                "1",
+                "--no-deps",
+                "--offline",
+            ]),
+    ) {
+        Ok(output) => match serde_json::from_str::<serde_json::Value>(&output) {
+            Ok(value) => text.push_str(&format!(
+                "\n  cargo resolves target_directory: {}",
+                value
+                    .pointer("/target_directory")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("missing")
+            )),
+            Err(_) => text.push_str("\n  cargo metadata output unparsable"),
+        },
+        Err(error) => text.push_str(&format!("\n  cargo metadata failed: {error}")),
+    }
+    text
+}
+
 #[test]
 fn the_fixture_artifact_reader_waits_out_a_late_directory_and_reports_an_absent_one() {
     let temp = Temp::new();
@@ -460,6 +589,10 @@ fn cli_gate_runs_real_tests_and_doctests_without_building_the_ui() {
         ])
         .env("CARGO_TARGET_DIR", root.join("target"))
         .env("XDG_CACHE_HOME", temp.0.join("cache"));
+    let mut timeline = TargetTimeline::watch(vec![
+        root.join("target/test-gate"),
+        root.join("target/test-gate/target/debug/deps"),
+    ]);
     let result = process::run("cli-gate", &mut cmd, &temp.0, Duration::from_secs(180)).unwrap();
     let stderr = std::fs::read_to_string(temp.0.join("cli-gate.stderr.log")).unwrap();
     assert_eq!(result.exit_code, 0, "{stderr}");
@@ -483,7 +616,13 @@ fn cli_gate_runs_real_tests_and_doctests_without_building_the_ui() {
         &root.join("target/test-gate/target/debug/deps"),
         Duration::from_secs(10),
     )
-    .expect("the fixture gate built its isolated target directory");
+    .unwrap_or_else(|| {
+        panic!(
+            "the fixture gate built its isolated target directory; {}",
+            fixture_target_probe(&root, timeline.stop())
+        )
+    });
+    timeline.stop();
     assert!(!deps.any(|e| {
         e.unwrap()
             .file_name()
