@@ -1939,6 +1939,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--assembly-series", "PREFIX:START"),
             opt("--tolerance", "MM"),
             opt("--compare-name", "true|false"),
+            opt("--compare-holes", "true|false"),
             opt("--previous", "SHA256"),
             opt("--offset", "N"),
             opt("--limit", "N"),
@@ -1959,6 +1960,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--assembly-series", "PREFIX:START"),
             opt("--tolerance", "MM"),
             opt("--compare-name", "true|false"),
+            opt("--compare-holes", "true|false"),
         ],
     ),
     entry(
