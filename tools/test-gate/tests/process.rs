@@ -7,7 +7,7 @@
     clippy::panic
 )]
 
-use beamcraft_test_gate::{capture, local, process, report::Report};
+use beamcraft_test_gate::{capture, local, process, report::Report, report::STEPS, report::Stage};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -413,9 +413,10 @@ impl Drop for TargetTimeline {
 
 /// On a CI-only absence, prints everything needed to pin where the fixture
 /// gate's cargo actually built: the appearance timeline, per-level existence,
-/// the target root's first level, the environment handed to the gate, and
-/// cargo's own resolution of the same environment.
-fn fixture_target_probe(root: &Path, timeline: Vec<(u128, String)>) -> String {
+/// the target roots' first levels, the handed-over environment, cargo's own
+/// resolution of the same environment, the recorded stage timings, and the
+/// tails of the gate's per-stage build logs.
+fn fixture_target_probe(root: &Path, timeline: Vec<(u128, String)>, stages: &[Stage]) -> String {
     let mut text = String::from("fixture target timeline:");
     if timeline.is_empty() {
         text.push_str("\n  (no transitions; the tree never appeared)");
@@ -429,6 +430,8 @@ fn fixture_target_probe(root: &Path, timeline: Vec<(u128, String)>) -> String {
         "target/test-gate/target",
         "target/test-gate/target/debug",
         "target/test-gate/target/debug/deps",
+        "target/debug",
+        "target/debug/deps",
     ] {
         text.push_str(&format!(
             "\n  {} exists={}",
@@ -436,14 +439,21 @@ fn fixture_target_probe(root: &Path, timeline: Vec<(u128, String)>) -> String {
             root.join(level).exists()
         ));
     }
-    match std::fs::read_dir(root.join("target")) {
-        Ok(entries) => {
-            text.push_str("\n  target first level:");
-            for entry in entries.flatten() {
-                text.push_str(&format!("\n    {}", entry.file_name().to_string_lossy()));
+    for level in [
+        "target",
+        "target/test-gate/target",
+        "target/test-gate/target/debug",
+        "target/debug",
+    ] {
+        match std::fs::read_dir(root.join(level)) {
+            Ok(entries) => {
+                text.push_str(&format!("\n  {level} first level:"));
+                for entry in entries.flatten().take(30) {
+                    text.push_str(&format!("\n    {}", entry.file_name().to_string_lossy()));
+                }
             }
+            Err(error) => text.push_str(&format!("\n  {level} unreadable: {error}")),
         }
-        Err(error) => text.push_str(&format!("\n  target unreadable: {error}")),
     }
     text.push_str(&format!(
         "\n  handed to the gate as CARGO_TARGET_DIR: {:?}",
@@ -472,6 +482,32 @@ fn fixture_target_probe(root: &Path, timeline: Vec<(u128, String)>) -> String {
             Err(_) => text.push_str("\n  cargo metadata output unparsable"),
         },
         Err(error) => text.push_str(&format!("\n  cargo metadata failed: {error}")),
+    }
+    text.push_str("\n  recorded gate stages:");
+    for stage in stages {
+        text.push_str(&format!(
+            "\n    {} exit={} elapsed_ms={} timed_out={}",
+            stage.name, stage.exit_code, stage.elapsed_ms, stage.timed_out
+        ));
+    }
+    for stage in STEPS {
+        for suffix in ["stdout", "stderr"] {
+            let path = root.join(format!("target/run/{stage}.{suffix}.log"));
+            match std::fs::read_to_string(&path) {
+                Ok(content) => {
+                    let lines: Vec<&str> = content.lines().collect();
+                    let tail = lines.len().saturating_sub(12);
+                    text.push_str(&format!("\n  {} tail:", path.display()));
+                    for line in &lines[tail..] {
+                        text.push_str(&format!("\n    {line}"));
+                    }
+                    if lines.is_empty() {
+                        text.push_str("\n    (empty)");
+                    }
+                }
+                Err(error) => text.push_str(&format!("\n  {} unreadable: {error}", path.display())),
+            }
+        }
     }
     text
 }
@@ -591,7 +627,10 @@ fn cli_gate_runs_real_tests_and_doctests_without_building_the_ui() {
         .env("XDG_CACHE_HOME", temp.0.join("cache"));
     let mut timeline = TargetTimeline::watch(vec![
         root.join("target/test-gate"),
+        root.join("target/test-gate/target"),
+        root.join("target/test-gate/target/debug"),
         root.join("target/test-gate/target/debug/deps"),
+        root.join("target/debug/deps"),
     ]);
     let result = process::run("cli-gate", &mut cmd, &temp.0, Duration::from_secs(180)).unwrap();
     let stderr = std::fs::read_to_string(temp.0.join("cli-gate.stderr.log")).unwrap();
@@ -619,7 +658,7 @@ fn cli_gate_runs_real_tests_and_doctests_without_building_the_ui() {
     .unwrap_or_else(|| {
         panic!(
             "the fixture gate built its isolated target directory; {}",
-            fixture_target_probe(&root, timeline.stop())
+            fixture_target_probe(&root, timeline.stop(), &report.stages)
         )
     });
     timeline.stop();
