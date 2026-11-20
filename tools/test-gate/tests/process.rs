@@ -7,7 +7,7 @@
     clippy::panic
 )]
 
-use beamcraft_test_gate::{capture, local, process, report::Report, report::STEPS, report::Stage};
+use beamcraft_test_gate::{capture, local, process, report::Report};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -331,11 +331,9 @@ fn git(root: &Path, args: &[&str]) -> String {
 }
 
 /// Waits bounded for a directory written by the fixture gate's grandchild cargo
-/// processes before listing it. Twice on one upstream PR, ubuntu and macOS CI
-/// shards alike saw an immediate `read_dir` of the isolated target lose the race
-/// against that final artifact placement while the gate itself had already
-/// exited 0 with a valid report and readable sibling logs; `None` means the
-/// directory never became listable within `limit`, which stays a failure.
+/// processes before handing it out. Hosted shards once read it absent for the
+/// whole grace after a fully successful gate; `None` means the directory never
+/// became listable within `limit`, which stays a failure.
 fn dir_built_within(path: &Path, limit: Duration) -> Option<std::fs::ReadDir> {
     let deadline = Instant::now() + limit;
     loop {
@@ -347,169 +345,35 @@ fn dir_built_within(path: &Path, limit: Duration) -> Option<std::fs::ReadDir> {
     }
 }
 
-/// Records when the fixture gate's isolated target tree appears and disappears,
-/// so a CI-only absence pins itself to a gate stage instead of staying an
-/// unexplained end-state.
-struct TargetTimeline {
-    events: std::sync::Arc<std::sync::Mutex<Vec<(u128, String)>>>,
-    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    handle: Option<std::thread::JoinHandle<()>>,
-}
-
-impl TargetTimeline {
-    fn watch(paths: Vec<PathBuf>) -> Self {
-        let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let started = Instant::now();
-        let handle = {
-            let events = std::sync::Arc::clone(&events);
-            let stop = std::sync::Arc::clone(&stop);
-            std::thread::spawn(move || {
-                let mut seen: Vec<bool> = paths.iter().map(|path| path.exists()).collect();
-                for _ in 0..2400 {
-                    if stop.load(Ordering::Relaxed) {
-                        return;
-                    }
-                    std::thread::sleep(Duration::from_millis(100));
-                    for (index, path) in paths.iter().enumerate() {
-                        let now = path.exists();
-                        if now != seen[index] {
-                            seen[index] = now;
-                            let ms = started.elapsed().as_millis();
-                            events.lock().unwrap().push((
-                                ms,
-                                format!(
-                                    "{} {}",
-                                    if now { "created" } else { "vanished" },
-                                    path.display()
-                                ),
-                            ));
-                        }
-                    }
-                }
-            })
+/// Reports whether any file under the fixture gate's isolated target tree is
+/// named after the UI crate. The walk covers whatever layout the running
+/// cargo produced: hosted cargos place test and doctest executables under
+/// per-package build directories (`debug/build/<pkg>/<hash>/out`), so a fixed
+/// `debug/deps` listing never sees the artifacts it must judge. The budget
+/// bounds the walk for a hostile-looking tree; the fixture's own gate builds
+/// a few hundred entries at most.
+fn ui_artifacts_under(root: &Path, budget: usize) -> bool {
+    let mut stack = vec![root.to_path_buf()];
+    let mut visited = 0;
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
         };
-        Self {
-            events,
-            stop,
-            handle: Some(handle),
-        }
-    }
-
-    fn stop(&mut self) -> Vec<(u128, String)> {
-        self.stop.store(true, Ordering::Relaxed);
-        if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
-        }
-        std::mem::take(&mut *self.events.lock().unwrap())
-    }
-}
-
-impl Drop for TargetTimeline {
-    fn drop(&mut self) {
-        self.stop.store(true, Ordering::Relaxed);
-    }
-}
-
-/// On a CI-only absence, prints everything needed to pin where the fixture
-/// gate's cargo actually built: the appearance timeline, per-level existence,
-/// the target roots' first levels, the handed-over environment, cargo's own
-/// resolution of the same environment, the recorded stage timings, and the
-/// tails of the gate's per-stage build logs.
-fn fixture_target_probe(root: &Path, timeline: Vec<(u128, String)>, stages: &[Stage]) -> String {
-    let mut text = String::from("fixture target timeline:");
-    if timeline.is_empty() {
-        text.push_str("\n  (no transitions; the tree never appeared)");
-    }
-    for (ms, event) in &timeline {
-        text.push_str(&format!("\n  +{ms}ms {event}"));
-    }
-    for level in [
-        "target",
-        "target/test-gate",
-        "target/test-gate/target",
-        "target/test-gate/target/debug",
-        "target/test-gate/target/debug/deps",
-        "target/debug",
-        "target/debug/deps",
-    ] {
-        text.push_str(&format!(
-            "\n  {} exists={}",
-            root.join(level).display(),
-            root.join(level).exists()
-        ));
-    }
-    for level in [
-        "target",
-        "target/test-gate/target",
-        "target/test-gate/target/debug",
-        "target/debug",
-    ] {
-        match std::fs::read_dir(root.join(level)) {
-            Ok(entries) => {
-                text.push_str(&format!("\n  {level} first level:"));
-                for entry in entries.flatten().take(30) {
-                    text.push_str(&format!("\n    {}", entry.file_name().to_string_lossy()));
-                }
+        for entry in entries.flatten() {
+            visited += 1;
+            if visited > budget {
+                return true;
             }
-            Err(error) => text.push_str(&format!("\n  {level} unreadable: {error}")),
-        }
-    }
-    text.push_str(&format!(
-        "\n  handed to the gate as CARGO_TARGET_DIR: {:?}",
-        root.join("target")
-    ));
-    match beamcraft_test_gate::capture(
-        Command::new("cargo")
-            .current_dir(root)
-            .env("CARGO_TARGET_DIR", root.join("target"))
-            .args([
-                "metadata",
-                "--format-version",
-                "1",
-                "--no-deps",
-                "--offline",
-            ]),
-    ) {
-        Ok(output) => match serde_json::from_str::<serde_json::Value>(&output) {
-            Ok(value) => text.push_str(&format!(
-                "\n  cargo resolves target_directory: {}",
-                value
-                    .pointer("/target_directory")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or("missing")
-            )),
-            Err(_) => text.push_str("\n  cargo metadata output unparsable"),
-        },
-        Err(error) => text.push_str(&format!("\n  cargo metadata failed: {error}")),
-    }
-    text.push_str("\n  recorded gate stages:");
-    for stage in stages {
-        text.push_str(&format!(
-            "\n    {} exit={} elapsed_ms={} timed_out={}",
-            stage.name, stage.exit_code, stage.elapsed_ms, stage.timed_out
-        ));
-    }
-    for stage in STEPS {
-        for suffix in ["stdout", "stderr"] {
-            let path = root.join(format!("target/run/{stage}.{suffix}.log"));
-            match std::fs::read_to_string(&path) {
-                Ok(content) => {
-                    let lines: Vec<&str> = content.lines().collect();
-                    let tail = lines.len().saturating_sub(12);
-                    text.push_str(&format!("\n  {} tail:", path.display()));
-                    for line in &lines[tail..] {
-                        text.push_str(&format!("\n    {line}"));
-                    }
-                    if lines.is_empty() {
-                        text.push_str("\n    (empty)");
-                    }
-                }
-                Err(error) => text.push_str(&format!("\n  {} unreadable: {error}", path.display())),
+            let name = entry.file_name();
+            if name.to_string_lossy().contains("beamcraft_ui") {
+                return true;
+            }
+            if entry.file_type().is_ok_and(|file_type| file_type.is_dir()) {
+                stack.push(dir.join(name));
             }
         }
     }
-    text
+    false
 }
 
 #[test]
@@ -529,6 +393,25 @@ fn the_fixture_artifact_reader_waits_out_a_late_directory_and_reports_an_absent_
     assert!(
         dir_built_within(&temp.0.join("absent"), Duration::from_millis(300)).is_none(),
         "a directory that never appears must stay a failure"
+    );
+}
+
+#[test]
+fn the_ui_artifact_walk_finds_a_buried_name_and_a_clean_tree_stays_clean() {
+    let temp = Temp::new();
+    let buried = temp.0.join("debug/build/beamcraft-cli/hash/out");
+    std::fs::create_dir_all(&buried).unwrap();
+    std::fs::write(buried.join("beamcraft_ui-abc123.rlib"), b"").unwrap();
+    assert!(
+        ui_artifacts_under(&temp.0.join("debug"), 10_000),
+        "a UI artifact buried in a per-package build directory must be found"
+    );
+    let clean = temp.0.join("clean/debug/build/beamcraft-cli/hash/out");
+    std::fs::create_dir_all(&clean).unwrap();
+    std::fs::write(clean.join("beamcraft_cli-abc123"), b"").unwrap();
+    assert!(
+        !ui_artifacts_under(&temp.0.join("clean"), 10_000),
+        "CLI-named artifacts must not trip the UI check"
     );
 }
 
@@ -625,13 +508,6 @@ fn cli_gate_runs_real_tests_and_doctests_without_building_the_ui() {
         ])
         .env("CARGO_TARGET_DIR", root.join("target"))
         .env("XDG_CACHE_HOME", temp.0.join("cache"));
-    let mut timeline = TargetTimeline::watch(vec![
-        root.join("target/test-gate"),
-        root.join("target/test-gate/target"),
-        root.join("target/test-gate/target/debug"),
-        root.join("target/test-gate/target/debug/deps"),
-        root.join("target/debug/deps"),
-    ]);
     let result = process::run("cli-gate", &mut cmd, &temp.0, Duration::from_secs(180)).unwrap();
     let stderr = std::fs::read_to_string(temp.0.join("cli-gate.stderr.log")).unwrap();
     assert_eq!(result.exit_code, 0, "{stderr}");
@@ -651,23 +527,13 @@ fn cli_gate_runs_real_tests_and_doctests_without_building_the_ui() {
             .unwrap()
             .contains("1 passed")
     );
-    let mut deps = dir_built_within(
-        &root.join("target/test-gate/target/debug/deps"),
-        Duration::from_secs(10),
-    )
-    .unwrap_or_else(|| {
-        panic!(
-            "the fixture gate built its isolated target directory; {}",
-            fixture_target_probe(&root, timeline.stop(), &report.stages)
-        )
-    });
-    timeline.stop();
-    assert!(!deps.any(|e| {
-        e.unwrap()
-            .file_name()
-            .to_string_lossy()
-            .contains("beamcraft_ui")
-    }));
+    let isolated_target = root.join("target/test-gate/target");
+    dir_built_within(&isolated_target, Duration::from_secs(10))
+        .expect("the fixture gate built its isolated target directory");
+    assert!(
+        !ui_artifacts_under(&isolated_target, 100_000),
+        "the fixture gate's isolated target must hold no beamcraft_ui artifacts"
+    );
     assert!(local::snapshot(&root, false).is_ok());
     // A green test process must not certify source changed by one of its tests.
     write(
