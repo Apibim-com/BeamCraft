@@ -3,9 +3,10 @@
 Status: **draft.** This document is the slice 1 contract of [axisrow/BeamCraft#634](https://github.com/axisrow/BeamCraft/issues/634)
 (delivery task [axisrow/BeamCraft#661](https://github.com/axisrow/BeamCraft/issues/661)): it defines what the
 `check-model` harness checks, against what basis, with what tolerances and report semantics.
-Nothing in it is implemented yet; slices 2–5 implement it and change code and this document
-together. The normative research of section 3 was retrieved on 2026-11-15; unverified rules stay
-outside the supported set.
+Slices 2–5 and the follow-ups of epic #634 (#721–#728, #741) implement it; every change of
+behaviour changes the code and this document together, and the "Validated" and "Amended"
+paragraphs of section 7.1 record what each delivery proved. The normative research of
+section 3 was retrieved on 2026-11-15; unverified rules stay outside the supported set.
 
 The guarantee is detection within the declared scope and the supported rules. These checks do
 not block export or publication, and a green report is not a structural design approval. The
@@ -61,8 +62,8 @@ Each planned check is classified by what kind of basis it may consume:
 | `PART_UNCONNECTED` | owner constraint + geometric | a required connection declared in joint intent is absent for an element in the declared scope; no declared scope ⇒ not applicable |
 | `WELD_WITHOUT_CONTACT` | owner constraint or normative | gap at the validated local joint outside the permitted range; v0.1 checks it only against an explicit owner gap requirement — no normative permitted-gap rule is supported yet (section 3.3): a declared weld connection with neither a recorded gap requirement nor a supported rule is `unknown` (`no_supported_rule`), and with no declared connection to judge the check is `not_applicable`; unvalidated local attachment is `unknown` too |
 | `CONTACT_WITHOUT_CONNECTION` | owner constraint + geometric | a contact that declared joint intent requires to be connected has no such connection; contact alone never proves a weld is needed |
-| `CORNER_NOT_CUT` | owner constraint + geometric | a required corner cut is absent, undersized, or does not provide the recorded local clearance; v0.1 checks existence and size only against recorded requirements — no normative existence rule for this joint is supported (section 3.2) |
-| `CORNER_OVERCUT` | owner constraint | a cut exceeds the upper edge of the recorded requirement's acceptance band (section 7.3): the explicitly recorded size is itself the upper bound axisrow/BeamCraft#634 allows, and a recorded standalone maximum tightens it; no normative upper bound exists (section 3.2); with no recorded corner-cut requirement at all the check is `not_applicable` |
+| `CORNER_NOT_CUT` | owner constraint + geometric | a required corner cut is absent, undersized, or does not provide the recorded local clearance — including the dependent weld-clearance judgement of section 4.4, which rides this token; v0.1 checks existence and size only against recorded requirements — no normative existence rule for this joint is supported (section 3.2) |
+| `CORNER_OVERCUT` | owner constraint | a cut exceeds the upper edge of the recorded requirement's acceptance band (section 7.3): the explicitly recorded size is itself the upper bound #634 allows, and a recorded standalone maximum tightens it; no normative upper bound exists (section 3.2); with no recorded corner-cut requirement at all the check is `not_applicable` |
 
 A check requested but not in this table is `unknown` with reason `unsupported_rule`; it never
 enters the supported set and never reports pass or fail. Unverified rules stay unknown: that is
@@ -71,9 +72,10 @@ the difference between "not checked" and "checked and fine".
 ### 2.2 Not in the first version
 
 Blocking export and publication; waivers of findings; general weld-strength/design verification
-and normative tables beyond the supported corner-cut rules (including weld leg limits and bolt
-edge distances); a checks panel in the window; automatic fixing or automatically changing cut
-geometry when related dimensions change.
+and normative tables beyond the supported corner-cut rules (including normative weld leg limits
+and bolt edge distances — the dependent geometric clearance check of section 4.4 is not one: it
+consumes no normative table and validates no weld adequacy); a checks panel in the window;
+automatic fixing or automatically changing cut geometry when related dimensions change.
 
 ## 3. Normative research: the column-base joint
 
@@ -201,6 +203,67 @@ Requirements target elements by UUID and neighbours by UUID. On every run:
 A weld elsewhere between the same parts never satisfies or invalidates a corner requirement:
 the requirement's target is the corner, and a distant weld does not address it.
 
+### 4.4 The dependent weld-clearance check at the corner
+
+The corner-cut requirement of section 4.1 locates one corner; the weld that passes it is a
+model fact, and the space the cut frees for that weld is a **dependent check** (section 4.2):
+changing a weld leg recomputes it, and the recorded requirement is never rewritten from it
+(#723). The basis is geometric; no normative number enters it, and a green clearance never
+certifies the weld.
+
+**Which weld counts.** Among the model's welds connecting the two recorded neighbours, the
+judged weld is one whose local attachment is validated (section 5.1) and whose authored path
+passes the derived corner: the corner lies within the product tolerance of the path polyline.
+A validated path that misses the corner is a weld elsewhere between the same parts (section
+4.3): it produces no corner finding. With no qualifying weld and no unvalidated weld between
+the neighbours the clearance check is `not_applicable` for that requirement — an established
+absence. A weld between the neighbours whose attachment stays unvalidated (a pathless A06
+weld, or a path that misses both surfaces) leaves the clearance `unknown`
+(`attachment_unvalidated`) when no qualifying weld exists: the model cannot establish whether
+that weld passes the corner. The independent size checks `CORNER_NOT_CUT` and
+`CORNER_OVERCUT` are unaffected in every case.
+
+**The geometric identity.** The weld fillet at the corner is rebuilt from the record: the
+right-triangle fillet cross-section the recorded A15 weld solid is built from, with both legs
+equal to the recorded size `K`, anchored with its right angle at the derived corner, its legs
+along the derived corner's two contact lines — the contact lines of section 7.1, which run
+along the two neighbour surfaces — translated along the qualifying weld's validated path
+without re-orientation. That placement is the one placement of this check; the recorded A15
+solid itself sits at its own path start by the A15 frame rule and is not the judging geometry
+(section 7.1). The verdict is read on the **admitted leg**, the measure of section 7.1
+(#725): the largest `k` for which the fillet triangle of leg `k` at this corner — one vertex
+at the corner, the other two at distance `k` along the two contact lines — contains no rib
+material of the final evaluated body **over the rib's full thickness**. The recorded leg `K`
+is compared with the admitted leg through the unchanged near-threshold rule of section 7.3,
+with the **product contact tolerance as the comparison's band tolerance** — the clash rule's
+own comparison style, since the clearance comparison records no tolerance of its own: a
+recorded leg determinately above the admitted leg is the finding. For a right-angle chamfer
+of leg `c` the
+admitted leg is its smaller leg, so the identity reduces to `c ≥ K`; a rounding with the same
+setback admits less (`R·(2 − √2)` at a right angle) and can fail where the chamfer passes —
+the identity reads the final body, never the authored treatment, and no normative number
+enters it. The recorded `side` of the weld is named in the finding's basis; the placement
+does not consume it — the sides are read from the corner's geometry, and that ceiling is
+recorded (section 7.1).
+
+**A distinguishable result.** The clearance finding rides the existing `CORNER_NOT_CUT`
+token — the contract already folds the local clearance into it (section 2.1 and 12) — and is
+kept distinguishable by its basis, never by a new token: the basis names the derived corner,
+the weld record and the geometric identity of this section, and the requirement's
+`required_mm` stays the recorded size (section 4.2). The finding reports the admitted leg as
+its measurement with the recorded weld leg `K` as the bound it was compared against, named as
+coming from the weld record, so it cannot be mistaken for the explicit size requirement. The
+basis names the judged weld by its id.
+
+**No fix, and the conflict stated** (#723). A clearance finding never carries a fix: a larger
+cut and a smaller weld both repair it, and geometry does not choose a weld size (section 9) —
+a chamfer of the weld leg can itself overcut the recorded requirement. Its message says which
+repairs remain. A cut `c` clears the weld when `K + δ − t < c` and passes the size check when
+`c + δ` stays below the band's upper edge, so once `K ≥ upper edge + t − 2δ` no cut does both:
+the message then states that the recorded requirement and the weld leg conflict, and that a
+smaller weld or a changed requirement repairs it. Below that bound it states that a larger cut
+inside the acceptance band or a smaller weld repairs it.
+
 ## 5. Joint intent: declared connections
 
 Joint intent is **model data**, recorded and edited only by explicit commands:
@@ -230,12 +293,28 @@ missing. Consequences:
 ### 5.1 Local attachment of welds
 
 Finding a weld record between two element IDs does not locate it at the joint. A weld's local
-attachment is **validated** against the final evaluated bodies: the weld solid must lie at the
-declared contact of the two connected parts within the product tolerance. A weld with no path
-is checked at its placed solid; a weld whose placed solid cannot be located at the declared
-joint is **not** locally attached: the dependent checks (clearance, gap) are `unknown` with
-reason `attachment_unvalidated`, while independent checks (the corner requirement, clash,
-completeness) are unaffected. A path stored on the weld is a hint for the validation, not proof.
+attachment is **validated** against the final evaluated bodies, one authored path point at a
+time (#724): a point lies at the declared contact of the two connected parts when either
+
+- it lies within the product tolerance of **both** surfaces — a tight fit; or
+- it lies **between the two facing surfaces**: it is outside the material of both parts, the
+  opening it spans — the sum of its distances to the two surfaces — agrees within the
+  product tolerance with the distance between the two nearest surface points, so the point
+  spans the contact rather than air beside it, and those two surface points **face each
+  other**: each is the other's nearest point on its own part, within the product tolerance
+  (#724). A point lying on one part's surface away from the joint fails the last condition —
+  its own surface point is the point itself, and the other part's nearest point lies elsewhere
+  on that surface, not across an opening — and so does a point on a part's far face, whose
+  nearest point on the other part lies across that part's own material.
+
+The second case is what lets an attached weld bridge an opening of any size: local attachment
+does not cap the measurable opening at the contact tolerance, and the gap rule judges the
+spanned opening against the recorded requirement. A weld with no path is checked at its placed
+solid; a weld whose placed solid cannot be located at the declared joint is **not** locally
+attached: the dependent checks (clearance, gap) are `unknown` with reason
+`attachment_unvalidated`, while independent checks (the corner requirement, clash,
+completeness) are unaffected. A path stored on the weld is a hint for the validation, not
+proof.
 
 ### 5.2 Recorded shape (slice 3, 2026-11-15)
 
@@ -281,20 +360,35 @@ cap triangles and plane-cut half-spaces, then compare with the final closed mesh
 part. Slice 2 validated a simpler method that satisfies the same requirements, and the contract
 below stays what any implementation must satisfy, not the algorithm:
 
-**Validated in slice 2 (2026-11-15).** The implementation compares the two **final evaluated
-closed meshes** directly (`kernel::contact`): the surface facts — strict crossing, coplanar
-face contact, edge/point touch, separation, full containment — are decided by the kernel's
-exact predicates and are properties of the surfaces, so they cannot depend on a triangulation
-or on an artificial decomposition; there are no internal faces to offset. The measured
-penetration depth samples the two meshes' vertices and per-face interior probes (exact
-midpoint chains), is a deterministic lower bound of the true depth, and is invariant under
-re-triangulations that keep the vertex set; a proven crossing whose overlap touches no sample
-reports `unknown` (`indeterminate`), never a guess. The adversarial cases of axisrow/BeamCraft#634 are
-exercised in `kernel::contact::tests` and `steel::engine::check::tests`: face contact,
-edge/point contact, separation, containment without a surface meeting, corner overlap,
-rotated placements, and diagonal-flip re-triangulations. Remaining ceilings, recorded here:
-depth sampling is vertex-based (a vertex-independent depth needs the intersection region),
-and a point classification whose six axis rays all graze edges/vertices reports unresolved.
+**Validated in slice 2 (2026-11-15), amended for #722 and #740 (2026-11-17).** The
+implementation compares the two **final evaluated closed meshes** directly (`kernel::contact`):
+the surface facts — strict crossing, coplanar face contact, edge/point touch, separation,
+full containment — are decided by the kernel's exact predicates and are properties of the
+surfaces, so they cannot depend on a triangulation or on an artificial decomposition; there
+are no internal faces to offset. The measured depth is the sampled measure (#740): the two
+meshes' vertices, per-face interior probes (exact midpoint chains), and — per surface edge
+(an edge whose adjacent triangles are not coplanar, so the edge set is a property of the
+surface) — the midpoint between that edge's consecutive strict crossings of the other shell
+(#722's crossing reading, folded into the samples). The edge traversal reaches both a
+through-penetration whose overlap carries no vertex or probe of either body (#722) and a
+last-place placement dip whose sliver is thinner than a coordinate step (#721); the value is
+a deterministic lower bound, invariant under re-triangulations that keep the vertex set, and
+never depends on where vertices or probes happen to lie. The crossing run — the largest
+inside run of a strictly crossing surface edge, with the intervals decided by exact midpoint
+classifications — stays the last resort for a proven surface crossing the samples cannot
+read at all; a run that cannot be decided (a flush wall or a graze puts an interval midpoint
+on a surface, or a pierce parameter is not representable) reports no value. A proven
+crossing that neither measure can read reports `unknown` (`indeterminate`), never a guess.
+The adversarial cases of #634 are exercised in `kernel::contact::tests` and
+`steel::engine::check::tests`: face contact, edge/point contact, separation, containment
+without a surface meeting, corner overlap, rotated placements, diagonal-flip
+re-triangulations, and the through-penetration with no vertex of either body inside the
+other. Remaining ceilings, recorded here: the sampled measure reads only its samples, so a
+surface region no sample reaches can only make the value smaller; the crossing run bounds
+each edge's intervals by that edge's strict crossings, so a graze that hides a strict event
+— a segment passing exactly through a shared vertex of the other mesh between crossings —
+can over-read that one edge's run, while a flush run along a face refuses; and a point
+classification whose six axis rays all graze edges/vertices reports unresolved.
 
 The requirements any implementation must satisfy:
 
@@ -315,14 +409,126 @@ The requirements any implementation must satisfy:
 
 **Validated in slice 3 (2026-11-15).** Local weld attachment and the local gap are measured
 against the two final evaluated meshes with the kernel's exact point-to-triangle distances: a
-weld is locally attached only when every authored path point lies within the product tolerance
-of both surfaces — the near-threshold rule decides the band edges, and a pathless A06 weld has
-no placed solid at the joint, so it is never locally attached. The local gap of an attached
-weld is the smallest summed point-to-surface distance of the path points: the opening the weld
-bridges at the declared contact. Both measurements are sample-based like the depth
-measurement: a surface region no sample reaches can only make the true distance smaller, and
-a permitted range beyond roughly twice the contact tolerance can never be satisfied by an
-attached weld; both ceilings are recorded here.
+weld is locally attached when every authored path point lies at the declared contact — within
+the product tolerance of both surfaces, or between the two facing surfaces (section 5.1, #724)
+— and a pathless A06 weld has no placed solid at the joint, so it is never locally attached.
+The opening at a path point is the sum of its distances to the two surfaces. The gap
+requirement applies over the **whole polyline**, not its smallest sample: the lower bound
+judges the minimum opening, and the upper bound judges the maximum. A measured point outside
+the acceptance band proves a failure. Passing requires bounds covering every segment;
+unresolved coverage or an exhausted work budget stays `unknown` (`indeterminate`).
+
+**Amendment for #749.** Segment bounds use the distance function's geometry: distance to a
+surface is 1-Lipschitz, so the summed opening is 2-Lipschitz; distance to any one closed triangle
+is convex, so its maximum on a segment is bounded by the larger endpoint distance. Adaptive
+subdivision tightens these conservative bounds, with the same mesh uncertainty and physical
+band of section 7.3. Exact zero needs a surface proof covering the entire path; endpoint
+membership alone cannot prove it across a hole or retreat. A coverage proof that the bounded
+method cannot establish remains unknown, never green. Local attachment still consumes the
+validated points of section 5.1, including any additional points the gap check visits. The slice-3 ceiling "a permitted range beyond roughly twice the
+contact tolerance can never be satisfied by an attached weld" is dropped by #724 (2026-11-16):
+the between-surfaces attachment test spans openings of any size, and the span's agreement
+check (summed distances versus the distance between the nearest surface points) is what the
+near-threshold rule decides.
+
+**Validated in slice 4 (2026-11-16), amended for #725 and #746.** The corner-cut rules derive
+the requirement's corner from the final evaluated geometry and the two neighbour bodies on every
+run, never from an authored contour vertex: an authored contour edge is a **contact line** of
+the neighbour its evaluated wall provably touches along a stretch (at least two distinct
+points, in the rib plate's local contour frame, of evaluated rib mesh vertices that provably
+touch the neighbour lie on the edge's supporting line; an edge touching at a single point, such
+as a contour-authored chamfer's end, is no contact line), and every intersection of one
+contact line of each neighbour — itself within the contact tolerance of both neighbour
+surfaces — is a candidate corner. A chamfer authored as corner parameters, as contour points,
+or as a plane cut leaves the same contact lines and receives the same candidates. Exactly one candidate is judged; zero or several are `unknown`
+(`target_unresolved`), and a wall vertex at a neighbour's contact band edge keeps the
+candidate set from being established (`indeterminate`); a faceted arc vertex between a
+rounding's tangent points lies on no contact line and decides nothing.
+
+The cut is measured on the rib's final body over its full thickness by two values (#725's
+measure): the **admitted leg** — the largest `k` for which the triangle with one vertex at
+the derived corner and the other two at distance `k` from it along each neighbour's surface
+contains no rib material; for a chamfer it is the smaller leg, for a rounding of radius `R`
+at a right angle `R·(2 − √2)` — and the **largest setback** — the larger of the two
+distances from the corner to where the rib's final body first meets each neighbour; for a
+chamfer the larger leg, for a rounding `R`. The setbacks are read at the evaluated vertices
+provably touching each neighbour on one of its contact lines: the tangent points sit on the
+authored edge lines and the arc facets between them lie on no line, so the setbacks never
+follow the arc faceting. The admitted leg is the least projection sum onto the corner's two
+contact lines over all evaluated mesh vertices inside the corner's forward quadrant, scaled
+by the corner angle — sampled on the body, so a value sits within the body's reported mesh
+bound. A rounding and a chamfer with the same setbacks differ in the admitted leg: that is
+the non-equivalence #634 describes. The admitted leg goes through the acceptance band
+`[required − tolerance, upper edge]`'s lower edge — determinately below is `CORNER_NOT_CUT`
+with `measured_mm` the admitted leg — and the largest setback through its upper edge, which
+the recorded standalone `upper_bound` replaces — determinately above is `CORNER_OVERCUT`
+with `measured_mm` the largest setback; both findings are reported when both hold, and an
+interval straddling a band edge stays `unknown` (`indeterminate`), with the near-threshold
+rule and `δ = max(mesh bounds, t/2)`. Both values are reported as the named `admitted_leg`
+and `largest_setback` entries of the finding's `bounds` (section 8.1). Recorded ceilings of
+that reading: the values are sampled at evaluated vertices, so a retreat with no vertex of
+its own is not measured; the standard two-corner shapes (a rib flush with the neighbour
+face) report several candidates before the measurement runs; and the derivation reads the
+authored plate contour's edge lines, so a rib that is not an authored plate reports
+`target_unresolved`. The one unambiguous repair of `CORNER_NOT_CUT` (section 9) sets the
+required chamfer at the authored vertex the derived corner maps back to, and is offered only
+when the rib carries no plane cut, that vertex exists, its treatment is absent or a chamfer,
+the adjacent vertices carry no treatments, the corner really turns, and the required leg fits
+both adjacent edges.
+
+**Added by #723 (2026-11-16).** The dependent clearance check (section 4.4) reads its
+admitted leg from the final body with the kernel's contact facts: the fillet triangle of leg
+`k` grows from the derived corner along the corner's two contact lines — the contact lines
+the corner derivation (above) establishes for the two neighbours, which run along the
+neighbour surfaces — and whether a triangle of a given `k` contains rib material is decided
+by the same contact decision class as `PART_CLASH` (point containment against the rib's final
+mesh, with the near-threshold rule at the band edge). The verdict compares the recorded weld
+leg against that admitted leg through section 7.3, never the raw penetration depth: at a
+right angle the penetration of an oversized fillet scales the leg deficit by `1/√2`, so a
+depth-based band would silently rescale the tolerance.
+Recorded ceilings: the fillet cross-section is translated along the qualifying path without
+re-orientation and does not re-orient by the weld's recorded `side` (the sides are read from
+the corner's geometry, section 4.4), and the recorded A15 solid stays the weld's own placed
+body — anchored at its path start by the A15 frame rule — not the judging geometry.
+
+**Amended by #741 (2026-11-17).** A **coincident face** — a pair of meeting triangles, one
+of each shell, in one exact plane, overlapping in area and facing the same way — proves an
+interior overlap: both closed, consistently oriented shells keep their material on the inward
+side of the shared area. A duplicate part shares every face this way, and no edge crosses the
+other shell while every vertex and face probe lies on the other surface, so before this
+amendment the pair read as touching and green; a copy shifted by less than the contact
+tolerance read only its slivers. The contact facts record the coincident face and keep
+scanning, so a strict crossing found elsewhere still decides the relation as a surface
+crossing; without one the relation is an overlap without a surface crossing. Its depth starts
+on the shared faces: from each face probe of a triangle with a coincident partner, the
+segment along the inward normal runs inside both shells until it first pierces either
+surface, and the midpoint of that first interval, kept only when the exact containment
+classification places it strictly inside both shells, is measured to the other shell's
+surface. The deeper of this and the sampled measure is the reported depth — a deterministic
+lower bound, never the length of the ray. Ceilings: a duplicate thinner than twice the
+contact tolerance (a sheet under 1 mm) reads at most half its thickness and stays
+`indeterminate`, never green; a probe whose ray parameter is not representable, or whose
+midpoint the classification leaves unresolved, contributes nothing; and rotated meshes are
+re-admitted from their evaluated vertices without re-certification, so a near-degenerate
+sliver whose orientation flips in rounding could read as a coincident face.
+
+**Amended by #721 (2026-11-17).** The contact decision's boundary case is decided at the
+shell level: a segment that pierces the other shell's plane exactly on a triangle's edge or
+vertex proves a crossing only through the local surface around the point — the star of
+triangles sharing that edge, or all triangles at the shared vertex — each of whose planes the
+segment must pass through transversally at the point. A segment running along one of those
+face planes (a contact face's cap diagonal grazing a wall exactly at its bottom edge), or
+leaving the surface at a rim where the star has no continuation, touches the shell: exact
+face contact reports `Touching` with `face_contact` wherever the footprint lies, and the
+result is invariant under a different valid triangulation. The measured penetration depth
+samples, besides vertices and per-face probes, the midpoint between consecutive transversal
+pierce points of each edge through the other shell: the sample that measures the last-place
+dip of an evaluated quarter-turn placement into its host, whose sliver no vertex or face
+probe reaches (the sample's coordinate is a plain measurement; the strict containment
+classification filters it, and the value stays a deterministic lower bound). A flush pair
+whose surfaces meet while part of one body reads strictly inside and part outside is a
+proven interior overlap without a surface crossing; only under `Separated` do mixed
+containment answers stay the defensive error they were.
 
 ### 7.2 Two tolerance layers, kept separate
 
@@ -352,6 +558,16 @@ mesh approximation and half the contact tolerance together. Then:
 - pass/fail only when the interval lies **strictly inside** the acceptance region or **strictly
   outside** it — that is, `δ` is tested at the band edges of the acceptance region, and the
   recorded `tolerance_mm` therefore widens what is accepted, not just what is reported;
+- a band edge at or below the physical floor of the measured quantity cannot straddle (#724):
+  no physical value lies beyond it. A measured gap is never negative, so a permitted-range
+  lower edge at or below zero is never tested — only the upper edge decides there. A measured
+  zero still carries `δ`, so it passes `[0, max]` only when `max + tolerance` exceeds `δ`;
+- an **exact contact at the weld** is not a measurement (#724): when the exact predicates prove that every segment of the
+  polyline lies on both surfaces, the parts meet along the whole path and the opening is exactly zero, with no physical tolerance band around it.
+  It passes any range whose lower edge `min − tolerance` is at or below zero — "contact
+  required" `[0, 0]` with no tolerance included — and fails a range that requires an opening.
+  A path in a thin opening, however thin, is outside both materials and keeps the measured
+  rule;
 - `unknown` with reason `indeterminate` and the measured value reported, when the interval
   straddles a band edge — a near-threshold result never silently resolves to pass or fail, and
   its resolution must not depend on artificial decomposition boundaries.
@@ -362,6 +578,9 @@ acceptance region is `10 ± tolerance_mm`, and its upper edge is the overcut bas
 strictly above the band and "subject to the recorded tolerance" in the literal sense of the
 rule above. The upper edge here is the owner's recorded size, not a derived or normative
 maximum (section 3.2); a recorded gap requirement's permitted ends are bounded the same way.
+Where a rule measures two values against the two edges of one band (the corner-cut rule's
+admitted leg and largest setback, section 7.1), each edge is tested with the near-threshold
+rule against its own value, and the two findings are independent.
 
 ## 8. Findings and report semantics
 
@@ -384,7 +603,10 @@ A **finding** carries: `rule`, `status` (`fail` or `unknown`), `elements` (IDs a
 `measured_mm` / `required_mm` where meaningful, the applicable tolerances and mesh bounds,
 `missing_inputs`, and a nullable `fix` (section 9). Where several dimensions and bounds apply
 (one measurement against several recorded bounds), they are a named array of
-`{bound, tolerance, source}` entries, not a single collapsed number.
+`{bound, tolerance, source}` entries, not a single collapsed number; the corner-cut findings
+report their two measured values the same way, as the named `admitted_leg` and
+`largest_setback` entries of that array beside the recorded bounds, with the measurement
+uncertainty as the entry's tolerance and `"measured"` as its source.
 
 Pagination (`--offset`, `--limit`) affects only the `findings` page; status, counts and
 coverage always cover the whole checked scope, so paging never hides a red or unknown overall
@@ -413,6 +635,7 @@ require recorded inputs the model must already contain.
   `null`. Parameterized chamfers, contour-authored chamfers and plane cuts that produce
   equivalent final geometry receive equivalent results; a rounding with equal setbacks is **not**
   equivalent (different freed space at a right-angle corner) and must not receive the same fix.
+  The dependent weld-clearance finding of section 4.4 carries no fix at all (#723).
 - The workflow is: apply one fix, **recheck**, then select the next fix — commands from an
   earlier report may no longer apply. There is no promise that blindly executing every hint
   reaches green; a contact that does not require a weld never receives an unconditional
@@ -422,7 +645,8 @@ require recorded inputs the model must already contain.
 
 - `check-model` checks a **committed revision**: the head at the moment the check starts,
   named in the reply. No unpinned head is checked implicitly after completion; every status in
-  the reply belongs to the named revision.
+  the reply belongs to the named revision. Geometry, requirements and weld records are all
+  read from that same verified snapshot; none is obtained by reopening the current head.
 - **Drafts are not checked in v0.1.** Batched operations are drafted and have not published a
   revision; reading the saved head would check the wrong model. Draft checks report *not
   performed* with an explicit `unknown` reason (`draft_not_evaluated`). After a successful
@@ -438,7 +662,9 @@ A successful write operating on a model store gains a short `checks` summary: th
 revision, overall status and counts. Non-negotiables:
 
 - **Revision-specific.** The summary checks the resulting revision, not an unpinned head that
-  could have moved since the command completed.
+  could have moved since the command completed. A replay checks its recorded result revision,
+  including after later edits; if that revision is unavailable, checks are unavailable with
+  a reason. The same rule applies to ordinary, session and batch-commit replies.
 - **Budget.** The summary fits the existing `print_json` output budget (1 MiB text,
   65 536 tokens of scratch, `LIMIT_EXCEEDED` fallback in `apps/beamcraft-cli/src/report.rs`):
   counts only, never finding pages.
@@ -452,6 +678,24 @@ revision, overall status and counts. Non-negotiables:
   it has a checks panel. The opt-out is the environment variable
   `BEAMCRAFT_CHECKS_SUMMARY=off`: set to exactly `off`, write replies omit the `checks`
   summary for that process; unset or any other value keeps summaries on.
+- **Delivery note (slice 5).** The seam sits in the CLI dispatcher's tail, which both the
+  one-shot process and every session command line answer through, plus an explicit attach in
+  `batch-commit`. "Operating on a model store" is resolved to the registry routes whose write
+  commands publish model revisions: the modelling, definition, construction and recorded-input
+  routes, and the reference and numbering routes. Writes outside that set carry no summary,
+  each for a stated reason: the store-level primitives (`put-blob`, `commit-revision`) manage
+  blobs and revisions of arbitrary content; `export-view`, `screenshot-view`, `export`,
+  `export-bom`, `schedule-export`, the changeset and IFC routes and the drawing documents
+  render output files or their own documents; the named-view route stores display state and
+  `add-library` writes the named library file; history, coordinator and coordination manage
+  compaction, leases and descriptors; `create-project` provisions a fresh store and changes
+  no modelled revision (it takes `--parent`/`--name`, no `--store`, so the summary seam does
+  not reach it); and the routes that return before `dispatch` (`session`, the batch words,
+  `commands`) run no model write in their own process. The summary shapes: a checked model
+  reports `revision_id`, `status` (`green | red | unknown`), `counts` per rule and
+  `findings_total`; a drafted write reports `status` `unknown` with `reason`
+  `draft_not_evaluated` and names no revision; an unavailable check reports `status`
+  `unavailable` with the reason — never silently green.
 
 ### 11.1 Whole-reply assertion audit and cost honesty
 
@@ -478,6 +722,17 @@ milliseconds for this fixture (12 pairs, 12 triangles per body, box-pruned candi
 exact-predicate fallbacks far below the budget). No budget or pair cap was hit. The numbers are
 a debug-build lower bound on useful work, not a release-build promise; slice 5 re-measures on
 the sample fixture before shipping write-reply summaries.
+
+**Slice 5 measurement (2026-11-16, before shipping the summaries).** Same fixture shape
+(eight 1000×500×10 plates, material defined, two penetrating layers) in a debug build on
+Apple Silicon, as `create-plate` wall time with and without the summary
+(`BEAMCRAFT_CHECKS_SUMMARY=off`): 1.59 s with and 1.21 s without, on a store grown to nine
+plates by the measured write itself. The delta — about 0.4 s — is the follow-up check of the
+resulting revision and is dominated by the same strict reader and layer parse every read
+command performs; the check decisions stay in the tens of milliseconds. The summary object
+itself is counts only and adds under 0.7 KiB to the reply. The CLI integration suite (real
+binary, nextest, debug) ran the full local gate with the summaries on; the recorded receipt
+of the slice 5 PR carries the stage times, which is the honest suite-level measurement.
 
 ## 12. Sample fixture (acceptance seeds)
 

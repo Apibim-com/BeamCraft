@@ -1,24 +1,23 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! Q03 slices 2–3: collect and check one identified revision (`check-model`).
+//! Q03 slices 2–4: collect and check one identified revision (`check-model`).
 //!
 //! The command is a read: it opens the verified head revision (the committed
 //! head at the moment the check starts, named in the reply), re-evaluates its
 //! parts with the same kernel path as every other reader, runs the supported
 //! checks of `docs/contracts/q03-model-checks-draft-v0.1.md` — the geometric
-//! `PART_CLASH` rule, the three completeness rules, and since slice 3 the
-//! connectivity rules `PART_UNCONNECTED`, `WELD_WITHOUT_CONTACT` and
-//! `CONTACT_WITHOUT_CONNECTION` over the recorded inputs — and reports the
-//! findings with the whole-scope counts and coverage. Partial evaluation is
-//! explicit: evaluated and unevaluated elements are collected separately and
-//! every element of the scope lands in exactly one coverage bucket, so a
-//! model that cannot be fully evaluated is never silently green. No store
-//! carries joint intent or recorded requirements yet: a caller without them
-//! passes the default inputs, the connectivity rules stay not applicable for
-//! every element (contract section 5), and the coverage paragraph says so.
-//! The corner-cut pair arrives with its slice; a check requested from the
-//! supported set today never reports pass or fail for it.
+//! `PART_CLASH` rule, the three completeness rules, the connectivity rules
+//! `PART_UNCONNECTED`, `WELD_WITHOUT_CONTACT` and `CONTACT_WITHOUT_CONNECTION`
+//! over the recorded inputs, and since slice 4 the corner-cut rules
+//! `CORNER_NOT_CUT` and `CORNER_OVERCUT` over the recorded corner-cut
+//! requirements — and reports the findings with the whole-scope counts and
+//! coverage. Partial evaluation is explicit: evaluated and unevaluated
+//! elements are collected separately and every element of the scope lands in
+//! exactly one coverage bucket, so a model that cannot be fully evaluated is
+//! never silently green. A model with no recorded requirements still checks
+//! everything that does not need them; the coverage paragraph states the
+//! applicability of the rule groups that need recorded inputs.
 
 use crate::plate::Inspection;
 use beamcraft_model::error::ErrorCode;
@@ -28,19 +27,36 @@ use std::collections::BTreeMap;
 use steel::engine::check;
 use steel::engine::check::{CONTACT_TOLERANCE_MM, ClashState, ElementBody};
 use steel::engine::quantity::is_superseded_algorithm;
+use steel::engine::transform::placement_to_local;
 
 type Run<T> = Result<T, Refusal>;
 
 /// The supported rule tokens of this slice, in report order.
-pub const RULES: [&str; 7] = [
+pub const RULES: [&str; 9] = [
     "PART_CLASH",
     "PART_UNCONNECTED",
     "WELD_WITHOUT_CONTACT",
     "CONTACT_WITHOUT_CONNECTION",
+    "CORNER_NOT_CUT",
+    "CORNER_OVERCUT",
     "PART_WITHOUT_MATERIAL",
     "PART_DEGENERATE",
     "QUANTITY_STALE",
 ];
+
+/// A supported repair named by a finding (contract section 9): the command, its
+/// arguments and the effect it states. A finding carries a fix only when the intended
+/// repair and all its inputs are unambiguous; otherwise the fix is absent with an
+/// explanation.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FixHint {
+    /// The repair command.
+    pub command: &'static str,
+    /// The command's arguments, ready to replay.
+    pub arguments: Vec<String>,
+    /// What the repair does to the model.
+    pub effect: String,
+}
 
 /// One finding of the report (`fail` or `unknown`; a pass is no finding).
 #[derive(Debug, Clone, PartialEq)]
@@ -64,8 +80,19 @@ pub struct Finding {
     /// The named bounds of a range comparison, where one measurement is
     /// judged against several recorded bounds (contract section 8.1).
     pub bounds: Vec<check::NamedBound>,
+    /// The mesh approximation bound the measurement read, in millimetres: the
+    /// largest chord deviation among the evaluated bodies the measurement
+    /// used (contract section 7.2); absent where nothing was measured.
+    pub mesh_bound_mm: Option<f64>,
+    /// The effective comparison tolerance the comparison applied, in
+    /// millimetres: `max(mesh bound, contact tolerance / 2)` (contract
+    /// section 7.3); absent where no comparison ran.
+    pub effective_tolerance_mm: Option<f64>,
     /// The inputs whose absence kept the check from deciding.
     pub missing_inputs: Vec<&'static str>,
+    /// The unambiguous repair, when one exists (contract section 9); absent
+    /// with the finding's message explaining what is missing otherwise.
+    pub fix: Option<FixHint>,
 }
 
 /// One element's coverage bucket: every element of the scope lands in
@@ -150,10 +177,24 @@ fn limitations_text(inputs: &check::RecordedInputs) -> String {
             intent.connections.len(),
         ),
     };
+    let corner = match inputs.corner_cuts.len() {
+        0 => "no corner-cut requirement is recorded, so the corner-cut rules \
+              (CORNER_NOT_CUT, CORNER_OVERCUT) are not applicable for any element"
+            .to_owned(),
+        count => format!(
+            "the corner-cut rules ran over {count} recorded requirement(s), each judged \
+             at the corner re-derived from the final evaluated geometry against its \
+             recorded neighbours; a requirement whose target or corner does not resolve \
+             stays unknown (target_unresolved); the dependent weld-clearance judgement \
+             (contract 4.4) rides the corner token for a requirement only where a \
+             validated weld's path passes the derived corner, and is not applicable for \
+             a requirement when no weld sits between its recorded neighbours"
+        ),
+    };
     format!(
-        "the supported set covers the geometric clash rule, the completeness rules and \
-         the connectivity rules under recorded joint intent; {connectivity}; corner-cut \
-         rules are not supported yet and stay unknown, weld adequacy is not validated, \
+        "the supported set covers the geometric clash rule, the completeness rules, the \
+         connectivity rules under recorded joint intent and the corner-cut rules under \
+         recorded requirements; {connectivity}; {corner}; weld adequacy is not validated, \
          welds and bolt groups are not clash subjects yet, lofted plates and bent plates \
          outside the evaluated sets are not re-evaluated here, and the checks decide \
          contact and clearance, not structural adequacy"
@@ -280,7 +321,10 @@ pub fn check_model(
                 required_mm: None,
                 tolerance_mm: None,
                 bounds: Vec::new(),
+                mesh_bound_mm: None,
+                effective_tolerance_mm: None,
                 missing_inputs: Vec::new(),
+                fix: None,
             });
         }
         covered.insert(*id);
@@ -314,32 +358,37 @@ pub fn check_model(
                     required_mm: None,
                     tolerance_mm: Some(CONTACT_TOLERANCE_MM),
                     bounds: Vec::new(),
+                    mesh_bound_mm: None,
+                    effective_tolerance_mm: None,
                     missing_inputs: vec!["unresolved contact predicates"],
+                    fix: None,
                 });
                 continue;
             };
             match outcome.state {
                 ClashState::Clear => {}
                 ClashState::Indeterminate => {
+                    let depth_text = outcome.measured_mm.map_or_else(
+                        || "the measured depth is unmeasured".to_owned(),
+                        |m| format!("the measured depth {m:.3} mm sits at the tolerance band edge"),
+                    );
                     push(Finding {
                         rule: "PART_CLASH",
                         status: "unknown",
                         elements: vec![(a.id, a.name.clone()), (b.id, b.name.clone())],
                         message: format!(
-                            "the parts overlap ({}) but the measured depth {} sits at the \
-                         tolerance band edge",
-                            outcome.contact,
-                            outcome.measured_mm.map_or_else(
-                                || "is unmeasured".to_owned(),
-                                |m| format!("{m:.3} mm")
-                            ),
+                            "the parts overlap ({}) but {}, so the pair stays undecidable",
+                            outcome.contact, depth_text,
                         ),
                         basis: "geometric identity: solid interior overlap".into(),
                         measured_mm: outcome.measured_mm,
                         required_mm: Some(CONTACT_TOLERANCE_MM),
                         tolerance_mm: Some(CONTACT_TOLERANCE_MM),
                         bounds: Vec::new(),
+                        mesh_bound_mm: Some(outcome.mesh_bound_mm),
+                        effective_tolerance_mm: Some(outcome.delta_mm),
                         missing_inputs: vec!["indeterminate"],
+                        fix: None,
                     });
                 }
                 ClashState::Penetrated => {
@@ -356,7 +405,10 @@ pub fn check_model(
                         required_mm: Some(CONTACT_TOLERANCE_MM),
                         tolerance_mm: Some(CONTACT_TOLERANCE_MM),
                         bounds: Vec::new(),
+                        mesh_bound_mm: Some(outcome.mesh_bound_mm),
+                        effective_tolerance_mm: Some(outcome.delta_mm),
                         missing_inputs: Vec::new(),
+                        fix: None,
                     });
                 }
             }
@@ -399,7 +451,52 @@ pub fn check_model(
             required_mm: finding.required_mm,
             tolerance_mm: finding.tolerance_mm,
             bounds: finding.bounds,
+            mesh_bound_mm: finding.mesh_bound_mm,
+            effective_tolerance_mm: finding.delta_mm,
             missing_inputs: finding.missing_inputs,
+            fix: None,
+        });
+    }
+
+    // The corner-cut rules over the recorded corner-cut requirements (contract
+    // sections 2.1, 4.1 and 7.3). With no recorded requirement they produce nothing —
+    // an established absence the coverage paragraph names. Each resolved requirement
+    // is judged at the corner re-derived from the final evaluated geometry, and its
+    // finding may carry the one unambiguous repair the contract allows: setting the
+    // required chamfer at the authored corner vertex.
+    for corner in check::corner_cut_findings(
+        inputs,
+        &bodies,
+        &inspection.plates,
+        &scope,
+        &model_elements,
+        CONTACT_TOLERANCE_MM,
+    ) {
+        let fix = corner_fix(&corner, inspection);
+        push(Finding {
+            elements: corner
+                .finding
+                .elements
+                .iter()
+                .map(|id| {
+                    (
+                        *id,
+                        id_name(id, inspection).unwrap_or_else(|| id.to_string()),
+                    )
+                })
+                .collect::<Vec<_>>(),
+            rule: corner.finding.rule,
+            status: corner.finding.status,
+            message: corner.finding.message,
+            basis: corner.finding.basis,
+            measured_mm: corner.finding.measured_mm,
+            required_mm: corner.finding.required_mm,
+            tolerance_mm: corner.finding.tolerance_mm,
+            bounds: corner.finding.bounds,
+            mesh_bound_mm: corner.finding.mesh_bound_mm,
+            effective_tolerance_mm: corner.finding.delta_mm,
+            missing_inputs: corner.finding.missing_inputs,
+            fix,
         });
     }
 
@@ -422,7 +519,10 @@ pub fn check_model(
                 required_mm: None,
                 tolerance_mm: None,
                 bounds: Vec::new(),
+                mesh_bound_mm: None,
+                effective_tolerance_mm: None,
                 missing_inputs: Vec::new(),
+                fix: None,
             });
         }
         covered.insert(id);
@@ -483,13 +583,18 @@ pub fn check_model(
             required_mm: None,
             tolerance_mm: None,
             bounds: Vec::new(),
+            mesh_bound_mm: None,
+            effective_tolerance_mm: None,
             missing_inputs: Vec::new(),
+            fix: None,
         });
     }
 
     // The coverage of every other scope element: established absences of the
-    // supported set (welds, bolts, lofted plates, assemblies, ...) are named,
-    // never silently skipped.
+    // supported set are named, never silently skipped, and a solid part the
+    // checks cannot evaluate stays unknown — non-applicability must be
+    // established, not used to hide missing inputs (contract sections 6 and
+    // 8.1).
     for id in &scope {
         if part_ids.contains(id) || covered.contains(id) {
             continue;
@@ -501,7 +606,23 @@ pub fn check_model(
         let bucket = if meta.get(id).is_some_and(|m| m.deactivated) {
             Bucket::NotApplicable("deactivated")
         } else {
-            Bucket::NotApplicable("not_a_check_subject_yet")
+            match kind.as_str() {
+                // Every plate-form element reaching this loop is a real part
+                // the check has no evaluated body for: a lofted plate, or a
+                // future part form outside the evaluated sets. Its geometry
+                // is unsupported here, so the model is unknown, not green.
+                "plate" => {
+                    unknown_elements += 1;
+                    Bucket::Unknown("geometry_unsupported")
+                }
+                // Welds and bolt groups are connection elements; the report's
+                // limitations paragraph names them as future clash subjects.
+                "connection" => Bucket::NotApplicable("not_a_clash_subject_yet"),
+                // Records, assemblies, annotations, grids, constructions and
+                // references are not model parts and never become check
+                // subjects — an established absence, not a hidden input.
+                _ => Bucket::NotApplicable("not_a_part"),
+            }
         };
         covered.insert(*id);
         coverage.push(Coverage {
@@ -569,6 +690,117 @@ fn material_of(inspection: &Inspection, id: &ElementId) -> bool {
             .any(|r| r.authored.id == *id && r.authored.material.is_some())
 }
 
+/// The one unambiguous repair a `CORNER_NOT_CUT` finding may carry (contract section
+/// 9): `set-plate-corner` with the required chamfer at the authored vertex the derived
+/// corner maps back to — the derived corner is a kept sharp contour point, so the
+/// vertex must exist at it. Offered only when the vertex's existing treatment is absent
+/// or a chamfer (a rounding is not an equivalent repair), the adjacent vertices carry
+/// no treatments (so the chamfer's fit is plain), the corner really turns, and the
+/// required leg fits both adjacent edges. Everything else needs contour
+/// reconstruction or a decision the harness does not make: no fix.
+fn corner_fix(corner: &check::CornerCutFinding, inspection: &Inspection) -> Option<FixHint> {
+    let finding = &corner.finding;
+    // The dependent weld-clearance finding (contract 4.4) never carries a fix: a
+    // larger cut and a smaller weld both repair it, and the chamfer of the weld leg
+    // can overcut the recorded requirement (#723).
+    if corner.clearance || finding.rule != "CORNER_NOT_CUT" || finding.status != "fail" {
+        return None;
+    }
+    let rib = finding.elements.first()?;
+    let corner_point = corner.corner_point_mm?;
+    let plate = inspection.plates.iter().find(|p| p.authored.id == *rib)?;
+    // A plane cut (A03) already removes material the authored contour keeps: setting
+    // the chamfer at the vertex would not produce the required final shape, so it is
+    // not a safe complete repair (contract section 9) and the fix stays absent.
+    if !plate.authored.cuts.is_empty() {
+        return None;
+    }
+    let local = placement_to_local(&plate.authored.placement, corner_point);
+    // The authored vertex at the derived corner: its kept sharp point maps back
+    // exactly. Two matches would be an ambiguous mapping.
+    let count = plate.authored.contour_points_mm.len();
+    let mut vertex: Option<usize> = None;
+    for (index, point) in plate.authored.contour_points_mm.iter().enumerate() {
+        if (point[0] - local[0]).abs() <= 1e-6 && (point[1] - local[1]).abs() <= 1e-6 {
+            if vertex.is_some() {
+                return None;
+            }
+            vertex = Some(index);
+        }
+    }
+    let vertex = vertex?;
+    let treatment_at = |index: usize| {
+        plate
+            .authored
+            .corners
+            .iter()
+            .find(|c| c.vertex == index)
+            .map(|c| &c.treatment)
+    };
+    match treatment_at(vertex) {
+        None | Some(steel::model::command::CornerTreatment::Chamfer { .. }) => {}
+        // A rounding with equal setbacks is not an equivalent repair (contract 9).
+        Some(_) => return None,
+    }
+    let prev = (vertex + count - 1) % count;
+    let next = (vertex + 1) % count;
+    if treatment_at(prev).is_some() || treatment_at(next).is_some() {
+        return None;
+    }
+    let xy = |i: usize| -> Option<[f64; 2]> {
+        plate
+            .authored
+            .contour_points_mm
+            .get(i)
+            .map(|p| [p[0], p[1]])
+    };
+    let v = xy(vertex)?;
+    let previous = xy(prev)?;
+    let next_point = xy(next)?;
+    let unit = |from: [f64; 2], to: [f64; 2]| -> Option<[f64; 2]> {
+        let (dx, dy) = (to[0] - from[0], to[1] - from[1]);
+        let len = (dx * dx + dy * dy).sqrt();
+        if len > 0.0 && len.is_finite() {
+            Some([dx / len, dy / len])
+        } else {
+            None
+        }
+    };
+    let arriving = unit(previous, v)?;
+    let leaving = unit(v, next_point)?;
+    // A treatment applies only to a corner that really turns (the same near-exact
+    // guard the corner evaluation keeps).
+    let cross = arriving[0] * leaving[1] - arriving[1] * leaving[0];
+    if cross.abs() <= 1e-12 {
+        return None;
+    }
+    let edge_len = |from: [f64; 2], to: [f64; 2]| -> f64 {
+        ((to[0] - from[0]).powi(2) + (to[1] - from[1]).powi(2)).sqrt()
+    };
+    let required = finding.required_mm?;
+    // The fit rule of the corner evaluation: the consumed lengths at the two ends of
+    // one edge must stay below the edge length; the adjacent slots are empty here, so
+    // the required leg alone must fit each adjacent edge.
+    if required >= edge_len(previous, v) || required >= edge_len(v, next_point) {
+        return None;
+    }
+    Some(FixHint {
+        command: "set-plate-corner",
+        arguments: vec![
+            "--id".into(),
+            rib.to_string(),
+            "--vertex".into(),
+            vertex.to_string(),
+            "--corner".into(),
+            format!("chamfer:{required}"),
+        ],
+        effect: format!(
+            "sets a chamfer of {required} mm on both legs at the corner vertex, which \
+             produces the required final shape"
+        ),
+    })
+}
+
 /// The cheap world-bounds overlap of two bodies, before the exact decision.
 fn pair_bounds_overlap(a: &ElementBody, b: &ElementBody) -> bool {
     a.bounds_overlap(b)
@@ -596,10 +828,12 @@ mod tests {
 
     #[test]
     fn the_supported_rules_are_the_slice_scope() {
-        assert_eq!(RULES.len(), 7);
+        assert_eq!(RULES.len(), 9);
         assert_eq!(RULES[0], "PART_CLASH");
         assert_eq!(RULES[1], "PART_UNCONNECTED");
         assert_eq!(RULES[2], "WELD_WITHOUT_CONTACT");
         assert_eq!(RULES[3], "CONTACT_WITHOUT_CONNECTION");
+        assert_eq!(RULES[4], "CORNER_NOT_CUT");
+        assert_eq!(RULES[5], "CORNER_OVERCUT");
     }
 }
