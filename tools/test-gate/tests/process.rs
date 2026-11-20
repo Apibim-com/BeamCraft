@@ -11,7 +11,7 @@ use beamcraft_test_gate::{capture, local, process, report::Report};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
 struct Temp(PathBuf);
@@ -330,6 +330,91 @@ fn git(root: &Path, args: &[&str]) -> String {
     beamcraft_test_gate::git(root, args).unwrap()
 }
 
+/// Waits bounded for a directory written by the fixture gate's grandchild cargo
+/// processes before handing it out. Hosted shards once read it absent for the
+/// whole grace after a fully successful gate; `None` means the directory never
+/// became listable within `limit`, which stays a failure.
+fn dir_built_within(path: &Path, limit: Duration) -> Option<std::fs::ReadDir> {
+    let deadline = Instant::now() + limit;
+    loop {
+        match std::fs::read_dir(path) {
+            Ok(entries) => return Some(entries),
+            Err(_) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(100)),
+            Err(_) => return None,
+        }
+    }
+}
+
+/// Reports whether any file under the fixture gate's isolated target tree is
+/// named after the UI crate. The walk covers whatever layout the running
+/// cargo produced: hosted cargos place test and doctest executables under
+/// per-package build directories (`debug/build/<pkg>/<hash>/out`), so a fixed
+/// `debug/deps` listing never sees the artifacts it must judge. The budget
+/// bounds the walk for a hostile-looking tree; the fixture's own gate builds
+/// a few hundred entries at most.
+fn ui_artifacts_under(root: &Path, budget: usize) -> bool {
+    let mut stack = vec![root.to_path_buf()];
+    let mut visited = 0;
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            visited += 1;
+            if visited > budget {
+                return true;
+            }
+            let name = entry.file_name();
+            if name.to_string_lossy().contains("beamcraft_ui") {
+                return true;
+            }
+            if entry.file_type().is_ok_and(|file_type| file_type.is_dir()) {
+                stack.push(dir.join(name));
+            }
+        }
+    }
+    false
+}
+
+#[test]
+fn the_fixture_artifact_reader_waits_out_a_late_directory_and_reports_an_absent_one() {
+    let temp = Temp::new();
+    let late = temp.0.join("late").join("deps");
+    std::fs::create_dir_all(late.parent().unwrap()).unwrap();
+    let writer = std::thread::spawn({
+        let late = late.clone();
+        move || {
+            std::thread::sleep(Duration::from_millis(300));
+            std::fs::create_dir_all(&late).unwrap();
+        }
+    });
+    assert!(dir_built_within(&late, Duration::from_secs(10)).is_some());
+    writer.join().unwrap();
+    assert!(
+        dir_built_within(&temp.0.join("absent"), Duration::from_millis(300)).is_none(),
+        "a directory that never appears must stay a failure"
+    );
+}
+
+#[test]
+fn the_ui_artifact_walk_finds_a_buried_name_and_a_clean_tree_stays_clean() {
+    let temp = Temp::new();
+    let buried = temp.0.join("debug/build/beamcraft-cli/hash/out");
+    std::fs::create_dir_all(&buried).unwrap();
+    std::fs::write(buried.join("beamcraft_ui-abc123.rlib"), b"").unwrap();
+    assert!(
+        ui_artifacts_under(&temp.0.join("debug"), 10_000),
+        "a UI artifact buried in a per-package build directory must be found"
+    );
+    let clean = temp.0.join("clean/debug/build/beamcraft-cli/hash/out");
+    std::fs::create_dir_all(&clean).unwrap();
+    std::fs::write(clean.join("beamcraft_cli-abc123"), b"").unwrap();
+    assert!(
+        !ui_artifacts_under(&temp.0.join("clean"), 10_000),
+        "CLI-named artifacts must not trip the UI check"
+    );
+}
+
 #[test]
 fn cli_gate_runs_real_tests_and_doctests_without_building_the_ui() {
     let temp = Temp::new();
@@ -442,14 +527,12 @@ fn cli_gate_runs_real_tests_and_doctests_without_building_the_ui() {
             .unwrap()
             .contains("1 passed")
     );
+    let isolated_target = root.join("target/test-gate/target");
+    dir_built_within(&isolated_target, Duration::from_secs(10))
+        .expect("the fixture gate built its isolated target directory");
     assert!(
-        !std::fs::read_dir(root.join("target/test-gate/target/debug/deps"))
-            .unwrap()
-            .any(|e| e
-                .unwrap()
-                .file_name()
-                .to_string_lossy()
-                .contains("beamcraft_ui"))
+        !ui_artifacts_under(&isolated_target, 100_000),
+        "the fixture gate's isolated target must hold no beamcraft_ui artifacts"
     );
     assert!(local::snapshot(&root, false).is_ok());
     // A green test process must not certify source changed by one of its tests.
