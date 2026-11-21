@@ -4,6 +4,18 @@ Decisions that shape the plan, newest first. Each names its date and, where one 
 document that records it in detail. A later decision overrides an earlier one where they differ.
 Open questions are at the end.
 
+## 2026-11-21
+
+- **Paginate level and assembly listings as summaries.** With `--offset` or `--limit`,
+  `levels` returns `element_count` for each level and `assemblies` returns `part_count`
+  for each assembly. Summary pages follow the existing listing convention of element ID
+  order, `page_size` and `next_offset`.
+  A single level's `elements[]` or assembly's `parts[]` can exceed the 1 MiB reply budget.
+  Use `--id UUID` to read those member IDs for one level or assembly, with `--offset`
+  and `--limit` paging the IDs within that record. Both kinds of pages fit the reply
+  budget. Calls without pagination options keep the existing full response format and
+  reply budget. [Format decision in #879](https://github.com/Apibim-com/BeamCraft/issues/879).
+
 ## 2026-11-14
 
 - **Undo works in a project, not only in a personal workspace.** Owner decision: as in Tekla
