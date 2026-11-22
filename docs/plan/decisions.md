@@ -16,6 +16,13 @@ Open questions are at the end.
   budget. Calls without pagination options keep the existing full response format and
   reply budget. [Format decision in #879](https://github.com/Apibim-com/BeamCraft/issues/879).
 
+- **Keep external files outside model revisions (U23).** Users can keep received IFC files,
+  issued reports and assignment packages in a folder such as `Attachments/` inside the project
+  directory. Users manage these files directly. BeamCraft revisions carry no version or retention
+  guarantee for those files. U23 is retired (#229). This
+  decision supersedes the proposed manifest extension in the
+  [F12 external reference workflow](../contracts/f12-external-reference-workflow-v0.1.md#5-required-acceptance-cases-and-implementation-gates).
+
 ## 2026-11-14
 
 - **Undo works in a project, not only in a personal workspace.** Owner decision: as in Tekla
