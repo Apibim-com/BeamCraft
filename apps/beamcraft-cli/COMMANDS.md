@@ -1710,7 +1710,7 @@ print-drawing --document-dir DIR --version-id UUID [--sheet a4|a3|a2|a1|a0] [--p
 write.
 
 ```text
-create-project --parent DIR --name TEXT [--unique-name true|false] [--config-dir DIR]
+create-project [--parent DIR] [--name TEXT] [--unique-name true|false] [--here] [--config-dir DIR]
     [--environment ID] [--code CODE] [--sections LIST] [--op-id UUID] [--revision-id UUID]
     [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
 ```

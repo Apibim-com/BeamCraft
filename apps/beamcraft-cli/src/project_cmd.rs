@@ -16,8 +16,8 @@
 use crate::plate_cmd::revision_json;
 use beamcraft_commands::definition::{DefineRequest, DefinitionRecord, define};
 use beamcraft_commands::project::{
-    ProjectContext, ProjectLayout, create_project, create_project_scoped, create_project_unique,
-    install_environment,
+    ProjectContext, ProjectLayout, create_project, create_project_in_place, create_project_scoped,
+    create_project_unique, install_environment,
 };
 use beamcraft_host::ids::IdSource;
 use beamcraft_host::revision::{NoFault, RevisionStore, Uuid7 as HostUuid7};
@@ -88,15 +88,24 @@ fn run(args: &[OsString]) -> Run<Json> {
         "list-project" => &["--dir"],
         _ => return Err(invalid("unknown command")),
     };
-    if !tail.len().is_multiple_of(2) || tail.len() > 32 {
+    if tail.len() > 32 {
         return Err(invalid("options are KEY VALUE pairs"));
     }
     let mut options = BTreeMap::new();
-    for pair in tail.as_chunks::<2>().0 {
-        let [key, value] = pair;
-        if !own.contains(key) || options.insert(*key, *value).is_some() {
+    let mut here = false;
+    let mut tail = tail.iter().copied();
+    while let Some(key) = tail.next() {
+        if *command == "create-project" && key == "--here" && !here {
+            here = true;
+            continue;
+        }
+        if !own.contains(&key) || options.contains_key(key) {
             return Err(invalid("unknown or repeated option"));
         }
+        let value = tail
+            .next()
+            .ok_or_else(|| invalid("options are KEY VALUE pairs"))?;
+        options.insert(key, value);
     }
     let given = |key: &str| options.get(key).copied();
     let config_dir = || -> Run<PathBuf> {
@@ -111,8 +120,21 @@ fn run(args: &[OsString]) -> Run<Json> {
     };
     match *command {
         "create-project" => {
-            let parent = given("--parent").ok_or_else(|| invalid("--parent is required"))?;
-            let name = given("--name").ok_or_else(|| invalid("--name is required"))?;
+            let named_folder = if here {
+                if ["--parent", "--name", "--unique-name"]
+                    .iter()
+                    .any(|key| given(key).is_some())
+                {
+                    return Err(invalid(
+                        "--here cannot be combined with --parent, --name or --unique-name",
+                    ));
+                }
+                None
+            } else {
+                let parent = given("--parent").ok_or_else(|| invalid("--parent is required"))?;
+                let name = given("--name").ok_or_else(|| invalid("--name is required"))?;
+                Some((Path::new(parent), name))
+            };
             let dir = config_dir();
             // A sectioned project takes no environment yet, so it needs the settings only for
             // its author.
@@ -196,48 +218,44 @@ fn run(args: &[OsString]) -> Run<Json> {
                     ));
                 }
             };
-            let info = match &layout {
-                Some(layout) => create_project_scoped(
-                    Path::new(parent),
-                    name,
-                    unique,
-                    layout,
-                    &context,
-                    &mut NoFault,
-                )?,
-                None => {
-                    if unique {
-                        create_project_unique(Path::new(parent), name, &context, &mut NoFault)?
-                    } else {
-                        create_project(Path::new(parent), name, &context, &mut NoFault)?
-                    }
-                }
-            };
-            let seeded = match &chosen {
-                Some((id, source)) => {
-                    let config = given("--config-dir").map(str::to_owned);
-                    match seed_project(&info.path, id, config.as_deref(), &context) {
-                        Ok(seeded) => Some((seeded, *source)),
-                        Err(mut error) => {
-                            // The person did not type a settings-chosen environment id, so the
-                            // not-found refusal of the search itself names where the choice came
-                            // from. Deeper not-found refusals (a listed library file that is
-                            // gone, say) keep their own text: only the exact search refusal is
-                            // rewritten.
-                            if *source == "settings"
-                                && error.message
-                                    == "the environment is not among the built-in or user environments"
-                            {
-                                error.message = "the active environment of the settings is not among the built-in or user environments";
-                            }
-                            // The folder was made by this call, so a failed seeding removes it
-                            // again and leaves nothing behind.
-                            let _ = std::fs::remove_dir_all(&info.path);
-                            return Err(error);
+            let prepare = |path: &Path| {
+                let Some((id, source)) = &chosen else {
+                    return Ok(None);
+                };
+                let seeded = seed_project(path, id, given("--config-dir"), &context)
+                    .map_err(|mut error| {
+                        // Name the settings as the source when the selected environment is missing.
+                        // Errors inside an environment keep their own diagnostic.
+                        if *source == "settings"
+                            && error.message
+                                == "the environment is not among the built-in or user environments"
+                        {
+                            error.message = "the active environment of the settings is not among the built-in or user environments";
                         }
+                        error
+                    })?;
+                Ok(Some((seeded, *source)))
+            };
+            let (info, seeded) = if let Some((parent, name)) = named_folder {
+                let info = match &layout {
+                    Some(layout) => {
+                        create_project_scoped(parent, name, unique, layout, &context, &mut NoFault)
+                    }
+                    None if unique => create_project_unique(parent, name, &context, &mut NoFault),
+                    None => create_project(parent, name, &context, &mut NoFault),
+                }?;
+                match prepare(&info.path) {
+                    Ok(seeded) => (info, seeded),
+                    Err(error) => {
+                        // This call created the named directory, so it owns the whole tree.
+                        let _ = std::fs::remove_dir_all(&info.path);
+                        return Err(error);
                     }
                 }
-                None => None,
+            } else {
+                let current = std::env::current_dir()
+                    .map_err(|_| invalid("the current directory is not usable"))?;
+                create_project_in_place(&current, layout.as_ref(), &context, &mut NoFault, prepare)?
             };
             let recorded = dir.is_ok_and(|dir| remember(&dir, &info.path).is_ok());
             let mut reply = Json::object([

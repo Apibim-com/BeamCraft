@@ -2847,9 +2847,10 @@ pub const COMMANDS: &[Command] = &[
         Access::Write,
         Ids::Common,
         &[
-            req("--parent", "DIR"),
-            req("--name", "TEXT"),
+            opt("--parent", "DIR"),
+            opt("--name", "TEXT"),
             opt("--unique-name", "true|false"),
+            opt("--here", ""),
             opt("--config-dir", "DIR"),
             opt("--environment", "ID"),
             opt("--code", "CODE"),
