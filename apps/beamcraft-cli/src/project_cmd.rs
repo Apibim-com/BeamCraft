@@ -15,15 +15,21 @@
 
 use crate::plate_cmd::revision_json;
 use beamcraft_commands::definition::{DefineRequest, DefinitionRecord, define};
+use beamcraft_commands::grid::{GridContext, create_grid};
+use beamcraft_commands::level::{LevelContext, create_level};
 use beamcraft_commands::project::{
     ProjectContext, ProjectLayout, create_project, create_project_in_place, create_project_scoped,
     create_project_unique, install_environment,
 };
+use beamcraft_commands::template::TemplateEntry;
 use beamcraft_host::ids::IdSource;
 use beamcraft_host::revision::{NoFault, RevisionStore, Uuid7 as HostUuid7};
 use beamcraft_host::storage::BlobStore;
 use beamcraft_json::Json;
+use beamcraft_model::command::CreateLevel;
 use beamcraft_model::error::ErrorCode;
+use beamcraft_model::grid::CreateGrid;
+use beamcraft_model::id::ElementId;
 use beamcraft_model::id::{OpId, ProjectId, RevisionId, Uuid7, WorkspaceId};
 use session::Refusal;
 use session::environment::{environment_folders, find_environment};
@@ -271,6 +277,8 @@ fn run(args: &[OsString]) -> Run<Json> {
                         ("environment", Json::text(seeded.environment)),
                         ("environment_source", Json::text(source)),
                         ("materials", Json::uint(seeded.materials)),
+                        ("grids", Json::uint(seeded.grids)),
+                        ("levels", Json::uint(seeded.levels)),
                     ]),
                 );
             }
@@ -389,6 +397,8 @@ const DEFAULT_MATERIALS: [(&str, f64); 2] = [("Steel_Undefined", 0.0), ("Steel",
 struct Seeded {
     environment: String,
     materials: u64,
+    grids: u64,
+    levels: u64,
 }
 
 /// Gives the new project at `dir` its environment and its default materials: the environment `id`
@@ -437,6 +447,8 @@ fn seed_project(
     let mut seeded = Seeded {
         environment: id.to_owned(),
         materials: 0,
+        grids: 0,
+        levels: 0,
     };
     for (name, density) in DEFAULT_MATERIALS {
         define_one(
@@ -449,6 +461,64 @@ fn seed_project(
             .named(Some(name)),
         )?;
         seeded.materials += 1;
+    }
+    // The starter layout the environment declares (#840): its grids and levels, each through the
+    // same engine command as create-grid and create-level, one revision apiece.
+    let template = beamcraft_commands::template::load_environment(Path::new(file))?;
+    let actor = HostUuid7::parse(&context.actor.to_string()).map_err(Refusal::from)?;
+    for entry in template.entries {
+        match entry {
+            TemplateEntry::Level { name, elevation_mm } => {
+                create_level(
+                    &store,
+                    &LevelContext {
+                        op_id: OpId::from_uuid(fresh_id()?),
+                        revision_id: RevisionId::from_uuid(fresh_id()?),
+                        actor: actor.clone(),
+                        project: context.project,
+                        workspace: context.workspace,
+                    },
+                    &CreateLevel {
+                        new_id: ElementId::from_uuid(fresh_id()?),
+                        name,
+                        elevation_mm,
+                    },
+                    &mut NoFault,
+                )?;
+                seeded.levels += 1;
+            }
+            TemplateEntry::Grid(grid) => {
+                let rotation = grid.rotation_deg.map(|r| r.to_string());
+                let mut options = BTreeMap::new();
+                options.insert("--name", grid.name.as_str());
+                for (key, value) in [
+                    ("--u-expression", &grid.u_expression),
+                    ("--u-labels", &grid.u_labels),
+                    ("--v-expression", &grid.v_expression),
+                    ("--v-labels", &grid.v_labels),
+                    ("--origin", &grid.origin),
+                    ("--rotation", &rotation),
+                ] {
+                    if let Some(value) = value {
+                        options.insert(key, value.as_str());
+                    }
+                }
+                let grid = crate::grid_cmd::author_grid(&options, &mut || fresh_id())?;
+                create_grid(
+                    &store,
+                    &GridContext {
+                        op_id: OpId::from_uuid(fresh_id()?),
+                        revision_id: RevisionId::from_uuid(fresh_id()?),
+                        actor: actor.clone(),
+                        project: context.project,
+                        workspace: context.workspace,
+                    },
+                    &CreateGrid { grid },
+                    &mut NoFault,
+                )?;
+                seeded.grids += 1;
+            }
+        }
     }
     Ok(seeded)
 }

@@ -4212,7 +4212,16 @@ impl App {
             class: 0,
             axis_points_mm: vec![start, end],
             follow: None,
-            profile: self.tools.member.profile.as_deref()?.parse().ok()?,
+            // A profile the environment offers is named, not yet defined: the model has no digest
+            // for it until the first member defines it (#840). The ghost is built from the
+            // profile's extent alone, so a fixed stand-in identity draws it the same way.
+            profile: self
+                .tools
+                .member
+                .profile
+                .as_deref()?
+                .parse()
+                .unwrap_or(beamcraft_model::digest::ContentDigest::from_bytes([0; 32])),
             roll_rad: self.tools.member.roll_radians().ok().flatten(),
             section_placement: self.tools.member.section_placement().ok()?,
             placement: Placement {
@@ -8932,6 +8941,26 @@ pub(crate) mod tests {
         assert_eq!(
             super::definition_choice_label(&choices[0], &choices[..1]),
             "Steel"
+        );
+    }
+
+    #[test]
+    fn an_environment_profile_draws_the_ghost_before_the_first_member() {
+        // #840: a new project offers its environment's profiles by name; none is defined in
+        // the model until the first member is created. The column must still preview at once.
+        let mut app = headless().expect("a native or software wgpu adapter is required");
+        let digest = format!("{}H-200x200", crate::tools::BY_NAME);
+        app.tools.definitions.profiles = vec![crate::tools::Choice {
+            digest: digest.clone(),
+            label: "H-200x200".into(),
+            rect_mm: Some([200.0, 200.0]),
+        }];
+        app.tools.member.kind = crate::tools::MemberKind::Column;
+        app.tools.member.profile = Some(digest);
+        assert!(
+            app.build_ghost([0.0; 3], [0.0, 0.0, 3000.0], [0.0; 3])
+                .is_some(),
+            "a profile the environment offers by name draws no ghost"
         );
     }
 
