@@ -120,11 +120,15 @@ fn copy_layers(store: &Path, layers: &Path, inspected: &Json) {
 /// Runs the independent reader over the copied layers and returns its report after checking
 /// that the reader passed its own structural and analytical checks.
 fn run_oracle(layers: &Path, expect: &str) -> Json {
-    let expect_path = layers.join("expect.json");
+    read_revision(&layers.join("root.usda"), expect)
+}
+
+fn read_revision(root: &Path, expect: &str) -> Json {
+    let expect_path = root.parent().unwrap().join("expect.json");
     fs::write(&expect_path, expect).unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_beamcraft-usd-oracle"))
         .arg("revision")
-        .arg(layers.join("root.usda"))
+        .arg(root)
         .arg(&expect_path)
         .output()
         .unwrap();
@@ -136,6 +140,85 @@ fn run_oracle(layers: &Path, expect: &str) -> Json {
         String::from_utf8_lossy(&output.stderr)
     );
     beamcraft_json::decode(report.trim().as_bytes(), &Limits::DEFAULT).unwrap()
+}
+
+#[test]
+fn checkout_exports_the_selected_revision_under_its_own_project_code() {
+    let scratch = Scratch::new("u20-checkout");
+    let store = scratch.store_arg();
+    run_binary(&[
+        "set-project-metadata",
+        "--store",
+        store,
+        "--code",
+        "2401-DEMO",
+        "--name",
+        "Demo",
+    ]);
+    let created = run_binary(&plate_args(
+        store,
+        "1000",
+        "500",
+        "10",
+        &["--name", "Checked out plate"],
+    ));
+    let selected = text(
+        &run_binary(&["open-revision", "--store", store]),
+        "revision_id",
+    );
+    run_binary(&[
+        "set-project-metadata",
+        "--store",
+        store,
+        "--code",
+        "2402-DEMO",
+    ]);
+    run_binary(&plate_args(store, "500", "300", "10", &[]));
+    let head = text(
+        &run_binary(&["open-revision", "--store", store]),
+        "revision_id",
+    );
+    assert_ne!(selected, head);
+
+    let out = scratch.root.join("exported");
+    let args = [
+        "checkout-revision",
+        "--store",
+        store,
+        "--out",
+        out.to_str().unwrap(),
+        "--revision",
+        &selected,
+    ];
+    let reply = run_binary(&args);
+    assert_eq!(text(&reply, "revision_id"), selected);
+    let root = text(&reply, "root_layer");
+    assert_eq!(
+        Path::new(&root).file_name().unwrap(),
+        "2401-DEMO_Coord.usda"
+    );
+    assert!(out.join("authored.usda").is_file());
+    assert!(!out.join("root.usda").exists());
+    let expectation = format!(
+        r#"[{{"id":"{}","name":"Checked out plate","width":1000,"length":500,"thickness":10,"translation":[0,0,0],"cli_volume_mm3":5000000}}]"#,
+        text(created.get("plate").unwrap(), "element_id"),
+    );
+    assert_eq!(plates(&read_revision(Path::new(&root), &expectation)), 1);
+
+    let bytes = fs::read(&root).unwrap();
+    let duplicate = Command::new(env!("CARGO_BIN_EXE_beamcraft"))
+        .args(args)
+        .output()
+        .unwrap();
+    assert_eq!(duplicate.status.code(), Some(2));
+    assert_eq!(fs::read(&root).unwrap(), bytes);
+    assert_eq!(
+        text(
+            &run_binary(&["open-revision", "--store", store]),
+            "revision_id"
+        ),
+        head
+    );
 }
 
 fn plates(report: &Json) -> usize {

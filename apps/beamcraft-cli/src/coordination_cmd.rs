@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 
 //! F12 headless commands: `set-project-metadata`, `define-section`, `define-zone`,
-//! `show-project`, `connect-project`, `update-connection`, `remove-connection` and
+//! `show-project`, `checkout-revision`, `connect-project`, `update-connection`, `remove-connection` and
 //! `resolve-connection`. They call the adapter through `beamcraft_commands::coordination` and print
 //! one JSON object with the same error shape and exit codes as the modelling commands.
 //! Shared metadata changes only through these explicit commands (PC-OWN-002); there is no
@@ -10,11 +10,12 @@
 
 use crate::command_context::{self, CONTEXT_OPTIONS};
 use crate::plate_cmd::{check_project_option, id_error, num, revision_json};
+use beamcraft_commands::checkout::checkout_revision;
 use beamcraft_commands::coordination;
 use beamcraft_commands::coordination::{Applied, ConnectionStatus, PinRequest, ResolvedElement};
 use beamcraft_host::{
     ids::IdSource,
-    revision::{NoFault, RevisionStore},
+    revision::{NoFault, RevisionStore, Uuid7},
     storage::BlobStore,
 };
 use beamcraft_json::Json;
@@ -25,7 +26,7 @@ use beamcraft_model::id::{ConnectionId, ProjectId, RevisionId, SectionId, ZoneId
 use session::Refusal;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 type Run<T> = Result<T, Refusal>;
 
@@ -56,6 +57,7 @@ const COMMAND_OPTIONS: &[(&str, &[&str])] = &[
         &["--store", "--zone-id", "--code", "--label"],
     ),
     ("show-project", &["--store"]),
+    ("checkout-revision", &["--store", "--out", "--revision"]),
     (
         "connect-project",
         &[
@@ -112,7 +114,8 @@ fn run(args: &[OsString]) -> Run<Json> {
     let mut options = BTreeMap::new();
     for pair in tail.as_chunks::<2>().0 {
         let [key, value] = pair;
-        let allowed = own.contains(key) || CONTEXT_OPTIONS.contains(key);
+        let allowed =
+            own.contains(key) || (*command != "checkout-revision" && CONTEXT_OPTIONS.contains(key));
         if !allowed || options.insert(*key, *value).is_some() {
             return Err(invalid("unknown or repeated option"));
         }
@@ -127,6 +130,21 @@ fn run(args: &[OsString]) -> Run<Json> {
     })?;
     let store = RevisionStore::new(blobs);
     let given = |key: &str| options.get(key).copied();
+    if *command == "checkout-revision" {
+        let out = given("--out").ok_or_else(|| invalid("--out is required"))?;
+        let revision = given("--revision").map(Uuid7::parse).transpose()?;
+        let checked = checkout_revision(&store, revision.as_ref(), Path::new(out))?;
+        let root = checked
+            .root_layer
+            .to_str()
+            .ok_or_else(|| invalid("the checkout path is not UTF-8"))?;
+        return Ok(Json::object([
+            ("outcome", Json::text("revision_checked_out")),
+            ("revision_id", Json::text(checked.revision.to_string())),
+            ("root_layer", Json::text(root)),
+            ("layer_count", Json::uint(checked.layer_count)),
+        ]));
+    }
     let connection_of = |key: &str| -> Run<ConnectionId> {
         let text = given(key).ok_or_else(|| invalid("--connection is required"))?;
         ConnectionId::parse(text).map_err(id_error)

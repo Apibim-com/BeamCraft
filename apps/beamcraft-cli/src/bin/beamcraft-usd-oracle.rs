@@ -1036,9 +1036,16 @@ impl Stage {
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
         let mut problems = stage.problems.borrow_mut();
-        if name != OWNED_STACK[0] {
+        let checkout_root = name.strip_suffix("_Coord.usda").is_some_and(|code| {
+            !code.is_empty()
+                && code.len() <= 32
+                && code
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+        });
+        if name != OWNED_STACK[0] && !checkout_root {
             problems.push(format!(
-                "the root layer is {name:?}, expected {:?}",
+                "the root layer is {name:?}, expected {:?} or CODE_Coord.usda",
                 OWNED_STACK[0]
             ));
         }

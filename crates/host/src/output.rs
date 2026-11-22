@@ -133,6 +133,11 @@ pub fn resolve_destination(target: &Path) -> Result<Destination, OutputError> {
     let mut prefix = PathBuf::new();
     for component in parent.components() {
         match component {
+            Component::Prefix(_) => {
+                // A Windows volume prefix alone is not its root directory.
+                prefix.push(component);
+                continue;
+            }
             Component::CurDir => continue,
             Component::ParentDir => {
                 // Every directory walked so far was checked, so the lexical parent is the real one.

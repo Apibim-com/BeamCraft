@@ -864,6 +864,14 @@ show-project --store ROOT [--op-id UUID] [--revision-id UUID] [--actor-id UUID]
     [--project-id UUID] [--workspace-id UUID]
 ```
 
+### checkout-revision
+
+write.
+
+```text
+checkout-revision --store ROOT --out DIR [--revision UUID]
+```
+
 ### connect-project
 
 write.

@@ -211,6 +211,24 @@ fn the_layout_names_one_layer_per_scope_and_the_first_proof_runs_both_sections()
     }
     assert!(!layers.iter().any(|l| l == "authored.usda"), "{layers:?}");
 
+    let out = f.shared.root.join("section-checkout");
+    let exported = f.ok_in(
+        &store,
+        "checkout-revision",
+        &["--out", out.to_str().unwrap()],
+    );
+    assert_eq!(
+        text(&exported, "revision_id"),
+        text(&created, "revision_id")
+    );
+    let root = text(&exported, "root_layer");
+    assert!(std::path::Path::new(&root).ends_with("2401-DEMO_Coord.usda"));
+    let root_text = fs::read_to_string(root).unwrap();
+    for name in layers.iter().filter(|name| name.as_str() != "root.usda") {
+        assert!(out.join(name).is_file(), "{name}");
+        assert!(root_text.contains(&format!("@{name}@")), "{name}");
+    }
+
     // First proof, project two: one KMD-only project, same steel module.
     let single = f.project("Independent", "2402-DEMO", "KMD");
     let dir = f.shared.root.join("w-single");

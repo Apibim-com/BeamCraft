@@ -426,14 +426,18 @@ detailer's workspace. When KM changes, the program compares the new KM revision 
 KMD element was built from and marks the affected KMD elements "source changed, check"; it never
 rewrites KMD by itself.
 
-Inside the store, layers are still blobs named by their SHA-256; these names are the names the
-manifest gives them and the names a checkout of a revision writes to disk.
+Inside the store, layers are blobs named by their SHA-256. To write a revision as ordinary USD,
+run `beamcraft checkout-revision --store ROOT --out NEW_DIR [--revision UUID]`. The destination
+is a new directory outside the source store. The command selects the current head by default.
+It writes the layers at their manifest-relative paths and returns the absolute path to the root.
+The root is named `<code>_Coord.usda` using the selected revision's project code or its section
+layout code. An unscoped project without a code uses its manifest root name. Project codes used
+for file names must follow the section-layer code rules.
 
-**Status:** the code still writes `root.usda`, `authored.usda` and `derived.usda` without zones,
-codes or metadata other than the ProjectId (tasks U19, U20, U21). F12 and F10 0.2 specify the
-proposed responsibility and coordination boundary; their schema, commands and retention checks
-must be implemented before claiming support. A second engineering module, review/approval
-workflow and multi-client merge are not delivered by these documents.
+Unscoped stores use `root.usda`, `authored.usda` and `derived.usda` internally. Sectioned stores
+use the scoped names above for their authored layers. The project descriptor carries project
+metadata, section and zone identities, the project frame, and contract requirements. F12 and
+F10 0.2 specify the broader responsibility and coordination workflows.
 
 ## Common Craft viewing and specialized editing
 

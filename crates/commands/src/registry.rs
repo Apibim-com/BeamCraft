@@ -1556,6 +1556,18 @@ pub const COMMANDS: &[Command] = &[
     entry(
         Route::Coordination,
         "coordination",
+        "checkout-revision",
+        Access::Write,
+        Ids::None,
+        &[
+            req("--store", "ROOT"),
+            req("--out", "DIR"),
+            opt("--revision", "UUID"),
+        ],
+    ),
+    entry(
+        Route::Coordination,
+        "coordination",
         "connect-project",
         Access::Write,
         Ids::Common,

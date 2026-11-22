@@ -22,6 +22,7 @@ pub mod bolt;
 pub mod bom;
 pub mod changeset;
 pub mod check;
+pub mod checkout;
 pub mod command_evidence;
 pub mod construction;
 pub mod coordination;
