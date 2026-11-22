@@ -313,7 +313,21 @@ fn a_project_created_from_the_blank_environment_places_members_at_once() {
     let seeded = at(&created, &["seeded"]);
     assert_eq!(text(seeded, "environment"), "blank");
     assert_eq!(at(seeded, &["materials"]).unsigned().unwrap(), 2);
+    assert_eq!(at(seeded, &["grids"]).unsigned().unwrap(), 1);
+    assert_eq!(at(seeded, &["levels"]).unsigned().unwrap(), 1);
     let store = text(at(&created, &["project"]), "path");
+
+    // The environment's template gives the project its starter layout (#840): one 3 x 3 grid
+    // at 6 m and the level +0.000, so a column has axes to land on from the first click.
+    let grids = f.raw(&["list-grids", "--store", &store]);
+    assert_eq!(grids.0, 0, "{:?}", grids.1);
+    let grids = list(&grids.1, "grids");
+    assert_eq!(grids.len(), 1);
+    assert_eq!(text(&grids[0], "name"), "Grid");
+    let labels = format!("{:?}", grids[0]);
+    for label in ["\"1\"", "\"3\"", "\"A\"", "\"C\""] {
+        assert!(labels.contains(label), "{label} missing: {labels}");
+    }
 
     // The project carries its environment, so no command names one: the model starts with the two
     // default materials and lists the environment's profiles as available.
@@ -383,9 +397,13 @@ fn a_project_created_from_the_blank_environment_places_members_at_once() {
     assert_eq!(level.0, 0, "{:?}", level.1);
     let listing = f.raw(&["definitions", "--store", &store]).1;
     let levels = list(&listing, "levels");
-    assert_eq!(levels.len(), 1);
-    assert_eq!(text(&levels[0], "name"), "Roof");
-    assert_eq!(at(&levels[0], &["elevation_mm"]).float().unwrap(), 6000.0);
+    assert_eq!(levels.len(), 2);
+    let elevation = |name: &str| {
+        let level = levels.iter().find(|l| text(l, "name") == name).unwrap();
+        at(level, &["elevation_mm"]).float().unwrap()
+    };
+    assert_eq!(elevation("+0.000"), 0.0);
+    assert_eq!(elevation("Roof"), 6000.0);
     let place = |kind: &str, end: &str, profile: &str, material: &str| {
         let (code, body) = f.raw(&[
             "create-member",
