@@ -35,13 +35,24 @@ impl Fixture {
         self.shared.root.join(name).to_str().unwrap().to_owned()
     }
     fn raw(&self, args: &[&str]) -> (i32, Json) {
-        let output = Command::new(env!("CARGO_BIN_EXE_beamcraft"))
-            .args(args)
-            .env_remove("BEAMCRAFT_CONFIG_DIR")
-            .output()
-            .unwrap();
+        self.run(
+            Command::new(env!("CARGO_BIN_EXE_beamcraft"))
+                .args(args)
+                .env_remove("BEAMCRAFT_CONFIG_DIR"),
+        )
+    }
+    fn run(&self, command: &mut Command) -> (i32, Json) {
+        let output = command.output().unwrap();
         let body = beamcraft_json::decode(&output.stdout, &Limits::DEFAULT).unwrap();
         (output.status.code().unwrap(), body)
+    }
+    fn in_models(&self, args: &[&str]) -> (i32, Json) {
+        self.run(
+            Command::new(env!("CARGO_BIN_EXE_beamcraft"))
+                .args(args)
+                .env("BEAMCRAFT_CONFIG_DIR", self.path("config"))
+                .current_dir(self.path("models")),
+        )
     }
     /// The raw standard output of a run, for replies that are not one JSON object.
     fn bytes(&self, args: &[&str]) -> Vec<u8> {
@@ -121,6 +132,102 @@ fn unique_project_names_skip_existing_files_and_reserve_free_folders() {
         ]),
         "DUPLICATE_ID"
     );
+}
+
+#[test]
+fn here_creates_a_usable_store_in_the_current_directory_once() {
+    let f = Fixture::new();
+    let create = || {
+        f.in_models(&[
+            "create-project",
+            "--actor-id",
+            ACTOR,
+            "--here",
+            "--environment",
+            "blank",
+        ])
+    };
+    let mut results = std::thread::scope(|scope| {
+        let first = scope.spawn(create);
+        let second = scope.spawn(create);
+        [first.join().unwrap(), second.join().unwrap()]
+    });
+    results.sort_by_key(|(code, _)| *code);
+    let [(success, created), (failure, refused)] = results;
+    assert_eq!(success, 0, "{created:?}");
+    assert_eq!(failure, 2, "{refused:?}");
+    assert_eq!(text(&refused, "code"), "DUPLICATE_ID");
+    let project = at(&created, &["project"]);
+    assert_eq!(text(project, "name"), "models");
+    let store = text(project, "path");
+    assert_eq!(
+        fs::canonicalize(&store).unwrap(),
+        fs::canonicalize(f.path("models")).unwrap()
+    );
+    assert_eq!(text(project, "state"), "ready");
+    assert_eq!(at(&created, &["recent_recorded"]), &Json::Bool(true));
+    assert_eq!(text(at(&created, &["seeded"]), "environment"), "blank");
+    let root = f.shared.root.join("models");
+    assert!(root.join("environment/environment.usda").is_file());
+    assert!(!root.join(".beamcraft-init").exists());
+
+    let (code, plate) = f.in_models(&[
+        "create-plate",
+        "--store",
+        &store,
+        "--width",
+        "100",
+        "--length",
+        "200",
+        "--thickness",
+        "10",
+        "--actor-id",
+        ACTOR,
+    ]);
+    assert_eq!(code, 0, "{plate:?}");
+}
+
+#[test]
+fn here_refuses_explicit_naming_and_nonempty_directories_without_writes() {
+    let f = Fixture::new();
+    let root = f.shared.root.join("models");
+    for (key, value) in [
+        ("--parent", "."),
+        ("--name", "other"),
+        ("--unique-name", "false"),
+    ] {
+        let (code, refused) = f.in_models(&["create-project", "--here", key, value]);
+        assert_eq!(code, 2, "{refused:?}");
+        assert_eq!(text(&refused, "code"), "INVALID_ARGUMENT");
+    }
+    assert!(root.read_dir().unwrap().next().is_none());
+    fs::create_dir(root.join(".git")).unwrap();
+    fs::write(root.join(".git/keep"), b"leave this alone").unwrap();
+    let (code, refused) = f.in_models(&["create-project", "--here"]);
+    assert_eq!(code, 2, "{refused:?}");
+    assert_eq!(text(&refused, "code"), "DUPLICATE_ID");
+    assert_eq!(root.read_dir().unwrap().count(), 1);
+    assert_eq!(
+        fs::read(root.join(".git/keep")).unwrap(),
+        b"leave this alone"
+    );
+}
+
+#[test]
+fn here_preserves_the_empty_directory_when_seeding_fails() {
+    let f = Fixture::new();
+    let root = f.shared.root.join("models");
+    let (code, refused) = f.in_models(&[
+        "create-project",
+        "--here",
+        "--environment",
+        "nonexistent-environment",
+    ]);
+    assert_eq!(code, 2, "{refused:?}");
+    assert_eq!(text(&refused, "code"), "NOT_FOUND");
+    assert!(root.read_dir().unwrap().next().is_none());
+    let (code, created) = f.in_models(&["create-project", "--here"]);
+    assert_eq!(code, 0, "{created:?}");
 }
 
 #[test]

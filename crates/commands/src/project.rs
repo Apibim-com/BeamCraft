@@ -32,6 +32,9 @@ use session::project::{check_project_name, numbered_name};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+mod in_place;
+pub use in_place::create_project_in_place;
+
 /// Folder of a project that holds the copy of its environment, made by `create-project`
 /// `--environment`: the project carries the libraries it was created with, so it opens the same
 /// on another machine and the next session needs no setting.
