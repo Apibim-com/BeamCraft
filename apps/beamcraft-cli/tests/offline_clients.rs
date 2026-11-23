@@ -650,23 +650,38 @@ fn two_offline_workspaces_publish_independent_elements_and_lose_nothing() {
     let (code, moved) = f.publish("b");
     assert_eq!(code, 0, "{moved:?}");
 
-    // The reopened store holds every element exactly once with its authored value.
-    let plates = f.plates("published");
-    assert_eq!(plates.len(), created.len());
-    let mut seen = std::collections::BTreeSet::new();
-    for (element, name, width, volume) in &plates {
-        assert!(seen.insert(element.clone()), "duplicated element {element}");
-        let expected = created
-            .iter()
-            .find(|(identity, ..)| identity == element)
-            .unwrap_or_else(|| panic!("unknown element {element}"));
-        assert_eq!(name, &expected.1, "{element}");
-        assert_eq!(width, &expected.2, "{element}");
-        assert_eq!(volume, &expected.3, "{element}");
-    }
-    assert_eq!(seen.len(), created.len());
-    for (element, _, _, _) in &created {
-        assert!(seen.contains(element), "{element} is lost");
+    if external.is_some() {
+        // Each CLI page reopens and verifies the whole model. Read the exact count once.
+        // The independent reader below checks the detailed values and every element ID.
+        let page = f.ok(&[
+            "inspect-elements",
+            "--store",
+            f.s("published"),
+            "--limit",
+            "1",
+        ]);
+        assert_eq!(
+            page.get("element_count").unwrap().unsigned().unwrap(),
+            created.len() as u64,
+        );
+    } else {
+        let plates = f.plates("published");
+        assert_eq!(plates.len(), created.len());
+        let mut seen = std::collections::BTreeSet::new();
+        for (element, name, width, volume) in &plates {
+            assert!(seen.insert(element.clone()), "duplicated element {element}");
+            let expected = created
+                .iter()
+                .find(|(identity, ..)| identity == element)
+                .unwrap_or_else(|| panic!("unknown element {element}"));
+            assert_eq!(name, &expected.1, "{element}");
+            assert_eq!(width, &expected.2, "{element}");
+            assert_eq!(volume, &expected.3, "{element}");
+        }
+        assert_eq!(seen.len(), created.len());
+        for (element, _, _, _) in &created {
+            assert!(seen.contains(element), "{element} is lost");
+        }
     }
 
     // The final accepted revision opens in the independent reader and agrees plate by
