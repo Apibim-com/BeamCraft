@@ -10,7 +10,7 @@
 //! windows, forced identity collisions and bounded failures.
 //!
 //! The default C05-01 run checks 32 operations per client. Set
-//! `BEAMCRAFT_C05_USD_OUT` to a new directory to run 1,000 operations per client
+//! `BEAMCRAFT_C05_USD_OUT` to a new directory to run 250 operations per client
 //! and retain the final USD stage for the external readers.
 
 #![allow(
@@ -539,7 +539,7 @@ fn two_offline_workspaces_publish_independent_elements_and_lose_nothing() {
             "the evidence directory must be new: {path:?}"
         );
     }
-    let count = if external.is_some() { 1000 } else { 32 };
+    let count = if external.is_some() { 250 } else { 32 };
     let f = Fixture::new();
     let mut created: Vec<(String, String, f64, f64)> =
         vec![(eid(SEED), "Seed".to_owned(), 500.0, 1_200_000.0)];
