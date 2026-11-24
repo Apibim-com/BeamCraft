@@ -1643,7 +1643,7 @@ impl App {
                 self.member_cursor = None;
             }
             self.paint_ctrl_reference(ui, response.rect, view, hover_hit.map(|(p, _)| p));
-            if let Some(from) = self.two_point.and_then(|t| t.from)
+            if let Some(from) = self.two_point.as_ref().and_then(|t| t.from)
                 && let Some(start) = crate::grid::project(from, response.rect, view, origin_mm)
             {
                 let target_px = hover_hit
@@ -1651,7 +1651,12 @@ impl App {
                     .or_else(|| response.hover_pos());
                 let painter = ui.painter_at(response.rect);
                 painter.circle_filled(start, 4.0, theme::BRAND);
-                if let Some(end_px) = target_px {
+                if let Some(end_px) = target_px
+                    && !hover_hit.is_some_and(|(point, _)| {
+                        self.ctrl_reference.is_none()
+                            && self.paint_axis_dimension(&painter, [start, end_px], from, point)
+                    })
+                {
                     painter.add(egui::Shape::dashed_line(
                         &[start, end_px],
                         Stroke::new(1.5, theme::BRAND),

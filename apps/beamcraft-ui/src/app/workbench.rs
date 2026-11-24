@@ -1251,6 +1251,7 @@ impl App {
                         | Bench::Colour
                 ) {
                     egui::Panel::bottom("tool-actions")
+                        .min_size(crate::kit::ACTION_BAR_HEIGHT)
                         .frame(
                             egui::Frame::new()
                                 .fill(palette.surface)
@@ -1503,12 +1504,10 @@ impl App {
                     });
                 });
                 ui.horizontal(|ui| {
-                    // Tekla-style Part vs. Assembly selection mode toggle.
                     let asm_mode = self.selection.assembly_select_mode();
-                    if ui
-                        .selectable_label(!asm_mode, RichText::new("Parts").size(10.0))
-                        .on_hover_text("Select individual parts")
-                        .clicked()
+                    if super::switches::scope_button(
+                        ui, Icon::Plate, "Select individual parts", !asm_mode,
+                    ).clicked()
                     {
                         self.selection.assembly_mode = false;
                         self.selection.set(
@@ -1516,10 +1515,9 @@ impl App {
                             true,
                         );
                     }
-                    if ui
-                        .selectable_label(asm_mode, RichText::new("Assemblies").size(10.0))
-                        .on_hover_text("Select whole assemblies (highlights all member parts)")
-                        .clicked()
+                    if super::switches::scope_button(
+                        ui, Icon::Assembly, "Select whole assemblies (highlights all member parts)", asm_mode,
+                    ).clicked()
                     {
                         self.selection.assembly_mode = true;
                         self.selection.set(
@@ -2194,6 +2192,10 @@ impl App {
                         _ => {}
                     }
                     ui.spacing_mut().item_spacing.y = 0.0;
+                    if self.menu_section == MenuSection::Import {
+                        ui.label("IFC files can be opened read-only. Importing IFC elements into this model is unavailable.");
+                        ui.add_space(8.0);
+                    }
                     for label in self.menu_section.commands() {
                         // The IFC row belongs to the Export page only: the Import page lists the
                         // same label and its import command does not exist yet.
@@ -2351,6 +2353,57 @@ mod tests {
             assert_eq!(bench.edit(), None);
         }
         assert_eq!(Bench::default(), Bench::Select);
+    }
+
+    #[test]
+    fn tool_actions_stay_visible_on_a_compact_workbench() {
+        let Some(mut app) = headless() else { return };
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        for bench in [
+            Bench::Grid,
+            Bench::Column,
+            Bench::Beam,
+            Bench::Plate,
+            Bench::Bolt,
+            Bench::Weld,
+            Bench::Assembly,
+            Bench::Move,
+            Bench::Copy,
+            Bench::Delete,
+            Bench::Array,
+            Bench::Cut,
+            Bench::Fit,
+            Bench::Hole,
+            Bench::Numbering,
+            Bench::Reference,
+        ] {
+            app.set_bench(bench);
+            let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+            let output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    ..Default::default()
+                },
+                |ui| {
+                    app.header(ui);
+                    app.ribbon(ui);
+                    app.status_bar(ui);
+                    app.inspector(ui);
+                },
+            );
+            let visible = output.shapes.iter().any(|shape| {
+                let egui::Shape::Text(text) = &shape.shape else {
+                    return false;
+                };
+                let bounds = egui::Rect::from_min_size(text.pos, text.galley.size());
+                text.galley.text() == "Cancel"
+                    && shape.clip_rect.contains_rect(bounds)
+                    && screen.contains_rect(bounds)
+            });
+            output.drop_without_applying_deltas();
+            assert!(visible, "{bench:?} must keep its Cancel action visible");
+        }
     }
 
     #[test]
