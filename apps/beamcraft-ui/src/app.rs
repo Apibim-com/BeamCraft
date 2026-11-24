@@ -410,6 +410,20 @@ impl Default for Preset {
 }
 
 impl Preset {
+    fn orbit_drag(
+        self,
+        primary: bool,
+        secondary: bool,
+        middle: bool,
+        ctrl: bool,
+        shift: bool,
+    ) -> bool {
+        match self {
+            Self::Mouse => middle && ctrl,
+            Self::Trackpad => primary && !shift && !secondary,
+        }
+    }
+
     /// The stored spelling of this preset in the settings file.
     const fn stored(self) -> CameraPreference {
         match self {
@@ -485,26 +499,15 @@ fn navigation(
     let pan = [-pointer_delta.x * factor, pointer_delta.y * factor];
     // Drag the visible model with the pointer; the orbit camera moves the other way.
     let orbit = [-pointer_delta.x * 0.008, pointer_delta.y * 0.008];
-    let (orbit, pan) = match preset {
-        // The left button is reserved for selection: a primary drag never moves the camera.
-        Preset::Mouse => {
-            if middle && ctrl {
-                (orbit, [0.0; 2])
-            } else if middle {
-                ([0.0; 2], pan)
-            } else {
-                ([0.0; 2], [0.0; 2])
-            }
-        }
-        Preset::Trackpad => {
-            if (primary && shift) || secondary {
-                ([0.0; 2], pan)
-            } else if primary {
-                (orbit, [0.0; 2])
-            } else {
-                ([0.0; 2], [0.0; 2])
-            }
-        }
+    let (orbit, pan) = if preset.orbit_drag(primary, secondary, middle, ctrl, shift) {
+        (orbit, [0.0; 2])
+    } else if match preset {
+        Preset::Mouse => middle,
+        Preset::Trackpad => (primary && shift) || secondary,
+    } {
+        ([0.0; 2], pan)
+    } else {
+        ([0.0; 2], [0.0; 2])
     };
     let scroll = if hovered {
         scroll_y * 0.002 * sign
@@ -2940,6 +2943,18 @@ impl App {
         }
         let editable = self.props.head_known() && matches!(state, Some(State::Current));
         let busy = self.props.busy() || self.other_command_running();
+        if !editable
+            && state.is_some()
+            && crate::theme::button(
+                ui,
+                crate::theme::Kind::Secondary,
+                "Reload properties",
+                !busy,
+            )
+            .clicked()
+        {
+            self.reread();
+        }
         if let Some(details) = self.props.details().cloned() {
             if let Some((_, count)) = &details.shared_definition {
                 ui.label(format!("Shape and material edits affect all {count} shared parts. Name, position and level affect this part."));

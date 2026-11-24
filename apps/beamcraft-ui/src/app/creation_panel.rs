@@ -1293,13 +1293,6 @@ impl App {
                 _ => {}
             }
         });
-        if busy {
-            ui.spinner();
-            // Only the creation's own write says saving; another command running is just busy.
-            if self.tools.busy() {
-                ui.label("Saving element…");
-            }
-        }
         // Its outcome is told in the status bar (`App::status_note`).
     }
 }
