@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-use super::{ProjectContext, ProjectLayout, first_revision, invalid, refuse};
+use super::{
+    ProjectContext, ProjectEnvironmentChoice, ProjectLayout, first_revision, invalid, refuse,
+};
 use beamcraft_host::revision::CommitHook;
 use beamcraft_host::storage::BlobStore;
 use beamcraft_model::error::ErrorCode;
@@ -19,13 +21,16 @@ const MAX_DEPTH: usize = 256;
 /// Initializes an existing empty directory as a project and takes its name from the directory.
 ///
 /// The first revision and the caller's optional setup are prepared in a private staging directory.
-/// The staging directory also reserves initialization across processes. An error keeps the
-/// destination directory and rolls back the entries installed by this call.
+/// The staging directory also reserves initialization across processes. `environment` records the
+/// chosen environment in the first revision's root layer, as `create-project` does for a named
+/// folder (#628). An error keeps the destination directory and rolls back the entries installed
+/// by this call.
 pub fn create_project_in_place<T>(
     dir: &Path,
     layout: Option<&ProjectLayout>,
     context: &ProjectContext,
     hook: &mut dyn CommitHook,
+    environment: Option<&ProjectEnvironmentChoice>,
     prepare: impl FnOnce(&Path) -> Result<T, Refusal>,
 ) -> Result<(ProjectInfo, T), Refusal> {
     let dir = std::path::absolute(dir).map_err(|_| invalid("the path cannot be made absolute"))?;
@@ -46,7 +51,7 @@ pub fn create_project_in_place<T>(
 
     let store = staging.0.join("store");
     fs::create_dir(&store).map_err(folder_error)?;
-    first_revision(&store, context, hook, layout)?;
+    first_revision(&store, context, hook, environment, layout)?;
     let prepared = prepare(&store)?;
     let info = project_info(&store)?;
     if !info.state.is_ready() {

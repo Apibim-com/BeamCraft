@@ -26,7 +26,7 @@
 //! library file is written only by [`add_entry`], which renders the whole library again and reads
 //! it back before it installs the file.
 //!
-//! Fastener libraries (A14.1, axisrow/BeamCraft#668) and material libraries (axisrow/BeamCraft#636) ride the same machinery under
+//! Fastener libraries (A14.1, #668) and material libraries (#636) ride the same machinery under
 //! `/Library/Fasteners` and `/Library/Materials`: the fastener entries carry
 //! `steel:fastener:*` attributes, the material entries `steel:material:*` (grade, density,
 //! optional standard and display name), and both are admitted by the same rules, provenance
@@ -45,14 +45,27 @@
 //! [`ProjectChain::material_lookup`]), and every namespace of the firm layer feeds its own
 //! chain.
 //!
+//! A project chain has three namespaces ([`Namespace`]): a listing walks their resolvers one
+//! after another and never merges them, because the same text may be a grade and a designation
+//! ([`ProjectChain::lookup_of`], [`Lookup::matching`]).
+//!
 //! Limits, none of them hidden: a bad entry is reported and skipped, while a duplicate
 //! designation refuses the whole library; a firm file that does not read is reported and skipped
 //! by [`load_firm`], never silently dropped; a project copy whose `environment/` folder survives
 //! without its `environment.usda` is reported in [`ProjectChain::environment_lost`], because the
-//! folder proves an environment was chosen and the fallback would substitute sections (#628);
+//! folder proves an environment was chosen and the fallback would substitute sections (#628), and
+//! so is a recorded environment whose whole copy folder is gone: the store's root layer records
+//! the chosen environment identity at creation, so the loss is named instead of looking like a
+//! plain project, whose warning-free behaviour is unchanged;
 //! the library provenance is reported with the entry
 //! but not stored in the definition; the layer engine runs in this process (no LEW-03
 //! containment), as for every other command.
+//!
+//! A creation command resolves a name through one resolver, [`resolve`], in the lookup order
+//! of #628 for profiles, fasteners and materials alike: the model first, then the project's
+//! chain. It answers with the layer and the library that resolved the name, the entries the
+//! weaker libraries declare under it and the lost environment the chain reports, so a command
+//! reports and warns instead of silently substituting ([`Resolved`]).
 
 use crate::definition::{DefinitionRecord, field};
 use crate::plate::{decode_polygon, decode_polygons, number, text};
@@ -83,7 +96,7 @@ pub const MAX_LIBRARY_ENTRIES: usize = foreign::MAX_LIBRARY_ENTRIES;
 const ENTRY_PARENT: &str = "/Library/Profiles";
 /// Parent path of every fastener entry prim (A14.1).
 const FASTENER_ENTRY_PARENT: &str = "/Library/Fasteners";
-/// Parent path of every material entry prim (axisrow/BeamCraft#636).
+/// Parent path of every material entry prim (#636).
 const MATERIAL_ENTRY_PARENT: &str = "/Library/Materials";
 
 /// The layer of a source that was named on the command line: an explicit single library.
@@ -100,6 +113,9 @@ pub const LAYER_ENVIRONMENT: &str = "environment";
 /// The layer of the shipped neutral environment: the built-in fallback every project chain
 /// ends with.
 pub const LAYER_NEUTRAL: &str = "neutral";
+/// The layer of a definition the model already holds: the strongest layer of every lookup a
+/// creation command makes ([`resolve`]).
+pub const LAYER_MODEL: &str = "model";
 
 /// What the library file declares about itself and what was read.
 #[derive(Debug, Clone, PartialEq)]
@@ -421,7 +437,7 @@ pub fn load_fastener_bytes(bytes: Vec<u8>) -> Result<Library, Refusal> {
     Ok(load_bytes_as(bytes, Some(FASTENER_ENTRY_PARENT), decode_fastener_record)?.0)
 }
 
-/// [`load`] for the material library at `path` (axisrow/BeamCraft#636): the same layer format and loading rules,
+/// [`load`] for the material library at `path` (#636): the same layer format and loading rules,
 /// entries under `/Library/Materials` carrying `steel:material:*` attributes. The designation of
 /// an entry is its grade.
 pub fn load_material(path: &str) -> Result<Library, Refusal> {
@@ -711,7 +727,7 @@ fn decode_fastener_record(prim: &Prim, designation: &str) -> Result<DefinitionRe
     Ok(DefinitionRecord::Fastener { spec })
 }
 
-/// The material definition of one entry prim, admitted by the F04 value rules (axisrow/BeamCraft#636). The
+/// The material definition of one entry prim, admitted by the F04 value rules (#636). The
 /// density and the grade are required; the standard and the display name are optional, and a
 /// display name that is not declared is the grade. Nothing is inferred from the grade: an
 /// unknown density is refused, never substituted.
@@ -765,12 +781,44 @@ pub struct Shadowed {
     pub shadowed_layer: &'static str,
 }
 
+/// A catalogue namespace: one of the three kinds of library an environment selects.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Namespace {
+    /// Profiles: entries under `/Library/Profiles`.
+    Profile,
+    /// Fasteners: entries under `/Library/Fasteners`.
+    Fastener,
+    /// Materials: entries under `/Library/Materials`.
+    Material,
+}
+
+impl Namespace {
+    /// Every namespace, in listing order.
+    pub const ALL: [Self; 3] = [Self::Profile, Self::Fastener, Self::Material];
+
+    /// The token of `--namespace` and of a reply's `namespace`.
+    pub const fn token(self) -> &'static str {
+        match self {
+            Self::Profile => "profile",
+            Self::Fastener => "fastener",
+            Self::Material => "material",
+        }
+    }
+
+    /// The namespace of a token; any other text is `None`.
+    pub fn parse(token: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|namespace| namespace.token() == token)
+    }
+}
+
 /// Libraries in lookup order, strongest first.
 ///
 /// The first library that has a designation answers for it, and a refused entry answers with its
 /// refusal: a weaker library is never consulted for a designation that a stronger one declares,
-/// valid or not.
-#[derive(Debug, Clone, PartialEq)]
+/// valid or not. A default lookup has no library and answers nothing.
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Lookup {
     sources: Vec<Source>,
 }
@@ -851,12 +899,22 @@ impl Lookup {
 
     /// The entries that answer a lookup, one per designation, in designation order.
     pub fn effective(&self) -> Vec<(&Source, &LibraryEntry)> {
+        self.matching(None)
+    }
+
+    /// The entries that answer a lookup, one per designation in designation order, whose
+    /// designation matches `text` ([`designation_matches`]); every one of them when `text` is
+    /// `None`.
+    pub fn matching(&self, text: Option<&str>) -> Vec<(&Source, &LibraryEntry)> {
         self.slots()
             .0
             .into_values()
             .filter_map(|(_, _, slot)| match slot {
                 Slot::Entry(source, entry) => Some((source, entry)),
                 Slot::Refused => None,
+            })
+            .filter(|(_, entry)| {
+                text.is_none_or(|text| designation_matches(&entry.designation, text))
             })
             .collect()
     }
@@ -874,6 +932,24 @@ impl Lookup {
     }
 }
 
+/// Whether a designation matches a search text: both lower-cased in every script and stripped of
+/// whitespace; the folded text must occur in the folded designation.
+///
+/// This is a search, never a lookup: it proposes entries, and an exact lookup disposes.
+pub fn designation_matches(designation: &str, text: &str) -> bool {
+    fold(designation).contains(&fold(text))
+}
+
+/// The search fold of one text. Lower-casing is per character, so it is a widening of the ASCII
+/// fold it replaces for every needle: a context-dependent rule (the Greek final sigma) could turn
+/// a designation and a needle that agreed into ones that do not.
+fn fold(text: &str) -> String {
+    text.chars()
+        .filter(|c| !c.is_whitespace())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
 /// A loaded environment: its libraries in lookup order.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Environment {
@@ -884,7 +960,7 @@ pub struct Environment {
     /// The listed fastener libraries, strongest first (BC-ENV-002: bolts ride the same
     /// environment as profiles).
     pub fastener_sources: Vec<Source>,
-    /// The listed material libraries, strongest first (axisrow/BeamCraft#636: grades ride the same environment
+    /// The listed material libraries, strongest first (#636: grades ride the same environment
     /// as profiles and bolts).
     pub material_sources: Vec<Source>,
 }
@@ -1013,7 +1089,7 @@ pub struct OpenedLookup {
     pub firm_refused: Vec<FirmFileRefused>,
 }
 
-/// The material lookup that a command names (axisrow/BeamCraft#636): exactly one of a single `--library` file
+/// The material lookup that a command names (#636): exactly one of a single `--library` file
 /// (a material library, no provenance required) or an `--environment` file (its material
 /// libraries in order), like [`open_lookup`] for profiles. A single `--library` names every
 /// source exactly; an `--environment` consults the firm material libraries above the
@@ -1255,18 +1331,21 @@ pub fn append_neutral(
     Ok(())
 }
 
-/// The project's own environment copy is demonstrably incomplete: the `environment/` folder
-/// proves an environment was chosen at creation (only `create-project --environment` makes
-/// it), but its `environment.usda` is gone, so the chain resolves from the firm libraries and
-/// the built-in neutral environment alone. Reported, never silent: the fallback may answer a
-/// designation with another section, bolt or grade than the environment the project was
-/// created with (#628).
+/// The project's environment is demonstrably lost, and the fallback may answer a designation
+/// with another section, bolt or grade than the environment the project was created with
+/// (#628). Two shapes report it: a copy whose `environment/` folder survives without its
+/// `environment.usda`, and — since the store records the chosen environment identity at
+/// creation — a project whose whole copy folder is gone while its root layer still names the
+/// environment it was created with. A plain project without a folder and without a record is a
+/// normal state, not a loss, and warns nowhere.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EnvironmentCopyLost {
-    /// The path of the environment file the project is missing.
+    /// The path of the environment file the project is missing: the copy's own file for an
+    /// incomplete copy, and the path the copy would occupy for a recorded environment whose
+    /// folder is gone.
     pub path: String,
-    /// Fixed explanation.
-    pub message: &'static str,
+    /// The explanation, naming the recorded environment when the store knows it.
+    pub message: String,
 }
 
 /// The layered lookup of one project: the project's own copy of its environment (the project
@@ -1288,12 +1367,26 @@ pub struct ProjectChain {
     pub material_lookup: Option<Lookup>,
     /// The project environment copy's own declarations, when the project carries one.
     pub environment: Option<EnvironmentInfo>,
-    /// The project's lost environment copy, when the `environment/` folder proves one was
-    /// chosen and its `environment.usda` is gone; `None` for a project without a folder and
-    /// for a copy that reads.
+    /// The project's lost environment: the `environment/` folder that proves one was chosen
+    /// with its `environment.usda` gone, or a recorded environment whose whole copy folder is
+    /// gone; `None` for a plain project (no folder, no record) and for a copy that reads.
     pub environment_lost: Option<EnvironmentCopyLost>,
     /// The firm files that did not read, in file-name order.
     pub firm_refused: Vec<FirmFileRefused>,
+}
+
+impl ProjectChain {
+    /// The resolver of one namespace over the chain, strongest first; `None` when no layer of
+    /// the chain declares a library of that namespace. The resolvers stay apart on purpose: the
+    /// same text may be a grade and a designation, so one merged lookup would report that as
+    /// shadowing.
+    pub fn lookup_of(&self, namespace: Namespace) -> Option<&Lookup> {
+        match namespace {
+            Namespace::Profile => Some(&self.lookup),
+            Namespace::Fastener => self.fastener_lookup.as_ref(),
+            Namespace::Material => self.material_lookup.as_ref(),
+        }
+    }
 }
 
 /// Builds the [`ProjectChain`] of the project folder at `store`. The project's environment copy
@@ -1303,8 +1396,10 @@ pub struct ProjectChain {
 /// current user's). The neutral environment joins last. A copy whose folder survives without
 /// its `environment.usda` cannot be read and does not refuse — an honest chain resolves from
 /// firm and neutral — but it is reported in [`ProjectChain::environment_lost`] rather than
-/// silently dropped. Every namespace — profiles, fasteners and materials — builds its own
-/// resolver over the same chain.
+/// silently dropped, and so is a recorded environment whose whole copy folder is gone: the
+/// store's root layer names the environment the project was created with, so the loss is
+/// reported with its identity instead of looking like a plain project (#628). Every namespace —
+/// profiles, fasteners and materials — builds its own resolver over the same chain.
 pub fn project_library_chain(
     store: &std::path::Path,
     config_dir: Option<&std::path::Path>,
@@ -1337,10 +1432,33 @@ pub fn project_library_chain(
         crate::project::ProjectEnvironmentCopy::Incomplete(file) => {
             environment_lost = Some(EnvironmentCopyLost {
                 path: file.to_string_lossy().into_owned(),
-                message: "the project's environment copy has lost its environment.usda; profile, fastener and material names resolve from the firm libraries and the built-in neutral environment, not the environment the project was created with",
+                message: "the project's environment copy has lost its environment.usda; profile, fastener and material names resolve from the firm libraries and the built-in neutral environment, not the environment the project was created with".to_owned(),
             });
         }
-        crate::project::ProjectEnvironmentCopy::Absent => {}
+        crate::project::ProjectEnvironmentCopy::Absent => {
+            // A project whose copy folder is gone entirely looks like a plain project on the
+            // file system; the root layer's record of the chosen environment tells the two
+            // apart (#628). A store without the record — a plain project, or one created
+            // before the record existed — keeps the warning-free plain behaviour.
+            if let Some(recorded) = crate::project::recorded_project_environment(store)? {
+                let version = recorded
+                    .version
+                    .as_ref()
+                    .map(|v| format!(" version {v}"))
+                    .unwrap_or_default();
+                environment_lost = Some(EnvironmentCopyLost {
+                    path: store
+                        .join(crate::project::PROJECT_ENVIRONMENT_DIR)
+                        .join(session::environment::ENVIRONMENT_FILE)
+                        .to_string_lossy()
+                        .into_owned(),
+                    message: format!(
+                        "the project was created with the environment {}{}, whose copy is no longer in the project; profile, fastener and material names resolve from the firm libraries and the built-in neutral environment, not the environment the project was created with",
+                        recorded.id, version
+                    ),
+                });
+            }
+        }
     }
     let firm = load_firm(config_dir);
     let firm_refused = firm.refused;
@@ -1358,6 +1476,105 @@ pub fn project_library_chain(
         environment_lost,
         firm_refused,
     })
+}
+
+/// What answered the name of a creation command, and what was shadowed or lost under it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Resolved {
+    /// The complete definition the command pins; `digest` is the digest of its canonical layer.
+    pub record: DefinitionRecord,
+    /// The digest of `record`.
+    pub digest: ContentDigest,
+    /// The layer that answered: [`LAYER_MODEL`], or the layer of the answering library.
+    pub layer: &'static str,
+    /// The library that answered; `None` for the model layer.
+    pub library: Option<LibraryInfo>,
+    /// The weaker libraries of the chain that declare the same name, strongest first; empty for
+    /// the model layer, which is consulted before any library.
+    pub shadowed: Vec<Shadowed>,
+    /// The project's lost environment, when the chain that answered reports one (#628).
+    pub environment_lost: Option<EnvironmentCopyLost>,
+}
+
+/// What the name of a creation command selected.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Resolution {
+    /// Exactly one definition answers. The record is boxed: it holds the whole definition and
+    /// dwarfs the other two outcomes, which a command only matches on.
+    Found(Box<Resolved>),
+    /// No layer declares the name; nothing is substituted.
+    NotFound,
+    /// The model holds more than one definition of the name; none is chosen. Every candidate
+    /// travels with the refusal, so a command can name the digests and its digest option.
+    Ambiguous(Vec<(ContentDigest, DefinitionRecord)>),
+}
+
+/// Resolves the name of a creation command in one `namespace`, strongest layer first (#628): the
+/// definitions of the model ([`LAYER_MODEL`]), then the libraries of the chain `chain` builds —
+/// project, firm, neutral. Profiles, fasteners and materials take the same walk.
+///
+/// `model` is the model's definitions by digest, or `None` when the model is not consulted: a
+/// repin follows the current library entry, and a library file named on the command line
+/// answers alone. The chain is built only when the model has no answer, so a name the model
+/// defines needs no library file: a project whose environment copy is lost or cannot be read
+/// still places every definition it pinned. The model layer therefore reports neither shadows
+/// nor a lost environment; nothing was substituted under it.
+///
+/// * One definition of the model has the name: it answers.
+/// * More than one has it — two generations of one designation, since definitions are
+///   content-addressed and nothing makes a designation unique in a model: [`Resolution::Ambiguous`]
+///   with every candidate. A definition is never chosen for the user.
+/// * No layer declares the name: [`Resolution::NotFound`].
+/// * Otherwise the first library that declares the name answers ([`Lookup::find`]), with the
+///   shadow records of that name and the lost environment of the chain.
+pub fn resolve(
+    model: Option<&BTreeMap<ContentDigest, DefinitionRecord>>,
+    chain: impl FnOnce() -> Result<ProjectChain, Refusal>,
+    namespace: Namespace,
+    name: &str,
+) -> Result<Resolution, Refusal> {
+    if let Some(model) = model {
+        let found: Vec<(&ContentDigest, &DefinitionRecord)> = model
+            .iter()
+            .filter(|(_, record)| record.namespace() == namespace)
+            .filter(|(_, record)| record.selectable_names().contains(&name))
+            .collect();
+        if let [(digest, record)] = found.as_slice() {
+            return Ok(Resolution::Found(Box::new(Resolved {
+                record: (*record).clone(),
+                digest: **digest,
+                layer: LAYER_MODEL,
+                library: None,
+                shadowed: Vec::new(),
+                environment_lost: None,
+            })));
+        }
+        if !found.is_empty() {
+            return Ok(Resolution::Ambiguous(
+                found
+                    .into_iter()
+                    .map(|(digest, record)| (*digest, record.clone()))
+                    .collect(),
+            ));
+        }
+    }
+    let chain = chain()?;
+    let Some(lookup) = chain.lookup_of(namespace) else {
+        return Ok(Resolution::NotFound);
+    };
+    let (source, entry) = match lookup.find(name) {
+        Ok(found) => found,
+        Err(error) if error.code == ErrorCode::NotFound => return Ok(Resolution::NotFound),
+        Err(error) => return Err(error),
+    };
+    Ok(Resolution::Found(Box::new(Resolved {
+        digest: entry.record.resource()?.digest,
+        record: entry.record.clone(),
+        layer: source.layer,
+        library: Some(source.library.info.clone()),
+        shadowed: lookup.shadowed_for(name),
+        environment_lost: chain.environment_lost.clone(),
+    })))
 }
 
 /// The identity of a library that [`add_entry`] creates.
@@ -2083,6 +2300,246 @@ mod tests {
     }
 
     #[test]
+    fn namespace_tokens_round_trip_and_refuse_any_other_text() {
+        let tokens: Vec<&str> = Namespace::ALL
+            .iter()
+            .map(|namespace| namespace.token())
+            .collect();
+        assert_eq!(tokens, ["profile", "fastener", "material"], "listing order");
+        for namespace in Namespace::ALL {
+            assert_eq!(Namespace::parse(namespace.token()), Some(namespace));
+        }
+        // `all` names a listing, a token is exact: neither names a namespace.
+        for other in ["all", "Profile", "bolt", "", "profile "] {
+            assert_eq!(Namespace::parse(other), None, "{other:?}");
+        }
+    }
+
+    #[test]
+    fn lookup_of_hands_every_namespace_its_own_resolver() {
+        let mut chain = ProjectChain {
+            lookup: Lookup::new(vec![source("a", "profiles", &[("P", "X-1")])]),
+            fastener_lookup: None,
+            material_lookup: None,
+            environment: None,
+            environment_lost: None,
+            firm_refused: Vec::new(),
+        };
+        assert_eq!(
+            chain
+                .lookup_of(Namespace::Profile)
+                .map(|lookup| lookup.find("X-1").is_ok()),
+            Some(true),
+            "the profile resolver is always there"
+        );
+        assert!(chain.lookup_of(Namespace::Fastener).is_none());
+        assert!(chain.lookup_of(Namespace::Material).is_none());
+        chain.fastener_lookup = Some(Lookup::new(vec![source("b", "bolts", &[("P", "X-1")])]));
+        // The same designation in two namespaces is no shadow: every resolver answers it from
+        // its own library and reports none.
+        for (namespace, library) in [
+            (Namespace::Profile, "profiles"),
+            (Namespace::Fastener, "bolts"),
+        ] {
+            let lookup = chain.lookup_of(namespace).unwrap();
+            assert_eq!(lookup.find("X-1").unwrap().0.library.info.id, library);
+            assert!(lookup.shadowed().is_empty(), "{namespace:?}");
+        }
+        assert!(chain.lookup_of(Namespace::Material).is_none());
+    }
+
+    #[test]
+    fn a_creation_name_resolves_through_the_model_then_the_chain_in_its_own_namespace() {
+        let profile = |designation: &str, width: f64| {
+            DefinitionRecord::RectangleProfile {
+                width_mm: width,
+                height_mm: 100.0,
+                section: SectionProperties {
+                    designation: Some(designation.into()),
+                    ..SectionProperties::default()
+                },
+            }
+            .named(None)
+        };
+        let material = |density: f64| {
+            DefinitionRecord::Material {
+                density_kg_m3: Some(density),
+                grade: Some("S355".into()),
+                standard: None,
+                display_name: None,
+            }
+            .named(None)
+        };
+        let bolt = load_fastener_bytes(
+            fastener_library(&[fastener_entry("A", "M12", BOLT_BODY)]).into_bytes(),
+        )
+        .unwrap()
+        .entries[0]
+            .record
+            .clone();
+        // Two generations of one designation: definitions are content-addressed, so a model
+        // may hold several of one name.
+        let records = [
+            profile("A", 10.0),
+            profile("A", 20.0),
+            profile("B", 30.0),
+            material(7850.0),
+            material(7800.0),
+            bolt,
+        ];
+        let model: BTreeMap<_, _> = records
+            .iter()
+            .map(|r| (r.resource().unwrap().digest, r.clone()))
+            .collect();
+        let lost = EnvironmentCopyLost {
+            path: "environment/environment.usda".into(),
+            message: "the copy is lost".into(),
+        };
+        let chain = || {
+            Ok(ProjectChain {
+                lookup: Lookup::new(vec![
+                    source("a", "strong", &[("P", "X-1")]),
+                    source("b", "weak", &[("P", "X-1")]),
+                ]),
+                fastener_lookup: None,
+                material_lookup: None,
+                environment: None,
+                environment_lost: Some(lost.clone()),
+                firm_refused: Vec::new(),
+            })
+        };
+        let answers = |model, namespace, name| match resolve(model, chain, namespace, name).unwrap()
+        {
+            Resolution::Found(found) => found,
+            other => panic!("{name:?} did not resolve: {other:?}"),
+        };
+        let digest_of = |record: &DefinitionRecord| record.resource().unwrap().digest;
+        // The candidates travel in the model's digest order.
+        let mut generations: Vec<ContentDigest> = records[..2].iter().map(&digest_of).collect();
+        generations.sort();
+
+        // The model answers by its digest and the chain is never built, so it reports no
+        // shadow and no lost environment: nothing was substituted.
+        let pinned = resolve(
+            Some(&model),
+            || -> Result<ProjectChain, Refusal> {
+                panic!("the chain was built although the model answers")
+            },
+            Namespace::Profile,
+            "B",
+        )
+        .unwrap();
+        let Resolution::Found(pinned) = pinned else {
+            panic!("one profile is named B");
+        };
+        assert_eq!(pinned.layer, LAYER_MODEL);
+        assert_eq!(pinned.digest, digest_of(&records[2]));
+        assert!(pinned.library.is_none());
+        assert!(pinned.shadowed.is_empty() && pinned.environment_lost.is_none());
+
+        // Two generations of one name are an ambiguity with every candidate, never a choice;
+        // a name selects by display name or catalogue label, exactly and inside its namespace.
+        let Resolution::Ambiguous(candidates) =
+            resolve(Some(&model), chain, Namespace::Profile, "A").unwrap()
+        else {
+            panic!("two profiles are named A");
+        };
+        assert_eq!(
+            candidates
+                .iter()
+                .map(|(digest, _)| *digest)
+                .collect::<Vec<_>>(),
+            generations
+        );
+        assert!(matches!(
+            resolve(Some(&model), chain, Namespace::Material, "S355").unwrap(),
+            Resolution::Ambiguous(_)
+        ));
+        assert!(matches!(
+            resolve(Some(&model), chain, Namespace::Profile, "b").unwrap(),
+            Resolution::NotFound
+        ));
+        assert_eq!(
+            answers(Some(&model), Namespace::Fastener, "M12").digest,
+            digest_of(&records[5])
+        );
+        assert!(matches!(
+            resolve(Some(&model), chain, Namespace::Profile, "M12").unwrap(),
+            Resolution::NotFound
+        ));
+
+        // A name the model does not have falls through to the chain: the strongest library
+        // answers, with the weaker entry of the same name and the chain's lost environment.
+        let from_chain = answers(Some(&model), Namespace::Profile, "X-1");
+        assert_eq!(from_chain.layer, LAYER_LIBRARY);
+        assert_eq!(
+            from_chain.library.as_ref().map(|l| l.id.as_str()),
+            Some("strong")
+        );
+        assert_eq!(from_chain.shadowed.len(), 1);
+        assert_eq!(from_chain.shadowed[0].shadowed_library, "weak");
+        assert_eq!(from_chain.environment_lost, Some(lost.clone()));
+        // Without the model the chain answers alone, and a namespace no layer declares, or a
+        // name none declares, resolves nothing.
+        assert_eq!(
+            answers(None, Namespace::Profile, "X-1").layer,
+            LAYER_LIBRARY
+        );
+        assert!(matches!(
+            resolve(None, chain, Namespace::Profile, "B").unwrap(),
+            Resolution::NotFound
+        ));
+        assert!(matches!(
+            resolve(None, chain, Namespace::Material, "S355").unwrap(),
+            Resolution::NotFound
+        ));
+    }
+
+    #[test]
+    fn the_search_folds_case_script_and_whitespace_and_stays_a_search() {
+        for (designation, text, matches) in [
+            ("IPE300", "ipe300", true),
+            ("IPE300", "IPE 300", true),
+            ("I PE 300", "ipe300", true),
+            ("IPE300", "ipe30", true),
+            ("IPE300", "ipe3000", false),
+            ("IPE300", "ipe200", false),
+            ("С345", "с345", true),
+            ("С345", "С345", true),
+            ("C345", "с345", false),
+        ] {
+            assert_eq!(
+                designation_matches(designation, text),
+                matches,
+                "{designation:?} / {text:?}"
+            );
+        }
+        let lookup = Lookup::new(vec![source(
+            "a",
+            "lib",
+            &[("P", "IPE300"), ("Q", "IPE200"), ("R", "Ш20К1")],
+        )]);
+        let names = |text: &str| -> Vec<&str> {
+            lookup
+                .matching(Some(text))
+                .into_iter()
+                .map(|(_, e)| e.designation.as_str())
+                .collect()
+        };
+        assert_eq!(names("ipe"), ["IPE200", "IPE300"]);
+        assert_eq!(names("IPE 3"), ["IPE300"]);
+        assert_eq!(names("ш20"), ["Ш20К1"]);
+        assert!(
+            names("ipe250").is_empty(),
+            "a search never proposes a near match"
+        );
+        // Without a text every answering entry is listed, as `effective` lists them.
+        assert_eq!(lookup.matching(None).len(), 3);
+        // Search proposes; the exact lookup disposes, in the designation's own spelling.
+        assert_eq!(lookup.find("ipe300").unwrap_err().code, ErrorCode::NotFound);
+    }
+
+    #[test]
     fn prim_names_are_identifiers_and_unique() {
         let mut used = BTreeSet::new();
         for (designation, expected) in [
@@ -2231,7 +2688,7 @@ mod tests {
         );
         let library = load(path).unwrap();
         assert_eq!(library.info.id, "europe-en-10365-profiles");
-        assert_eq!(library.info.version.as_deref(), Some("3"));
+        assert_eq!(library.info.version.as_deref(), Some("4"));
         assert!(
             library
                 .info
@@ -2250,7 +2707,7 @@ mod tests {
         );
         // No transcription slips: every entry is admitted and none warns.
         assert_eq!(library.rejected, []);
-        assert_eq!(library.entries.len(), 87);
+        assert_eq!(library.entries.len(), 207);
         let mut designations = Vec::new();
         for entry in &library.entries {
             let DefinitionRecord::SectionProfile {
@@ -2272,14 +2729,19 @@ mod tests {
             assert_eq!(parametric.family(), want_family);
             assert_eq!(
                 section.standard.as_deref(),
-                Some("EN 10365:2022"),
+                Some("EN 10365:2017"),
                 "{}",
                 entry.designation
             );
             // The declared catalogue area matches its convention's reference (the D3 1 percent
             // warning never fires: like-for-like, EN 10365 publishes the UPN 50-300 areas as
-            // the nominal sharp-cornered value and the 320-400 areas exact) and the declared
-            // mass must be the area at the standard's 7850 kg/m3 within its published rounding.
+            // the nominal sharp-cornered value and the 320-400 areas exact, and the EN tables
+            // print no HL root radius, so the HL rows carry the radius reproducing the
+            // published area) and the declared mass must be the area at the standard's
+            // 7850 kg/m3 within its published rounding — except the HL, HLZ, HD and HP rows of
+            // the #790 extension, which carry the designation nominal masses: the rounded
+            // published areas track them within 2.2 percent (worst HP400x122 at 2.19 percent,
+            // HD360x147 at 1.91, HL920x368 at 0.60), so those rows are bounded relatively.
             assert!(
                 entry.record.declared_area_warning().is_none(),
                 "{}",
@@ -2288,11 +2750,22 @@ mod tests {
             let area = section.area_mm2.unwrap();
             let mass = section.mass_per_meter_kg.unwrap();
             let mass_from_area = area * 7850.0 / 1.0e6;
-            assert!(
-                (mass - mass_from_area).abs() <= 0.55,
-                "{}: mass {mass} kg/m vs area-derived {mass_from_area}",
-                entry.designation
-            );
+            if entry.designation.starts_with("HL")
+                || entry.designation.starts_with("HD")
+                || entry.designation.starts_with("HP")
+            {
+                assert!(
+                    (mass - mass_from_area).abs() / mass_from_area <= 0.025,
+                    "{}: mass {mass} kg/m vs area-derived {mass_from_area}",
+                    entry.designation
+                );
+            } else {
+                assert!(
+                    (mass - mass_from_area).abs() <= 0.55,
+                    "{}: mass {mass} kg/m vs area-derived {mass_from_area}",
+                    entry.designation
+                );
+            }
             // The convention declaration itself: nominal sharp exactly on the UPN 50-300 rows,
             // the exact default on the 320-400 rows and everywhere else.
             let want_convention = if entry.designation.starts_with("UPN") {
@@ -2315,21 +2788,220 @@ mod tests {
         // The series as EN 10365 publishes it, in the loader's designation order: no IPE 250/280
         // and no HEA/HEB 250 (those designations do not exist; the sequence steps 240 to 260/270),
         // no UPE 250/260 (the channel sequence steps 240 to 270), and the UPN series runs
-        // 50 to 400 with its own steps (320/350/380 after 300; no 270/330/360).
+        // 50 to 400 with its own steps (320/350/380 after 300; no 270/330/360). The #790
+        // extension adds the HEA/HEB 650-1000 rows and the HL, HLZ, HD and HP series; the
+        // x-suffix rows sort lexically, so the deep HD and HP rows lead their groups and the
+        // four HLZ rows close the HL one.
         assert_eq!(
             designations,
             [
-                "HEA100", "HEA120", "HEA140", "HEA160", "HEA180", "HEA200", "HEA220", "HEA240",
-                "HEA260", "HEA280", "HEA300", "HEA320", "HEA340", "HEA360", "HEA400", "HEA450",
-                "HEA500", "HEA550", "HEA600", "HEB100", "HEB120", "HEB140", "HEB160", "HEB180",
-                "HEB200", "HEB220", "HEB240", "HEB260", "HEB280", "HEB300", "HEB320", "HEB340",
-                "HEB360", "HEB400", "HEB450", "HEB500", "HEB550", "HEB600", "IPE100", "IPE120",
-                "IPE140", "IPE160", "IPE180", "IPE200", "IPE220", "IPE240", "IPE270", "IPE300",
-                "IPE330", "IPE360", "IPE400", "IPE450", "IPE500", "IPE550", "IPE600", "UPE100",
-                "UPE120", "UPE140", "UPE160", "UPE180", "UPE200", "UPE220", "UPE240", "UPE270",
-                "UPE300", "UPE330", "UPE360", "UPE400", "UPE80", "UPN100", "UPN120", "UPN140",
-                "UPN160", "UPN180", "UPN200", "UPN220", "UPN240", "UPN260", "UPN280", "UPN300",
-                "UPN320", "UPN350", "UPN380", "UPN400", "UPN50", "UPN65", "UPN80",
+                "HD260x114",
+                "HD260x142",
+                "HD260x172",
+                "HD260x225",
+                "HD260x299",
+                "HD260x54.1",
+                "HD260x68.2",
+                "HD260x93.0",
+                "HD320x127",
+                "HD320x158",
+                "HD320x198",
+                "HD320x245",
+                "HD320x300",
+                "HD320x74.2",
+                "HD320x97.6",
+                "HD360x134",
+                "HD360x147",
+                "HD360x162",
+                "HD360x179",
+                "HD360x196",
+                "HD400x1086",
+                "HD400x187",
+                "HD400x216",
+                "HD400x237",
+                "HD400x262",
+                "HD400x287",
+                "HD400x314",
+                "HD400x347",
+                "HD400x382",
+                "HD400x421",
+                "HD400x463",
+                "HD400x509",
+                "HD400x551",
+                "HD400x592",
+                "HD400x634",
+                "HD400x677",
+                "HD400x744",
+                "HD400x818",
+                "HD400x900",
+                "HD400x990",
+                "HEA100",
+                "HEA1000",
+                "HEA120",
+                "HEA140",
+                "HEA160",
+                "HEA180",
+                "HEA200",
+                "HEA220",
+                "HEA240",
+                "HEA260",
+                "HEA280",
+                "HEA300",
+                "HEA320",
+                "HEA340",
+                "HEA360",
+                "HEA400",
+                "HEA450",
+                "HEA500",
+                "HEA550",
+                "HEA600",
+                "HEA650",
+                "HEA700",
+                "HEA800",
+                "HEA900",
+                "HEB100",
+                "HEB1000",
+                "HEB120",
+                "HEB140",
+                "HEB160",
+                "HEB180",
+                "HEB200",
+                "HEB220",
+                "HEB240",
+                "HEB260",
+                "HEB280",
+                "HEB300",
+                "HEB320",
+                "HEB340",
+                "HEB360",
+                "HEB400",
+                "HEB450",
+                "HEB500",
+                "HEB550",
+                "HEB600",
+                "HEB650",
+                "HEB700",
+                "HEB800",
+                "HEB900",
+                "HL1000A",
+                "HL1000AA",
+                "HL1000B",
+                "HL1000M",
+                "HL1000x443",
+                "HL1000x483",
+                "HL1000x539",
+                "HL1000x554",
+                "HL1000x591",
+                "HL1000x642",
+                "HL1000x748",
+                "HL1000x883",
+                "HL1000x976",
+                "HL1100A",
+                "HL1100B",
+                "HL1100M",
+                "HL1100R",
+                "HL1100x548",
+                "HL1100x607",
+                "HL920x1077",
+                "HL920x1194",
+                "HL920x1269",
+                "HL920x1377",
+                "HL920x344",
+                "HL920x368",
+                "HL920x390",
+                "HL920x420",
+                "HL920x449",
+                "HL920x491",
+                "HL920x537",
+                "HL920x588",
+                "HL920x656",
+                "HL920x725",
+                "HL920x787",
+                "HL920x970",
+                "HLZ1100A",
+                "HLZ1100B",
+                "HLZ1100C",
+                "HLZ1100D",
+                "HP200x43",
+                "HP200x53",
+                "HP220x57",
+                "HP260x75",
+                "HP260x87",
+                "HP305x110",
+                "HP305x126",
+                "HP305x149",
+                "HP305x180",
+                "HP305x186",
+                "HP305x223",
+                "HP305x79",
+                "HP305x88",
+                "HP305x95",
+                "HP320x103",
+                "HP320x117",
+                "HP320x147",
+                "HP320x184",
+                "HP320x88",
+                "HP360x109",
+                "HP360x133",
+                "HP360x152",
+                "HP360x174",
+                "HP360x180",
+                "HP400x122",
+                "HP400x140",
+                "HP400x158",
+                "HP400x176",
+                "HP400x194",
+                "HP400x213",
+                "HP400x231",
+                "IPE100",
+                "IPE120",
+                "IPE140",
+                "IPE160",
+                "IPE180",
+                "IPE200",
+                "IPE220",
+                "IPE240",
+                "IPE270",
+                "IPE300",
+                "IPE330",
+                "IPE360",
+                "IPE400",
+                "IPE450",
+                "IPE500",
+                "IPE550",
+                "IPE600",
+                "UPE100",
+                "UPE120",
+                "UPE140",
+                "UPE160",
+                "UPE180",
+                "UPE200",
+                "UPE220",
+                "UPE240",
+                "UPE270",
+                "UPE300",
+                "UPE330",
+                "UPE360",
+                "UPE400",
+                "UPE80",
+                "UPN100",
+                "UPN120",
+                "UPN140",
+                "UPN160",
+                "UPN180",
+                "UPN200",
+                "UPN220",
+                "UPN240",
+                "UPN260",
+                "UPN280",
+                "UPN300",
+                "UPN320",
+                "UPN350",
+                "UPN380",
+                "UPN400",
+                "UPN50",
+                "UPN65",
+                "UPN80",
             ]
         );
         // Spot checks against the transcribed values.
@@ -2410,9 +3082,67 @@ mod tests {
         assert_eq!(p.values(), [400.0, 110.0, 14.0, 18.0, 18.0, 9.0, 0.05]);
         assert_eq!(section.area_mm2, Some(9150.0));
         assert_eq!(section.mass_per_meter_kg, Some(71.8));
+        // One spot per family of the #790 extension, against the transcribed values: the
+        // EMSTEEL-catalogue HL row, the largest-HD-gap row, the deepest HLZ row, the heaviest
+        // HP row and the top of the extended HEA ladder.
+        let hl920x491 = library.entry("HL920x491").unwrap();
+        let DefinitionRecord::SectionProfile {
+            shape: SectionShape::Parametric(p),
+            section,
+        } = &hl920x491.record
+        else {
+            panic!("HL920x491 is not a parametric section");
+        };
+        assert_eq!(p.values(), [957.0, 422.0, 25.9, 47.0, 19.0]);
+        assert_eq!(section.area_mm2, Some(62300.0));
+        assert_eq!(section.mass_per_meter_kg, Some(491.0));
+        let hd400x818 = library.entry("HD400x818").unwrap();
+        let DefinitionRecord::SectionProfile {
+            shape: SectionShape::Parametric(p),
+            section,
+        } = &hd400x818.record
+        else {
+            panic!("HD400x818 is not a parametric section");
+        };
+        assert_eq!(p.values(), [514.0, 437.0, 60.5, 97.0, 24.0]);
+        assert_eq!(section.area_mm2, Some(104630.0));
+        assert_eq!(section.mass_per_meter_kg, Some(818.0));
+        let hlz1100d = library.entry("HLZ1100D").unwrap();
+        let DefinitionRecord::SectionProfile {
+            shape: SectionShape::Parametric(p),
+            section,
+        } = &hlz1100d.record
+        else {
+            panic!("HLZ1100D is not a parametric section");
+        };
+        assert_eq!(p.values(), [1087.0, 460.0, 22.0, 37.0, 35.0]);
+        assert_eq!(section.area_mm2, Some(57800.0));
+        assert_eq!(section.mass_per_meter_kg, Some(453.0));
+        let hp400x231 = library.entry("HP400x231").unwrap();
+        let DefinitionRecord::SectionProfile {
+            shape: SectionShape::Parametric(p),
+            section,
+        } = &hp400x231.record
+        else {
+            panic!("HP400x231 is not a parametric section");
+        };
+        assert_eq!(p.values(), [372.0, 402.0, 26.0, 26.0, 24.0]);
+        assert_eq!(section.area_mm2, Some(29720.0));
+        assert_eq!(section.mass_per_meter_kg, Some(231.0));
+        let hea1000 = library.entry("HEA1000").unwrap();
+        let DefinitionRecord::SectionProfile {
+            shape: SectionShape::Parametric(p),
+            section,
+        } = &hea1000.record
+        else {
+            panic!("HEA1000 is not a parametric section");
+        };
+        assert_eq!(p.values(), [990.0, 300.0, 16.5, 31.0, 30.0]);
+        assert_eq!(section.area_mm2, Some(34685.0));
+        assert_eq!(section.mass_per_meter_kg, Some(272.3));
         for absent in [
-            "IPE250", "IPE280", "HEA250", "HEB250", "IPE650", "HEA700", "UPE250", "UPE260",
-            "UPE450", "UPN250", "UPN270", "UPN330", "UPN360", "UPN450",
+            "IPE250", "IPE280", "HEA250", "HEB250", "IPE650", "HEM200", "HEM300", "UPE250",
+            "UPE260", "UPE450", "UPN250", "UPN270", "UPN330", "UPN360", "UPN450",
         ] {
             assert_eq!(
                 library.entry(absent).unwrap_err().code,
@@ -2434,7 +3164,7 @@ mod tests {
         // The profile namespace is unchanged by the fastener listing: both profile libraries
         // keep their entries.
         assert_eq!(environment.sources.len(), 2);
-        assert_eq!(environment.sources[0].library.entries.len(), 87);
+        assert_eq!(environment.sources[0].library.entries.len(), 207);
         assert_eq!(environment.sources[1].library.entries.len(), 52);
         // The DIN fastener set rides the same environment, admitted with declared provenance;
         // the pack carries the M12-30 designations since the EN 1090-2 hole-series rows.
@@ -2471,6 +3201,133 @@ mod tests {
                 ErrorCode::NotFound,
                 "{absent}"
             );
+        }
+    }
+
+    #[test]
+    fn the_shipped_usa_environment_admits_its_fastener_library() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/usa/environment.usda"
+        );
+        let environment = load_environment(path).unwrap();
+        assert_eq!(environment.info.id, "usa");
+        assert_eq!(
+            environment.info.fastener_libraries,
+            ["fasteners-rcsc-2025.usda"]
+        );
+        // The profile namespace is unchanged by the fastener listing: the A6 pack keeps its
+        // entries.
+        assert_eq!(environment.sources.len(), 1);
+        assert_eq!(environment.sources[0].library.entries.len(), 285);
+        // The RCSC fastener set rides the same environment, admitted with declared provenance.
+        assert_eq!(environment.fastener_sources.len(), 1);
+        let bolts = &environment.fastener_sources[0];
+        assert_eq!(bolts.library.info.id, "beamcraft-rcsc-fasteners");
+        assert_eq!(bolts.library.entries.len(), 18);
+        assert!(bolts.library.rejected.is_empty());
+        assert!(
+            bolts
+                .library
+                .info
+                .source
+                .as_deref()
+                .is_some_and(|s| !s.is_empty())
+                && bolts
+                    .library
+                    .info
+                    .licence
+                    .as_deref()
+                    .is_some_and(|l| !l.is_empty()),
+            "the shipped fastener library declares its provenance"
+        );
+        // Bolt lookups ride the same resolver machinery, in their own namespace.
+        let lookup = environment.fastener_lookup();
+        let three_quarter = lookup.find("A325-3/4").unwrap().1;
+        assert!(
+            matches!(&three_quarter.record, DefinitionRecord::Fastener { spec }
+                if spec.nominal_diameter_mm == 19.05 && spec.hole_clearance_mm == 1.5875)
+        );
+        // A designation the set does not publish is NOT_FOUND, never a near match: the metric
+        // A325M series is excluded by the slice, the washers are paywalled and deferred, no
+        // oversize or slot row exists, and the lookup never answers a lowercase variant.
+        for absent in [
+            "A325M-16",
+            "A325M20",
+            "M20",
+            "F436-3/4",
+            "A325-3/4-OVS",
+            "a325-3/4",
+        ] {
+            assert_eq!(
+                lookup.find(absent).unwrap_err().code,
+                ErrorCode::NotFound,
+                "{absent}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_shipped_usa_fastener_pack_matches_the_rcsc_2025_tables() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/usa/fasteners-rcsc-2025.usda"
+        );
+        let library = load_fastener(path).unwrap();
+        assert_eq!(library.info.id, "beamcraft-rcsc-fasteners");
+        assert_eq!(library.info.version.as_deref(), Some("1"));
+        assert_eq!(library.rejected, []);
+        assert_eq!(library.entries.len(), 18);
+        // One row per size and grade: the C-2.1 inch fractions converted exactly (x 25.4),
+        // the Table 3.1 standard hole as the clearance — 1/16 in over the bolt through 7/8 in
+        // and 1/8 in from 1 in up, the band the 2025 edition moved — and no washer anywhere.
+        let sizes = [
+            ("1/2", 12.7, 22.225, 7.9375, 12.303125, 1.5875, 4.0),
+            ("5/8", 15.875, 26.9875, 9.921875, 15.478125, 1.5875, 5.0),
+            ("3/4", 19.05, 31.75, 11.90625, 18.653125, 1.5875, 6.0),
+            ("7/8", 22.225, 36.5125, 13.890625, 21.828125, 1.5875, 7.0),
+            ("1", 25.4, 41.275, 15.478125, 25.003125, 3.175, 8.0),
+            ("1-1/8", 28.575, 46.0375, 17.4625, 28.178125, 3.175, 9.0),
+            ("1-1/4", 31.75, 50.8, 19.84375, 30.95625, 3.175, 10.0),
+            ("1-3/8", 34.925, 55.5625, 21.43125, 34.13125, 3.175, 11.0),
+            ("1-1/2", 38.1, 60.325, 23.8125, 37.30625, 3.175, 12.0),
+        ];
+        // The offered lengths are the declared contributor grid, exact millimetres of the
+        // inch steps: 1-1/4 to 5 in quarter steps (31.75 to 127 mm), then half steps to 8 in
+        // (139.7 to 203.2 mm).
+        let lengths: Vec<f64> = vec![
+            31.75, 38.1, 44.45, 50.8, 57.15, 63.5, 69.85, 76.2, 82.55, 88.9, 95.25, 101.6, 107.95,
+            114.3, 120.65, 127., 139.7, 152.4, 165.1, 177.8, 190.5, 203.2,
+        ];
+        assert_eq!(lengths.len(), 22);
+        for grade in ["A325", "A490"] {
+            for (size, nominal, flats, head, nut, clearance, protrusion) in sizes {
+                let designation = format!("{grade}-{size}");
+                let entry = library
+                    .entries
+                    .iter()
+                    .find(|e| e.designation == designation)
+                    .unwrap_or_else(|| panic!("the pack lists {designation}"));
+                let DefinitionRecord::Fastener { spec } = &entry.record else {
+                    panic!("{designation} is a fastener record");
+                };
+                assert_eq!(spec.designation.as_deref(), Some(designation.as_str()));
+                assert_eq!(spec.standard.as_deref(), Some("ASTM F3125"));
+                assert_eq!(spec.grade.as_deref(), Some(grade));
+                assert_eq!(spec.kind, FastenerKind::Bolt);
+                assert_eq!(spec.head_kind, HeadKind::Hex);
+                assert_eq!(spec.nominal_diameter_mm, nominal, "{designation}");
+                assert_eq!(spec.head_across_flats_mm, flats, "{designation}");
+                assert_eq!(spec.head_height_mm, head, "{designation}");
+                assert_eq!(spec.nut_across_flats_mm, Some(flats), "{designation}");
+                assert_eq!(spec.nut_height_mm, Some(nut), "{designation}");
+                assert_eq!(spec.hole_clearance_mm, clearance, "{designation}");
+                assert_eq!(spec.thread_protrusion_mm, protrusion, "{designation}");
+                assert!(spec.washer.is_none(), "{designation} carries no washer");
+                assert!(!spec.washer_under_head && !spec.washer_under_nut);
+                assert_eq!(spec.hole_mode, HoleMode::Generate);
+                assert_eq!(spec.lengths_mm, lengths, "{designation}");
+            }
         }
     }
 
@@ -2602,6 +3459,306 @@ mod tests {
                 "{absent}"
             );
         }
+    }
+
+    #[test]
+    fn the_shipped_south_africa_ipe_library_reads_with_every_entry_admitted() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/south-africa/profiles-en-10365-ipe.usda"
+        );
+        let library = load(path).unwrap();
+        assert_eq!(library.info.id, "south-africa-en-10365-ipe-profiles");
+        assert_eq!(library.info.version.as_deref(), Some("1"));
+        assert!(
+            library
+                .info
+                .licence
+                .as_deref()
+                .is_some_and(|l| !l.is_empty()),
+            "the shipped library declares its licence"
+        );
+        assert!(
+            library
+                .info
+                .source
+                .as_deref()
+                .is_some_and(|s| !s.is_empty()),
+            "the shipped library declares its source"
+        );
+        // No transcription slips: every entry is admitted and none warns.
+        assert_eq!(library.rejected, []);
+        assert_eq!(library.entries.len(), 17);
+        for entry in &library.entries {
+            let DefinitionRecord::SectionProfile {
+                shape: SectionShape::Parametric(parametric),
+                section,
+            } = &entry.record
+            else {
+                panic!("{} is not a parametric section", entry.designation);
+            };
+            assert_eq!(parametric.family(), SectionFamily::IShape);
+            // The live EN string is the declared standard: EN 10365:2017 carries the IPE series
+            // that DIN 1025-5 specified before EN 10365 superseded it.
+            assert_eq!(
+                section.standard.as_deref(),
+                Some("EN 10365:2017"),
+                "{}",
+                entry.designation
+            );
+            // The D3 declared-area check: the declared catalogue area matches the exact
+            // filleted reference (the 1 percent warning never fires) and the declared mass is
+            // the area at 7850 kg/m3 within the standard's published rounding.
+            assert!(
+                entry.record.declared_area_warning().is_none(),
+                "{}",
+                entry.designation
+            );
+            let area = section.area_mm2.unwrap();
+            let mass = section.mass_per_meter_kg.unwrap();
+            let mass_from_area = area * 7850.0 / 1.0e6;
+            assert!(
+                (mass - mass_from_area).abs() <= 0.55,
+                "{}: mass {mass} kg/m vs area-derived {mass_from_area}",
+                entry.designation
+            );
+            assert_eq!(section.area_convention, AreaConvention::ExactFilleted);
+        }
+        // The series as EN 10365 publishes it, in the loader's designation order: the sequence
+        // steps 240 to 270 (no IPE 250 or 280) and ends at 600.
+        let designations: Vec<&str> = library
+            .entries
+            .iter()
+            .map(|e| e.designation.as_str())
+            .collect();
+        assert_eq!(
+            designations,
+            [
+                "IPE100", "IPE120", "IPE140", "IPE160", "IPE180", "IPE200", "IPE220", "IPE240",
+                "IPE270", "IPE300", "IPE330", "IPE360", "IPE400", "IPE450", "IPE500", "IPE550",
+                "IPE600",
+            ]
+        );
+        // Every row is the europe pack's IPE row of the same designation, value for value: one
+        // transcription of the series serves both packs.
+        let europe = load(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/europe/profiles-en-10365.usda"
+        ))
+        .unwrap();
+        let twins: Vec<&LibraryEntry> = europe
+            .entries
+            .iter()
+            .filter(|e| e.designation.starts_with("IPE"))
+            .collect();
+        assert_eq!(twins.len(), 17);
+        let rows: Vec<&LibraryEntry> = library.entries.iter().collect();
+        assert_eq!(rows, twins, "the IPE rows are the europe pack's");
+        // Spot checks against the standard's published values.
+        let ipe300 = library.entry("IPE300").unwrap();
+        let DefinitionRecord::SectionProfile {
+            shape: SectionShape::Parametric(p),
+            section,
+        } = &ipe300.record
+        else {
+            panic!("IPE300 is not a parametric section");
+        };
+        assert_eq!(p.values(), [300.0, 150.0, 7.1, 10.7, 15.0]);
+        assert_eq!(section.area_mm2, Some(5381.0));
+        assert_eq!(section.mass_per_meter_kg, Some(42.2));
+        let ipe100 = library.entry("IPE100").unwrap();
+        let DefinitionRecord::SectionProfile {
+            shape: SectionShape::Parametric(p),
+            section,
+        } = &ipe100.record
+        else {
+            panic!("IPE100 is not a parametric section");
+        };
+        assert_eq!(p.values(), [100.0, 55.0, 4.1, 5.7, 7.0]);
+        assert_eq!(section.area_mm2, Some(1032.0));
+        assert_eq!(section.mass_per_meter_kg, Some(8.1));
+        // Out of this library: the BS UB/UC/UBP/PFC series of South African practice (an open
+        // owner question), the other EN 10365 series, the sizes beyond IPE 600, and any other
+        // spelling of a shipped designation.
+        for absent in [
+            "IPE250",
+            "IPE280",
+            "IPE750",
+            "HEA200",
+            "HEB200",
+            "UPE200",
+            "UPN200",
+            "UB203x133x25",
+            "UC203x203x46",
+            "UBP254x254x71",
+            "PFC200",
+            "IPE 300",
+            "ipe300",
+        ] {
+            assert_eq!(
+                library.entry(absent).unwrap_err().code,
+                ErrorCode::NotFound,
+                "{absent} is not in the series"
+            );
+        }
+    }
+
+    #[test]
+    fn the_shipped_south_africa_sans_50025_materials_library_reads_with_every_entry_admitted() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/south-africa/materials-sans-50025.usda"
+        );
+        let library = load_material(path).unwrap();
+        assert_eq!(library.info.id, "south-africa-sans-50025-materials");
+        assert_eq!(library.info.version.as_deref(), Some("1"));
+        assert!(
+            library
+                .info
+                .licence
+                .as_deref()
+                .is_some_and(|l| !l.is_empty()),
+            "the shipped library declares its licence"
+        );
+        assert!(
+            library
+                .info
+                .source
+                .as_deref()
+                .is_some_and(|s| !s.is_empty()),
+            "the shipped library declares its source"
+        );
+        // No transcription slips: every entry is admitted.
+        assert_eq!(library.rejected, []);
+        assert_eq!(library.entries.len(), 27);
+        // The structural grade sets of SANS 50025-2/-3/-4:2009, in the loader's designation
+        // order, each with its part and the pack density. The 2009 SANS parts adopt the 2004
+        // EN editions: S450J0 ships, the S460 JR/J0/J2/K2 qualities, S500J0, S500M and S500ML
+        // the 2019 EN revision added do not, and S185 and the E295/E335/E360 engineering steels,
+        // whose chemical composition the standard does not specify, ride no rows.
+        let part2 = "SANS 50025-2:2009";
+        let part3 = "SANS 50025-3:2009";
+        let part4 = "SANS 50025-4:2009";
+        let expected: [(&str, &str); 27] = [
+            ("S235J0", part2),
+            ("S235J2", part2),
+            ("S235JR", part2),
+            ("S275J0", part2),
+            ("S275J2", part2),
+            ("S275JR", part2),
+            ("S275M", part4),
+            ("S275ML", part4),
+            ("S275N", part3),
+            ("S275NL", part3),
+            ("S355J0", part2),
+            ("S355J2", part2),
+            ("S355JR", part2),
+            ("S355K2", part2),
+            ("S355M", part4),
+            ("S355ML", part4),
+            ("S355N", part3),
+            ("S355NL", part3),
+            ("S420M", part4),
+            ("S420ML", part4),
+            ("S420N", part3),
+            ("S420NL", part3),
+            ("S450J0", part2),
+            ("S460M", part4),
+            ("S460ML", part4),
+            ("S460N", part3),
+            ("S460NL", part3),
+        ];
+        for ((designation, want_standard), entry) in expected.iter().zip(&library.entries) {
+            let DefinitionRecord::Material {
+                density_kg_m3,
+                grade,
+                standard,
+                display_name,
+            } = &entry.record
+            else {
+                panic!("{} is not a material", entry.designation);
+            };
+            assert_eq!(entry.designation, *designation);
+            assert_eq!(grade.as_deref(), Some(*designation));
+            assert_eq!(*density_kg_m3, Some(7850.0), "{}", designation);
+            assert_eq!(standard.as_deref(), Some(*want_standard), "{}", designation);
+            assert_eq!(display_name.as_deref(), Some(*designation));
+        }
+        assert_eq!(library.entries.len(), expected.len());
+        // Cross-check against the shipped `europe` pack, the independently transcribed 2019 EN
+        // editions: every SANS grade but S450J0 is a 2019 EN grade too, and the 2019 EN grades
+        // the pack lacks are exactly those the 2019 revision added.
+        let europe = load_material(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/europe/materials-en-10025.usda"
+        ))
+        .unwrap();
+        let sans: Vec<&str> = library
+            .entries
+            .iter()
+            .map(|e| e.designation.as_str())
+            .collect();
+        let added_in_2019 = [
+            "S460JR", "S460J0", "S460J2", "S460K2", "S500J0", "S500M", "S500ML",
+        ];
+        for entry in &europe.entries {
+            assert_eq!(
+                sans.contains(&entry.designation.as_str()),
+                !added_in_2019.contains(&entry.designation.as_str()),
+                "{}",
+                entry.designation
+            );
+        }
+        // A grade the set does not publish is NOT_FOUND, never a near match: no bare strength
+        // class, no lowercase, no delivery-condition suffix and no grade of another edition.
+        for absent in [
+            "S235", "S355", "s355j2", "S355K2+N", "S460JR", "S500J0", "S500M", "S185", "E295",
+        ] {
+            assert_eq!(
+                library.entry(absent).unwrap_err().code,
+                ErrorCode::NotFound,
+                "{absent} is not in the series"
+            );
+        }
+    }
+
+    #[test]
+    fn the_shipped_south_africa_environment_admits_its_libraries() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/south-africa/environment.usda"
+        );
+        let environment = load_environment(path).unwrap();
+        assert_eq!(environment.info.id, "south-africa");
+        assert_eq!(environment.info.version.as_deref(), Some("1"));
+        assert_eq!(environment.info.libraries, ["profiles-en-10365-ipe.usda"]);
+        assert_eq!(
+            environment.info.material_libraries,
+            ["materials-sans-50025.usda"]
+        );
+        // The environment names no fastener library (#708), so that namespace stays empty.
+        assert!(environment.info.fastener_libraries.is_empty());
+        assert_eq!(environment.sources.len(), 1);
+        assert_eq!(environment.sources[0].library.entries.len(), 17);
+        assert!(environment.sources[0].library.rejected.is_empty());
+        assert!(environment.fastener_sources.is_empty());
+        assert_eq!(environment.material_sources.len(), 1);
+        assert_eq!(environment.material_sources[0].library.entries.len(), 27);
+        assert!(environment.material_sources[0].library.rejected.is_empty());
+        // A grade rides the same resolver machinery, in its own namespace.
+        let lookup = environment.material_lookup();
+        let (source, s355) = lookup.find("S355J2").unwrap();
+        assert_eq!(source.library.info.id, "south-africa-sans-50025-materials");
+        assert!(matches!(
+            &s355.record,
+            DefinitionRecord::Material { density_kg_m3: Some(7850.0), standard, .. }
+                if standard.as_deref() == Some("SANS 50025-2:2009")
+        ));
+        // A bolt designation stays NOT_FOUND: the pack carries no fastener set.
+        assert_eq!(
+            environment.fastener_lookup().find("M20").unwrap_err().code,
+            ErrorCode::NotFound
+        );
     }
 
     #[test]
@@ -2777,11 +3934,20 @@ mod tests {
             "/../../environments/usa/environment.usda"
         );
         let environment = load_environment(path).unwrap();
+        assert_eq!(environment.info.libraries, ["profiles-astm-a6-w-hp.usda"]);
         assert_eq!(environment.info.material_libraries, ["materials-astm.usda"]);
-        // The environment carries no profile or fastener libraries: the USA profile pack waits
-        // on the axisrow/BeamCraft#649 provenance audit, so the material listing is the whole environment.
-        assert_eq!(environment.sources.len(), 0);
-        assert_eq!(environment.fastener_sources.len(), 0);
+        // The environment carries its profile library beside its material library and its
+        // RCSC fastener set (the fastener slice of #708).
+        assert_eq!(environment.sources.len(), 1);
+        assert_eq!(
+            environment.sources[0].library.info.id,
+            "usa-astm-a6-w-hp-profiles"
+        );
+        assert_eq!(environment.fastener_sources.len(), 1);
+        assert_eq!(
+            environment.fastener_sources[0].library.info.id,
+            "beamcraft-rcsc-fasteners"
+        );
         assert_eq!(environment.material_sources.len(), 1);
         let materials = &environment.material_sources[0];
         assert_eq!(materials.library.info.id, "usa-astm-materials");
@@ -2891,9 +4057,12 @@ mod tests {
             environment.info.material_libraries,
             ["materials-csa-g4021.usda"]
         );
-        // The grades-only environment the axisrow/BeamCraft#697 mechanism admits: no profile or fastener
-        // libraries, one material source.
-        assert_eq!(environment.sources.len(), 0);
+        // One profile source beside the material one (the #709 pack), no fastener libraries.
+        assert_eq!(environment.sources.len(), 1);
+        assert_eq!(
+            environment.sources[0].library.info.id,
+            "canada-astm-a6-w-hp-profiles"
+        );
         assert_eq!(environment.fastener_sources.len(), 0);
         assert_eq!(environment.material_sources.len(), 1);
         let materials = &environment.material_sources[0];
@@ -2916,6 +4085,304 @@ mod tests {
         for absent in [
             "350", "50W", "44W", "350WT", "350A", "350R", "w350", "600W", "700W",
         ] {
+            assert_eq!(
+                lookup.find(absent).unwrap_err().code,
+                ErrorCode::NotFound,
+                "{absent}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_shipped_south_america_nch203_materials_library_reads_with_every_entry_admitted() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/south-america/materials-nch203.usda"
+        );
+        let library = load_material(path).unwrap();
+        assert_eq!(library.info.id, "south-america-nch203-materials");
+        assert_eq!(library.info.version.as_deref(), Some("1"));
+        assert!(
+            library
+                .info
+                .licence
+                .as_deref()
+                .is_some_and(|l| !l.is_empty()),
+            "the shipped library declares its licence"
+        );
+        assert!(
+            library
+                .info
+                .source
+                .as_deref()
+                .is_some_and(|s| !s.is_empty()),
+            "the shipped library declares its source"
+        );
+        // No transcription slips: every entry is admitted.
+        assert_eq!(library.rejected, []);
+        assert_eq!(library.entries.len(), 7);
+        // The complete grade set of NCh203.Of2006 in the loader's designation order: the
+        // general-construction class ES (the carbon steels A240ES, A270ES and A345ES, the
+        // microalloyed M345ES and the high-strength low-alloy Y345ES, where the number is the
+        // minimum yield strength in MPa) and the dynamic-load class ESP (A250ESP, A345ESP).
+        // The national designations only: no ASTM alias and no designation of the annulled
+        // NCh203.Of77 edition is a row.
+        let nch = "NCh203.Of2006";
+        let expected: [(&str, &str); 7] = [
+            ("A240ES", nch),
+            ("A250ESP", nch),
+            ("A270ES", nch),
+            ("A345ES", nch),
+            ("A345ESP", nch),
+            ("M345ES", nch),
+            ("Y345ES", nch),
+        ];
+        for ((designation, want_standard), entry) in expected.iter().zip(&library.entries) {
+            let DefinitionRecord::Material {
+                density_kg_m3,
+                grade,
+                standard,
+                display_name,
+            } = &entry.record
+            else {
+                panic!("{} is not a material", entry.designation);
+            };
+            assert_eq!(entry.designation, *designation);
+            assert_eq!(grade.as_deref(), Some(*designation));
+            assert_eq!(*density_kg_m3, Some(7850.0), "{}", designation);
+            assert_eq!(standard.as_deref(), Some(*want_standard), "{}", designation);
+            assert_eq!(display_name.as_deref(), Some(*designation));
+        }
+        assert_eq!(library.entries.len(), expected.len());
+    }
+
+    #[test]
+    fn the_shipped_south_america_environment_admits_its_material_library() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/south-america/environment.usda"
+        );
+        let environment = load_environment(path).unwrap();
+        assert_eq!(environment.info.id, "south-america");
+        assert_eq!(
+            environment.info.material_libraries,
+            ["materials-nch203.usda"]
+        );
+        // The #708 route landed beside the grades (#711): the environment carries the W-shape
+        // profile library with its material library and no fastener library.
+        assert_eq!(environment.info.libraries, ["profiles-astm-a6-w.usda"]);
+        assert_eq!(environment.sources.len(), 1);
+        assert_eq!(
+            environment.sources[0].library.info.id,
+            "south-america-astm-a6-w-profiles"
+        );
+        assert_eq!(environment.fastener_sources.len(), 0);
+        assert_eq!(environment.material_sources.len(), 1);
+        let materials = &environment.material_sources[0];
+        assert_eq!(materials.library.info.id, "south-america-nch203-materials");
+        assert_eq!(materials.library.entries.len(), 7);
+        assert!(materials.library.rejected.is_empty());
+        // A grade rides the same resolver machinery, in its own namespace.
+        let lookup = environment.material_lookup();
+        let (source, grade_270) = lookup.find("A270ES").unwrap();
+        assert_eq!(source.library.info.id, "south-america-nch203-materials");
+        assert!(matches!(
+            &grade_270.record,
+            DefinitionRecord::Material { density_kg_m3: Some(7850.0), standard, .. }
+                if standard.as_deref() == Some("NCh203.Of2006")
+        ));
+        // A grade the set does not publish is NOT_FOUND, never a near match: no ASTM
+        // designation of the standard's informative Annex C relations, no designation of the
+        // annulled NCh203.Of77 edition, no bare strength level, no full designation carrying
+        // the optional condition letters, no lowercase and no strength level outside the set.
+        for absent in [
+            "A36",
+            "A572 Grade 50",
+            "A37-24ES",
+            "A42-27ES",
+            "A270",
+            "A270ES N",
+            "a270es",
+            "A300ES",
+        ] {
+            assert_eq!(
+                lookup.find(absent).unwrap_err().code,
+                ErrorCode::NotFound,
+                "{absent}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_shipped_philippines_materials_library_reads_with_every_entry_admitted() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/philippines/materials-philippines.usda"
+        );
+        let library = load_material(path).unwrap();
+        assert_eq!(library.info.id, "philippines-esc-materials");
+        assert_eq!(library.info.version.as_deref(), Some("1"));
+        assert!(
+            library
+                .info
+                .licence
+                .as_deref()
+                .is_some_and(|l| !l.is_empty()),
+            "the shipped library declares its licence"
+        );
+        assert!(
+            library
+                .info
+                .source
+                .as_deref()
+                .is_some_and(|s| !s.is_empty()),
+            "the shipped library declares its source"
+        );
+        // No transcription slips: every entry is admitted.
+        assert_eq!(library.rejected, []);
+        assert_eq!(library.entries.len(), 35);
+        // The grade designations the ESC Steel Philippines page names for locally supplied
+        // sections, each with the publicly documented edition of its standard: the ASTM
+        // grades the `usa` pack declares (A36, the complete A572 strength-grade set), the
+        // EN 10025-2:2019 set the `europe` pack re-entered, and the JIS grades — SS400 of
+        // G 3101:2015, the SM set ESC names of G 3106:2020 and the complete G 3136:2012 set
+        // (SN490A is no grade of that standard). The KS D 3503 and KS D 3515 designations
+        // the page names are the same strings the JIS rows carry and add no row.
+        let expected: [(&str, &str); 35] = [
+            ("A36", "ASTM A36/A36M-19"),
+            ("A572 Grade 42", "ASTM A572/A572M-21"),
+            ("A572 Grade 50", "ASTM A572/A572M-21"),
+            ("A572 Grade 55", "ASTM A572/A572M-21"),
+            ("A572 Grade 60", "ASTM A572/A572M-21"),
+            ("A572 Grade 65", "ASTM A572/A572M-21"),
+            ("S235J0", "EN 10025-2:2019"),
+            ("S235J2", "EN 10025-2:2019"),
+            ("S235JR", "EN 10025-2:2019"),
+            ("S275J0", "EN 10025-2:2019"),
+            ("S275J2", "EN 10025-2:2019"),
+            ("S275JR", "EN 10025-2:2019"),
+            ("S355J0", "EN 10025-2:2019"),
+            ("S355J2", "EN 10025-2:2019"),
+            ("S355JR", "EN 10025-2:2019"),
+            ("S355K2", "EN 10025-2:2019"),
+            ("S460J0", "EN 10025-2:2019"),
+            ("S460J2", "EN 10025-2:2019"),
+            ("S460JR", "EN 10025-2:2019"),
+            ("S460K2", "EN 10025-2:2019"),
+            ("S500J0", "EN 10025-2:2019"),
+            ("SM400A", "JIS G 3106:2020"),
+            ("SM400B", "JIS G 3106:2020"),
+            ("SM400C", "JIS G 3106:2020"),
+            ("SM490A", "JIS G 3106:2020"),
+            ("SM490B", "JIS G 3106:2020"),
+            ("SM490C", "JIS G 3106:2020"),
+            ("SM490YA", "JIS G 3106:2020"),
+            ("SM490YB", "JIS G 3106:2020"),
+            ("SN400A", "JIS G 3136:2012"),
+            ("SN400B", "JIS G 3136:2012"),
+            ("SN400C", "JIS G 3136:2012"),
+            ("SN490B", "JIS G 3136:2012"),
+            ("SN490C", "JIS G 3136:2012"),
+            ("SS400", "JIS G 3101:2015"),
+        ];
+        for ((designation, want_standard), entry) in expected.iter().zip(&library.entries) {
+            let DefinitionRecord::Material {
+                density_kg_m3,
+                grade,
+                standard,
+                display_name,
+            } = &entry.record
+            else {
+                panic!("{} is not a material", entry.designation);
+            };
+            assert_eq!(entry.designation, *designation);
+            assert_eq!(grade.as_deref(), Some(*designation));
+            assert_eq!(*density_kg_m3, Some(7850.0), "{}", designation);
+            assert_eq!(standard.as_deref(), Some(*want_standard), "{}", designation);
+            assert_eq!(display_name.as_deref(), Some(*designation));
+        }
+        assert_eq!(library.entries.len(), expected.len());
+    }
+
+    #[test]
+    fn the_shipped_philippines_environment_admits_its_libraries() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/philippines/environment.usda"
+        );
+        let environment = load_environment(path).unwrap();
+        assert_eq!(environment.info.id, "philippines");
+        assert_eq!(environment.info.libraries, ["profiles-astm-a6-w-hp.usda"]);
+        assert_eq!(
+            environment.info.material_libraries,
+            ["materials-philippines.usda"]
+        );
+        // One profile source beside one material source; no fastener library.
+        assert_eq!(environment.sources.len(), 1);
+        assert_eq!(environment.fastener_sources.len(), 0);
+        assert_eq!(environment.material_sources.len(), 1);
+        // The profile source re-declares the `usa` pack A6 facts: the same 285 admitted
+        // rows, every designation with the same dimensions, area, mass and radius, under
+        // the Philippines library id.
+        let profiles = &environment.sources[0];
+        assert_eq!(
+            profiles.library.info.id,
+            "philippines-astm-a6-w-hp-profiles"
+        );
+        assert!(profiles.library.rejected.is_empty());
+        assert_eq!(profiles.library.entries.len(), 285);
+        let usa = load(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/usa/profiles-astm-a6-w-hp.usda"
+        ))
+        .unwrap();
+        assert_eq!(usa.entries.len(), 285);
+        for (philippines, usa) in profiles.library.entries.iter().zip(&usa.entries) {
+            assert_eq!(philippines.designation, usa.designation);
+            assert_eq!(philippines.record, usa.record);
+        }
+        // The material source binds the ESC-named grades; the environment lookup resolves
+        // through both namespaces.
+        let materials = &environment.material_sources[0];
+        assert_eq!(materials.library.info.id, "philippines-esc-materials");
+        assert!(materials.library.rejected.is_empty());
+        assert_eq!(materials.library.entries.len(), 35);
+        let lookup = environment.material_lookup();
+        let (source, ss400) = lookup.find("SS400").unwrap();
+        assert_eq!(source.library.info.id, "philippines-esc-materials");
+        assert!(matches!(
+            &ss400.record,
+            DefinitionRecord::Material { standard, .. }
+                if standard.as_deref() == Some("JIS G 3101:2015")
+        ));
+        assert!(matches!(
+            &lookup.find("SM490YB").unwrap().1.record,
+            DefinitionRecord::Material { standard, .. }
+                if standard.as_deref() == Some("JIS G 3106:2020")
+        ));
+        assert!(matches!(
+            &lookup.find("SN490C").unwrap().1.record,
+            DefinitionRecord::Material { standard, .. }
+                if standard.as_deref() == Some("JIS G 3136:2012")
+        ));
+        // A grade the ESC list does not name is NOT_FOUND, never a near match: no SN490A
+        // (no grade of G 3136), no SM520B or SS540 of the full JIS sets, no A992 the usa
+        // pack ships, no S450J0 the 2019 EN revision deleted, no bare SM400, and no
+        // designation of the KS standards the page names (the same strings the JIS rows
+        // carry already resolve there).
+        for absent in [
+            "SN490A", "SM520B", "SS540", "A992", "S450J0", "SM400", "SN400",
+        ] {
+            assert_eq!(
+                lookup.find(absent).unwrap_err().code,
+                ErrorCode::NotFound,
+                "{absent}"
+            );
+        }
+        // The material namespace never answers a profile name and the other way round: the
+        // EDI inch designations, the jumbo rows of the newer A6 editions and the S family of
+        // the annex stay NOT_FOUND in the material lookup too.
+        for absent in ["W1100X499", "W44X408", "HP16X183", "S24X121"] {
             assert_eq!(
                 lookup.find(absent).unwrap_err().code,
                 ErrorCode::NotFound,
@@ -3251,6 +4718,401 @@ mod tests {
     }
 
     #[test]
+    fn the_shipped_middle_east_library_reads_with_every_entry_admitted() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/middle-east/profiles-en-10365.usda"
+        );
+        let library = load(path).unwrap();
+        assert_eq!(library.info.id, "middle-east-en-10365-profiles");
+        assert_eq!(library.info.version.as_deref(), Some("2"));
+        assert!(
+            library
+                .info
+                .licence
+                .as_deref()
+                .is_some_and(|l| !l.is_empty()),
+            "the shipped library declares its licence"
+        );
+        assert!(
+            library
+                .info
+                .source
+                .as_deref()
+                .is_some_and(|s| !s.is_empty()),
+            "the shipped library declares its source"
+        );
+        // No transcription slips: every entry is admitted and none warns.
+        assert_eq!(library.rejected, []);
+        assert_eq!(library.entries.len(), 175);
+        let mut designations = Vec::new();
+        for entry in &library.entries {
+            let DefinitionRecord::SectionProfile {
+                shape: SectionShape::Parametric(parametric),
+                section,
+            } = &entry.record
+            else {
+                panic!("{} is not a parametric section", entry.designation);
+            };
+            assert_eq!(parametric.family(), SectionFamily::IShape);
+            // The curated mix declares the edition the regional producer prints, on every row.
+            assert_eq!(
+                section.standard.as_deref(),
+                Some("EN 10365:2017"),
+                "{}",
+                entry.designation
+            );
+            // The D3 declared-area check stays silent (the declared areas are the standard's
+            // published values, the exact-filleted convention by default; the EN tables print
+            // no HL root radius, so the HL rows carry the radius reproducing the published
+            // area) and the declared mass is that area at 7850 kg/m3 within the published
+            // rounding — except the HL, HLZ, HD and HP rows, which carry the designation
+            // nominal masses the rounded published areas track within 2.2 percent (worst
+            // HP400x122 at 2.19 percent, HD360x147 at 1.91, HL920x368 at 0.60), so those rows
+            // are bounded relatively, as in the `europe` pack.
+            assert!(
+                entry.record.declared_area_warning().is_none(),
+                "{}",
+                entry.designation
+            );
+            let area = section.area_mm2.unwrap();
+            let mass = section.mass_per_meter_kg.unwrap();
+            let mass_from_area = area * 7850.0 / 1.0e6;
+            if entry.designation.starts_with("HL")
+                || entry.designation.starts_with("HD")
+                || entry.designation.starts_with("HP")
+            {
+                assert!(
+                    (mass - mass_from_area).abs() / mass_from_area <= 0.025,
+                    "{}: mass {mass} kg/m vs area-derived {mass_from_area}",
+                    entry.designation
+                );
+            } else {
+                assert!(
+                    (mass - mass_from_area).abs() <= 0.55,
+                    "{}: mass {mass} kg/m vs area-derived {mass_from_area}",
+                    entry.designation
+                );
+            }
+            designations.push(entry.designation.clone());
+        }
+        // The rows of the extended `europe` pack, in the loader's designation order: the HEA and
+        // HEB ladder gains its 650-1000 rows (still one shared ladder, no 250 or 270) and IPE
+        // keeps its own (no 250 or 280; 270 and 330 included); the HD, HL and HP designations
+        // the #790 extension adds sort around them, the x-suffix rows lexically (the deep HD
+        // rows lead their groups), and the HL list closes with the four HLZ rows, its lexical
+        // position.
+        let hd = [
+            "HD260x114",
+            "HD260x142",
+            "HD260x172",
+            "HD260x225",
+            "HD260x299",
+            "HD260x54.1",
+            "HD260x68.2",
+            "HD260x93.0",
+            "HD320x127",
+            "HD320x158",
+            "HD320x198",
+            "HD320x245",
+            "HD320x300",
+            "HD320x74.2",
+            "HD320x97.6",
+            "HD360x134",
+            "HD360x147",
+            "HD360x162",
+            "HD360x179",
+            "HD360x196",
+            "HD400x1086",
+            "HD400x187",
+            "HD400x216",
+            "HD400x237",
+            "HD400x262",
+            "HD400x287",
+            "HD400x314",
+            "HD400x347",
+            "HD400x382",
+            "HD400x421",
+            "HD400x463",
+            "HD400x509",
+            "HD400x551",
+            "HD400x592",
+            "HD400x634",
+            "HD400x677",
+            "HD400x744",
+            "HD400x818",
+            "HD400x900",
+            "HD400x990",
+        ];
+        let hl = [
+            "HL1000A",
+            "HL1000AA",
+            "HL1000B",
+            "HL1000M",
+            "HL1000x443",
+            "HL1000x483",
+            "HL1000x539",
+            "HL1000x554",
+            "HL1000x591",
+            "HL1000x642",
+            "HL1000x748",
+            "HL1000x883",
+            "HL1000x976",
+            "HL1100A",
+            "HL1100B",
+            "HL1100M",
+            "HL1100R",
+            "HL1100x548",
+            "HL1100x607",
+            "HL920x1077",
+            "HL920x1194",
+            "HL920x1269",
+            "HL920x1377",
+            "HL920x344",
+            "HL920x368",
+            "HL920x390",
+            "HL920x420",
+            "HL920x449",
+            "HL920x491",
+            "HL920x537",
+            "HL920x588",
+            "HL920x656",
+            "HL920x725",
+            "HL920x787",
+            "HL920x970",
+            "HLZ1100A",
+            "HLZ1100B",
+            "HLZ1100C",
+            "HLZ1100D",
+        ];
+        let hp = [
+            "HP200x43",
+            "HP200x53",
+            "HP220x57",
+            "HP260x75",
+            "HP260x87",
+            "HP305x110",
+            "HP305x126",
+            "HP305x149",
+            "HP305x180",
+            "HP305x186",
+            "HP305x223",
+            "HP305x79",
+            "HP305x88",
+            "HP305x95",
+            "HP320x103",
+            "HP320x117",
+            "HP320x147",
+            "HP320x184",
+            "HP320x88",
+            "HP360x109",
+            "HP360x133",
+            "HP360x152",
+            "HP360x174",
+            "HP360x180",
+            "HP400x122",
+            "HP400x140",
+            "HP400x158",
+            "HP400x176",
+            "HP400x194",
+            "HP400x213",
+            "HP400x231",
+        ];
+        let he = [
+            100, 120, 140, 160, 180, 200, 220, 240, 260, 280, 300, 320, 340, 360, 400, 450, 500,
+            550, 600, 650, 700, 800, 900, 1000,
+        ];
+        let ipe = [
+            100, 120, 140, 160, 180, 200, 220, 240, 270, 300, 330, 360, 400, 450, 500, 550, 600,
+        ];
+        let mut expected: Vec<String> = hd.iter().map(|d| d.to_string()).collect();
+        expected.extend(he.iter().map(|h| format!("HEA{h}")));
+        expected.extend(he.iter().map(|h| format!("HEB{h}")));
+        expected.extend(hl.iter().map(|d| d.to_string()));
+        expected.extend(hp.iter().map(|d| d.to_string()));
+        expected.extend(ipe.iter().map(|h| format!("IPE{h}")));
+        // The loader's order is lexical, so the 1000 rows slot in right after the 100 rows.
+        expected.sort();
+        assert_eq!(designations, expected);
+        // Spot checks against the standard's published values, one per family of the #790
+        // extension on top of the original three.
+        for (designation, values, area, mass) in [
+            ("IPE300", [300.0, 150.0, 7.1, 10.7, 15.0], 5381.0, 42.2),
+            ("HEA340", [330.0, 300.0, 9.5, 16.5, 27.0], 13350.0, 105.0),
+            ("HEB100", [100.0, 100.0, 6.0, 10.0, 12.0], 2600.0, 20.4),
+            (
+                "HL920x491",
+                [957.0, 422.0, 25.9, 47.0, 19.0],
+                62300.0,
+                491.0,
+            ),
+            (
+                "HD400x818",
+                [514.0, 437.0, 60.5, 97.0, 24.0],
+                104630.0,
+                818.0,
+            ),
+            (
+                "HLZ1100D",
+                [1087.0, 460.0, 22.0, 37.0, 35.0],
+                57800.0,
+                453.0,
+            ),
+            (
+                "HP400x231",
+                [372.0, 402.0, 26.0, 26.0, 24.0],
+                29720.0,
+                231.0,
+            ),
+            ("HEA1000", [990.0, 300.0, 16.5, 31.0, 30.0], 34685.0, 272.3),
+        ] {
+            let DefinitionRecord::SectionProfile {
+                shape: SectionShape::Parametric(p),
+                section,
+            } = &library.entry(designation).unwrap().record
+            else {
+                panic!("{designation} is not a parametric section");
+            };
+            assert_eq!(p.values(), values, "{designation}");
+            assert_eq!(section.area_mm2, Some(area), "{designation}");
+            assert_eq!(section.mass_per_meter_kg, Some(mass), "{designation}");
+        }
+        // NOT_FOUND, never a near match: designations the series does not publish (no IPE 250 or
+        // 280, no HEA 250), sizes beyond the shipped range (IPE 650, HEA 1100), the HEM series
+        // the #790 extension leaves out, and the channel series the curated mix leaves to the
+        // `europe` pack.
+        for absent in [
+            "IPE250", "IPE280", "HEA250", "IPE650", "HEA1100", "HEM300", "UPE100", "UPN100",
+        ] {
+            assert_eq!(
+                library.entry(absent).unwrap_err().code,
+                ErrorCode::NotFound,
+                "{absent} is not in the pack"
+            );
+        }
+    }
+
+    #[test]
+    fn the_shipped_middle_east_materials_library_reads_with_every_entry_admitted() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/middle-east/materials-astm.usda"
+        );
+        let library = load_material(path).unwrap();
+        assert_eq!(library.info.id, "middle-east-astm-materials");
+        assert_eq!(library.info.version.as_deref(), Some("1"));
+        assert!(
+            library
+                .info
+                .licence
+                .as_deref()
+                .is_some_and(|l| !l.is_empty()),
+            "the shipped library declares its licence"
+        );
+        assert!(
+            library
+                .info
+                .source
+                .as_deref()
+                .is_some_and(|s| !s.is_empty()),
+            "the shipped library declares its source"
+        );
+        // No transcription slips: every entry is admitted.
+        assert_eq!(library.rejected, []);
+        assert_eq!(library.entries.len(), 7);
+        // The grades of the three standards in the loader's designation order: the single A36,
+        // the five A572 strength grades (42 to 65, the grade number the minimum yield strength
+        // in ksi) with the Grade word the standard designates with, and the W-shape grade A992.
+        // Each row declares the edition the regional producer prints on its grade rows (owner
+        // decision of 2026-11-23); the density is the metric 7850 kg/m3 of every shipped pack.
+        let a36 = "ASTM A36/A36M-19";
+        let a572 = "ASTM A572/A572M-21";
+        let a992 = "ASTM A992/A992M-20";
+        let expected: [(&str, &str); 7] = [
+            ("A36", a36),
+            ("A572 Grade 42", a572),
+            ("A572 Grade 50", a572),
+            ("A572 Grade 55", a572),
+            ("A572 Grade 60", a572),
+            ("A572 Grade 65", a572),
+            ("A992", a992),
+        ];
+        for ((designation, want_standard), entry) in expected.iter().zip(&library.entries) {
+            let DefinitionRecord::Material {
+                density_kg_m3,
+                grade,
+                standard,
+                display_name,
+            } = &entry.record
+            else {
+                panic!("{} is not a material", entry.designation);
+            };
+            assert_eq!(entry.designation, *designation);
+            assert_eq!(grade.as_deref(), Some(*designation));
+            assert_eq!(*density_kg_m3, Some(7850.0), "{}", designation);
+            assert_eq!(standard.as_deref(), Some(*want_standard), "{}", designation);
+            assert_eq!(display_name.as_deref(), Some(*designation));
+        }
+        assert_eq!(library.entries.len(), expected.len());
+    }
+
+    #[test]
+    fn the_shipped_middle_east_environment_admits_its_libraries() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/middle-east/environment.usda"
+        );
+        let environment = load_environment(path).unwrap();
+        assert_eq!(environment.info.id, "middle-east");
+        assert_eq!(environment.info.version.as_deref(), Some("1"));
+        assert_eq!(environment.info.libraries, ["profiles-en-10365.usda"]);
+        assert_eq!(environment.info.material_libraries, ["materials-astm.usda"]);
+        // The curated mix: one EN 10365 profile library and one ASTM material library. The
+        // environment lists no fastener library; the regional fastener set waits on #708.
+        assert_eq!(environment.sources.len(), 1);
+        assert_eq!(environment.fastener_sources.len(), 0);
+        assert_eq!(environment.material_sources.len(), 1);
+        let profiles = &environment.sources[0];
+        assert_eq!(profiles.library.info.id, "middle-east-en-10365-profiles");
+        assert_eq!(profiles.library.entries.len(), 175);
+        assert!(profiles.library.rejected.is_empty());
+        let materials = &environment.material_sources[0];
+        assert_eq!(materials.library.info.id, "middle-east-astm-materials");
+        assert_eq!(materials.library.entries.len(), 7);
+        assert!(materials.library.rejected.is_empty());
+        // A grade rides the same resolver machinery, in its own namespace.
+        let lookup = environment.material_lookup();
+        let (source, a992) = lookup.find("A992").unwrap();
+        assert_eq!(source.library.info.id, "middle-east-astm-materials");
+        assert!(matches!(
+            &a992.record,
+            DefinitionRecord::Material { density_kg_m3: Some(7850.0), standard, .. }
+                if standard.as_deref() == Some("ASTM A992/A992M-20")
+        ));
+        // A grade the set does not publish is NOT_FOUND, never a near match: no bare spec
+        // number, no hyphenated or compact industry shorthand (the shipped A572 form is the
+        // standard's own Grade form), no lowercase, no grade outside the standard's set, no
+        // grade of another ASTM specification and no EN 10025 grade (the curated mix ships the
+        // ASTM grades alone).
+        for absent in [
+            "A572",
+            "A572-50",
+            "A572Gr50",
+            "A36M",
+            "a992",
+            "A572 Grade 70",
+            "A709",
+            "S355J2",
+        ] {
+            assert_eq!(
+                lookup.find(absent).unwrap_err().code,
+                ErrorCode::NotFound,
+                "{absent}"
+            );
+        }
+    }
+
+    #[test]
     fn an_environment_library_without_provenance_is_refused() {
         let dir =
             std::env::temp_dir().join(format!("library-env-provenance-{}", std::process::id()));
@@ -3283,7 +5145,7 @@ mod tests {
             &fastener_entry("B", "F-1", BOLT_BODY),
             "\n        string \"bim:library:licence\" = \"MPL-2.0\"",
         );
-        // A material library whose source is missing rides the same provenance edge (axisrow/BeamCraft#636).
+        // A material library whose source is missing rides the same provenance edge (#636).
         let material = library(
             "m",
             "Materials",
@@ -6654,11 +8516,1232 @@ mod tests {
             bare.fastener_lookup.is_none(),
             "no fastener layer of this chain declares bolts"
         );
-        assert!(
-            chain.material_lookup.is_none() && bare.material_lookup.is_none(),
-            "no layer of this chain declares material libraries"
-        );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_recorded_environment_whose_copy_folder_is_gone_warns_with_its_identity() {
+        use crate::project::{ProjectContext, ProjectEnvironmentChoice, create_project};
+        use beamcraft_host::revision::NoFault;
+        use beamcraft_model::id::{OpId, ProjectId, RevisionId, Uuid7, WorkspaceId};
+
+        let dir = scratch("recorded");
+        let config = dir.join("config");
+        put(
+            &config,
+            "libraries/mine.usda",
+            &library(&[entry("A", "FIRM-ONLY", I_BODY)]).replace(
+                "        string \"bim:library:id\" = \"t\"\n",
+                &provenance("firm-lib"),
+            ),
+        );
+        let context = ProjectContext {
+            op_id: OpId::parse("0199e7a0-0000-7000-8000-0000000000c1").unwrap(),
+            revision_id: RevisionId::parse("0199e7a0-0000-7000-8000-0000000000c2").unwrap(),
+            actor: Uuid7::parse("0199e7a0-0000-7000-8000-0000000000c3").unwrap(),
+            project: ProjectId::parse("0199e7a0-0000-7000-8000-0000000000c4").unwrap(),
+            workspace: WorkspaceId::parse("0199e7a0-0000-7000-8000-0000000000c5").unwrap(),
+        };
+        let next = |n: u64| ProjectContext {
+            op_id: OpId::parse(&format!("0199e7a0-0000-7000-8000-0000000000{n:x}")).unwrap(),
+            revision_id: RevisionId::parse(&format!("0199e7a0-0000-7000-8000-0000000000{n:x}"))
+                .unwrap(),
+            project: ProjectId::parse(&format!("0199e7a0-0000-7000-8000-0000000000{n:x}")).unwrap(),
+            ..context.clone()
+        };
+        // A store whose root records the chosen environment, with no copy folder at all: the
+        // loss is reported with the identity the store carried, and the chain resolves from
+        // firm and neutral alone.
+        let recorded = create_project(
+            &dir,
+            "Recorded",
+            Some(&ProjectEnvironmentChoice {
+                id: "acme".to_owned(),
+                version: Some("7".to_owned()),
+            }),
+            &next(0xd1),
+            &mut NoFault,
+        )
+        .unwrap();
+        let chain = project_library_chain(&recorded.path, Some(&config)).unwrap();
+        let layers: Vec<&str> = chain.lookup.sources().iter().map(|s| s.layer).collect();
+        assert_eq!(layers, [LAYER_FIRM, LAYER_NEUTRAL]);
+        let lost = chain
+            .environment_lost
+            .expect("the recorded loss is reported");
+        assert!(
+            // Component comparison, not a raw string suffix: the recorded loss path is a
+            // platform path, so on Windows it carries `\` separators.
+            std::path::Path::new(&lost.path).ends_with("environment/environment.usda"),
+            "{lost:?}"
+        );
+        assert!(
+            lost.message.contains("acme") && lost.message.contains("version 7"),
+            "{lost:?}"
+        );
+        // A plain project without a record warns nowhere, exactly as before.
+        let plain = create_project(&dir, "Plain", None, &next(0xd2), &mut NoFault).unwrap();
+        let chain = project_library_chain(&plain.path, Some(&config)).unwrap();
+        assert!(chain.environment_lost.is_none(), "{chain:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_shipped_canada_w_and_hp_library_reads_with_every_entry_admitted() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/canada/profiles-astm-a6-w-hp.usda"
+        );
+        let library = load(path).unwrap();
+        assert_eq!(library.info.id, "canada-astm-a6-w-hp-profiles");
+        assert_eq!(library.info.version.as_deref(), Some("1"));
+        assert!(
+            library
+                .info
+                .licence
+                .as_deref()
+                .is_some_and(|l| !l.is_empty()),
+            "the shipped library declares its licence"
+        );
+        assert!(
+            library
+                .info
+                .source
+                .as_deref()
+                .is_some_and(|s| !s.is_empty()),
+            "the shipped library declares its source"
+        );
+        // No transcription slips: every entry is admitted.
+        assert_eq!(library.rejected, []);
+        // Every row of the USA pack appears twice: once under the metric designation the
+        // standard prints for it (284 rows; the -05a tables print W920 X 345 for two distinct
+        // rows, and the name is carried once, see below) and once under the EDI inch
+        // designation the USA pack ships, as the alias.
+        assert_eq!(library.entries.len(), 569);
+        // The thirteen shapes the Nucor-Yamato catalog does not roll have no printed radius
+        // and carry a sharp corner; every other row carries one of the catalog's radii. Each
+        // sharp row is sharp in both of its designation forms.
+        let sharp = [
+            "W1000x494",
+            "W40X331",
+            "W920x1191",
+            "W36X800",
+            "W310x21.0",
+            "W12X14",
+            "W250x28.4",
+            "W10X19",
+            "W250x25.3",
+            "W10X17",
+            "W250x22.3",
+            "W10X15",
+            "W250x17.9",
+            "W10X12",
+            "W200x22.5",
+            "W8X15",
+            "W200x19.3",
+            "W8X13",
+            "W200x15.0",
+            "W8X10",
+            "W130x28.1",
+            "W5X19",
+            "W130x23.8",
+            "W5X16",
+            "W100x19.3",
+            "W4X13",
+        ];
+        let catalog_radii = [8.0, 8.5, 10.0, 13.0, 15.0, 19.0, 20.0, 30.0];
+        let mut designations = Vec::new();
+        let mut warned = 0;
+        for entry in &library.entries {
+            let DefinitionRecord::SectionProfile {
+                shape: SectionShape::Parametric(parametric),
+                section,
+            } = &entry.record
+            else {
+                panic!("{} is not a parametric section", entry.designation);
+            };
+            // W and HP shapes have parallel flanges: the i_shape family.
+            assert_eq!(parametric.family(), SectionFamily::IShape);
+            assert_eq!(
+                section.standard.as_deref(),
+                Some("ASTM A6/A6M-05a"),
+                "{}",
+                entry.designation
+            );
+            let radius = parametric.values()[4];
+            if sharp.contains(&entry.designation.as_str()) {
+                assert_eq!(radius, 0.0, "{}", entry.designation);
+            } else {
+                assert!(
+                    catalog_radii.contains(&radius),
+                    "{}: radius {radius}",
+                    entry.designation
+                );
+            }
+            // Like the USA pack, this one expects the D3 warning (the standard prints no
+            // radius and rounds its SI dimensions; owner decision of 2026-10-18: a warning,
+            // never a refusal). Each of the 150 USA-warned rows warns in both of its
+            // designation forms: 300 of the 569 entries, none beyond 5 percent. The nominal
+            // SI mass of the designation follows the area at 7850 kg/m3 within 2.2 percent
+            // (worst W14X38, whose nominal 58 kg/m rounds up from the 56.7 its area gives).
+            let area = section.area_mm2.unwrap();
+            let mass = section.mass_per_meter_kg.unwrap();
+            let mass_from_area = area * 7850.0 / 1.0e6;
+            assert!(
+                (mass - mass_from_area).abs() / mass_from_area <= 0.022,
+                "{}: mass {mass} kg/m vs area-derived {mass_from_area}",
+                entry.designation
+            );
+            if let Some(warning) = entry.record.declared_area_warning() {
+                warned += 1;
+                assert_eq!(warning.declared_mm2, area, "{}", entry.designation);
+                assert!(
+                    warning.relative_difference < 0.05,
+                    "{}: declared area {area} mm2 is {} off the outline",
+                    entry.designation,
+                    warning.relative_difference
+                );
+            }
+            designations.push(entry.designation.clone());
+        }
+        assert_eq!(warned, 300, "entries carrying the declared-area warning");
+        // Spot checks against the standard's printed SI column and the catalog's radius:
+        // designation, [h, b, tw, tf, r], area mm2, nominal mass kg/m. Every row is spot
+        // checked in both designation forms; the values are the USA pack's, verified there
+        // against both public copies of the standard.
+        let spot = |designation: &str, values: [f64; 5], area: f64, mass: f64| {
+            let entry = library.entry(designation).unwrap();
+            let DefinitionRecord::SectionProfile {
+                shape: SectionShape::Parametric(p),
+                section,
+            } = &entry.record
+            else {
+                panic!("{designation} is not a parametric section");
+            };
+            assert_eq!(p.values(), values, "{designation}");
+            assert_eq!(section.area_mm2, Some(area), "{designation}");
+            assert_eq!(section.mass_per_meter_kg, Some(mass), "{designation}");
+        };
+        spot("W310x60", [303.0, 203.0, 7.5, 13.1, 19.0], 7610.0, 60.0);
+        spot("W12X40", [303.0, 203.0, 7.5, 13.1, 19.0], 7610.0, 60.0);
+        spot(
+            "W1100x499",
+            [1118.0, 405.0, 26.0, 45.0, 30.0],
+            63500.0,
+            499.0,
+        );
+        spot("W44X335", [1118.0, 405.0, 26.0, 45.0, 30.0], 63500.0, 499.0);
+        // The W 36 X 800 designation cell prints its area before its weight in both public
+        // copies (`W36 X 236.4800`); the row is read from its metric designation.
+        spot(
+            "W920x1191",
+            [1081.0, 457.0, 60.5, 109.0, 0.0],
+            152500.0,
+            1191.0,
+        );
+        spot(
+            "W36X800",
+            [1081.0, 457.0, 60.5, 109.0, 0.0],
+            152500.0,
+            1191.0,
+        );
+        spot(
+            "HP360x174",
+            [361.0, 378.0, 20.4, 20.4, 30.0],
+            22200.0,
+            174.0,
+        );
+        spot("HP14X117", [361.0, 378.0, 20.4, 20.4, 30.0], 22200.0, 174.0);
+        spot("W100x19.3", [106.0, 103.0, 7.1, 8.8, 0.0], 2470.0, 19.3);
+        spot("W4X13", [106.0, 103.0, 7.1, 8.8, 0.0], 2470.0, 19.3);
+        // The one ambiguous designation of the declared edition: the -05a tables print
+        // W920 X 345 for two distinct rows (W36X231: d 927, bf 418 — printed first — and
+        // W36X232: d 943, bf 308). The metric name is carried once, for the row the table
+        // prints first; W36X232 answers only through its inch alias. The newer-edition size
+        // list of the Nucor-Yamato catalog distinguishes the two (W920 x 344 / W920 x 345),
+        // but those masses belong to that edition.
+        spot("W920x345", [927.0, 418.0, 19.3, 32.0, 30.0], 44200.0, 345.0);
+        spot("W36X232", [943.0, 308.0, 22.1, 39.9, 30.0], 44000.0, 345.0);
+        // The declared-area warning: widest on W24X68 / W610x101, where the catalog radius is
+        // larger than the fillet the standard's area allows; absent where the two agree.
+        let difference = |designation: &str| {
+            library
+                .entry(designation)
+                .unwrap()
+                .record
+                .declared_area_warning()
+                .map(|w| w.relative_difference)
+        };
+        assert!((difference("W610x101").unwrap() - 0.0431).abs() < 0.001);
+        assert!((difference("W24X68").unwrap() - 0.0431).abs() < 0.001);
+        assert!((difference("W310x60").unwrap() - 0.0123).abs() < 0.0005);
+        assert_eq!(difference("W150x13.0"), None);
+        // The W and HP rows of the declared tables under their metric designations,
+        // 274 + 11 minus the one ambiguous name, exactly as Annex A2 prints them.
+        let metric_assortment = [
+            "W1100x499 W1100x433 W1100x390 W1100x343",
+            "W1000x883 W1000x748 W1000x642 W1000x591 W1000x554 W1000x539 W1000x483 W1000x443 W1000x412 W1000x371",
+            "W1000x321 W1000x296 W1000x584 W1000x494 W1000x486 W1000x438 W1000x415 W1000x393 W1000x350 W1000x314",
+            "W1000x272 W1000x249 W1000x222",
+            "W920x1191 W920x970 W920x787 W920x725 W920x656 W920x588 W920x537 W920x491 W920x449 W920x420",
+            "W920x390 W920x368 W920x345 W920x381 W920x313 W920x289 W920x271 W920x253 W920x238 W920x223",
+            "W920x201",
+            "W840x576 W840x527 W840x473 W840x433 W840x392 W840x359 W840x329 W840x299 W840x251 W840x226",
+            "W840x210 W840x193 W840x176",
+            "W760x582 W760x531 W760x484 W760x434 W760x389 W760x350 W760x314 W760x284 W760x257 W760x220",
+            "W760x196 W760x185 W760x173 W760x161 W760x147 W760x134",
+            "W690x802 W690x548 W690x500 W690x457 W690x419 W690x384 W690x350 W690x323 W690x289 W690x265",
+            "W690x240 W690x217 W690x192 W690x170 W690x152 W690x140 W690x125",
+            "W610x551 W610x498 W610x455 W610x415 W610x372 W610x341 W610x307 W610x285 W610x262 W610x241",
+            "W610x217 W610x195 W610x174 W610x155 W610x153 W610x140 W610x125 W610x113 W610x101 W610x92",
+            "W610x82",
+            "W530x300 W530x272 W530x248 W530x219 W530x196 W530x182 W530x165 W530x150 W530x138 W530x123",
+            "W530x109 W530x101 W530x92 W530x82 W530x72 W530x85 W530x74 W530x66",
+            "W460x464 W460x421 W460x384 W460x349 W460x315 W460x286 W460x260 W460x235 W460x213 W460x193",
+            "W460x177 W460x158 W460x144 W460x128 W460x113 W460x106 W460x97 W460x89 W460x82 W460x74",
+            "W460x68 W460x60 W460x52",
+            "W410x149 W410x132 W410x114 W410x100 W410x85 W410x75 W410x67 W410x60 W410x53 W410x46.1",
+            "W410x38.8",
+            "W360x1086 W360x990 W360x900 W360x818 W360x744 W360x677 W360x634 W360x592 W360x551 W360x509",
+            "W360x463 W360x421 W360x382 W360x347 W360x314 W360x287 W360x262 W360x237 W360x216 W360x196",
+            "W360x179 W360x162 W360x147 W360x134 W360x122 W360x110 W360x101 W360x91 W360x79 W360x72",
+            "W360x64 W360x58 W360x51 W360x44.6 W360x39.0 W360x32.9",
+            "W310x500 W310x454 W310x415 W310x375 W310x342 W310x313 W310x283 W310x253 W310x226 W310x202",
+            "W310x179 W310x158 W310x143 W310x129 W310x117 W310x107 W310x97 W310x86 W310x79 W310x74",
+            "W310x67 W310x60 W310x52 W310x44.5 W310x38.7 W310x32.7 W310x28.3 W310x23.8 W310x21.0",
+            "W250x167 W250x149 W250x131 W250x115 W250x101 W250x89 W250x80 W250x73 W250x67 W250x58",
+            "W250x49.1 W250x44.8 W250x38.5 W250x32.7 W250x28.4 W250x25.3 W250x22.3 W250x17.9",
+            "W200x100 W200x86 W200x71 W200x59 W200x52 W200x46.1 W200x41.7 W200x35.9 W200x31.3 W200x26.6",
+            "W200x22.5 W200x19.3 W200x15.0",
+            "W150x37.1 W150x29.8 W150x22.5 W150x24.0 W150x18.0 W150x13.5 W150x13.0",
+            "W130x28.1 W130x23.8",
+            "W100x19.3",
+            "HP360x174 HP360x152 HP360x132 HP360x108",
+            "HP310x125 HP310x110 HP310x93 HP310x79",
+            "HP250x85 HP250x62",
+            "HP200x53",
+        ];
+        // The alias designations are exactly the USA pack's EDI inch designations, so the
+        // same rows resolve in Canada by either name.
+        let alias_assortment = [
+            "W44X335 W44X290 W44X262 W44X230",
+            "W40X593 W40X503 W40X431 W40X397 W40X372 W40X362 W40X324 W40X297 W40X277 W40X249",
+            "W40X215 W40X199 W40X392 W40X331 W40X327 W40X294 W40X278 W40X264 W40X235 W40X211",
+            "W40X183 W40X167 W40X149",
+            "W36X800 W36X652 W36X529 W36X487 W36X441 W36X395 W36X361 W36X330 W36X302 W36X282",
+            "W36X262 W36X247 W36X231 W36X256 W36X232 W36X210 W36X194 W36X182 W36X170 W36X160",
+            "W36X150 W36X135",
+            "W33X387 W33X354 W33X318 W33X291 W33X263 W33X241 W33X221 W33X201 W33X169 W33X152",
+            "W33X141 W33X130 W33X118",
+            "W30X391 W30X357 W30X326 W30X292 W30X261 W30X235 W30X211 W30X191 W30X173 W30X148",
+            "W30X132 W30X124 W30X116 W30X108 W30X99 W30X90",
+            "W27X539 W27X368 W27X336 W27X307 W27X281 W27X258 W27X235 W27X217 W27X194 W27X178",
+            "W27X161 W27X146 W27X129 W27X114 W27X102 W27X94 W27X84",
+            "W24X370 W24X335 W24X306 W24X279 W24X250 W24X229 W24X207 W24X192 W24X176 W24X162",
+            "W24X146 W24X131 W24X117 W24X104 W24X103 W24X94 W24X84 W24X76 W24X68 W24X62 W24X55",
+            "W21X201 W21X182 W21X166 W21X147 W21X132 W21X122 W21X111 W21X101 W21X93 W21X83 W21X73",
+            "W21X68 W21X62 W21X55 W21X48 W21X57 W21X50 W21X44",
+            "W18X311 W18X283 W18X258 W18X234 W18X211 W18X192 W18X175 W18X158 W18X143 W18X130",
+            "W18X119 W18X106 W18X97 W18X86 W18X76 W18X71 W18X65 W18X60 W18X55 W18X50 W18X46",
+            "W18X40 W18X35",
+            "W16X100 W16X89 W16X77 W16X67 W16X57 W16X50 W16X45 W16X40 W16X36 W16X31 W16X26",
+            "W14X730 W14X665 W14X605 W14X550 W14X500 W14X455 W14X426 W14X398 W14X370 W14X342",
+            "W14X311 W14X283 W14X257 W14X233 W14X211 W14X193 W14X176 W14X159 W14X145 W14X132",
+            "W14X120 W14X109 W14X99 W14X90 W14X82 W14X74 W14X68 W14X61 W14X53 W14X48 W14X43",
+            "W14X38 W14X34 W14X30 W14X26 W14X22",
+            "W12X336 W12X305 W12X279 W12X252 W12X230 W12X210 W12X190 W12X170 W12X152 W12X136",
+            "W12X120 W12X106 W12X96 W12X87 W12X79 W12X72 W12X65 W12X58 W12X53 W12X50 W12X45",
+            "W12X40 W12X35 W12X30 W12X26 W12X22 W12X19 W12X16 W12X14",
+            "W10X112 W10X100 W10X88 W10X77 W10X68 W10X60 W10X54 W10X49 W10X45 W10X39 W10X33",
+            "W10X30 W10X26 W10X22 W10X19 W10X17 W10X15 W10X12",
+            "W8X67 W8X58 W8X48 W8X40 W8X35 W8X31 W8X28 W8X24 W8X21 W8X18 W8X15 W8X13 W8X10",
+            "W6X25 W6X20 W6X15 W6X16 W6X12 W6X9 W6X8.5",
+            "W5X19 W5X16",
+            "W4X13",
+            "HP14X117 HP14X102 HP14X89 HP14X73",
+            "HP12X84 HP12X74 HP12X63 HP12X53",
+            "HP10X57 HP10X42",
+            "HP8X36",
+        ];
+        let mut expected: Vec<&str> = metric_assortment
+            .iter()
+            .flat_map(|g| g.split(' '))
+            .chain(alias_assortment.iter().flat_map(|g| g.split(' ')))
+            .collect();
+        assert_eq!(expected.len(), 569, "the metric and alias assortments");
+        expected.sort();
+        designations.sort();
+        assert_eq!(designations, expected);
+        // Refused, never a near match: the jumbo shapes newer editions of the standard carry
+        // (their metric names too), the other shape families of the same annex, and every
+        // other spelling — including the capital-X spelling of the metric form and the
+        // lowercase spelling of the alias form.
+        for absent in [
+            "W44X408",
+            "W44X368",
+            "W40X655",
+            "W30X433",
+            "W21X223",
+            "W14X808",
+            "HP12X89",
+            "HP16X183",
+            "HP18X204",
+            "W1100x607",
+            "S24X121",
+            "M12X11.6",
+            "C15X50",
+            "MC18X58",
+            "L8X8X1",
+            "W310X60",
+            "W 310 x 60",
+            "W12x40",
+            "IPE300",
+        ] {
+            assert_eq!(
+                library.entry(absent).unwrap_err().code,
+                ErrorCode::NotFound,
+                "{absent} is not in the shipped series"
+            );
+        }
+    }
+
+    #[test]
+    fn the_shipped_usa_w_and_hp_library_reads_with_every_entry_admitted() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/usa/profiles-astm-a6-w-hp.usda"
+        );
+        let library = load(path).unwrap();
+        assert_eq!(library.info.id, "usa-astm-a6-w-hp-profiles");
+        assert_eq!(library.info.version.as_deref(), Some("1"));
+        assert!(
+            library
+                .info
+                .licence
+                .as_deref()
+                .is_some_and(|l| !l.is_empty()),
+            "the shipped library declares its licence"
+        );
+        assert!(
+            library
+                .info
+                .source
+                .as_deref()
+                .is_some_and(|s| !s.is_empty()),
+            "the shipped library declares its source"
+        );
+        // No transcription slips: every entry is admitted.
+        assert_eq!(library.rejected, []);
+        assert_eq!(library.entries.len(), 285);
+        // The thirteen shapes the Nucor-Yamato catalog does not roll have no printed radius
+        // and carry a sharp corner; every other row carries one of the catalog's radii.
+        let sharp = [
+            "W40X331", "W36X800", "W12X14", "W10X19", "W10X17", "W10X15", "W10X12", "W8X15",
+            "W8X13", "W8X10", "W5X19", "W5X16", "W4X13",
+        ];
+        let catalog_radii = [8.0, 8.5, 10.0, 13.0, 15.0, 19.0, 20.0, 30.0];
+        let mut designations = Vec::new();
+        let mut warned = 0;
+        for entry in &library.entries {
+            let DefinitionRecord::SectionProfile {
+                shape: SectionShape::Parametric(parametric),
+                section,
+            } = &entry.record
+            else {
+                panic!("{} is not a parametric section", entry.designation);
+            };
+            // W and HP shapes have parallel flanges: the i_shape family.
+            assert_eq!(parametric.family(), SectionFamily::IShape);
+            assert_eq!(
+                section.standard.as_deref(),
+                Some("ASTM A6/A6M-05a"),
+                "{}",
+                entry.designation
+            );
+            let radius = parametric.values()[4];
+            if sharp.contains(&entry.designation.as_str()) {
+                assert_eq!(radius, 0.0, "{}", entry.designation);
+            } else {
+                assert!(
+                    catalog_radii.contains(&radius),
+                    "{}: radius {radius}",
+                    entry.designation
+                );
+            }
+            // Unlike the other packs, this one expects the D3 warning: the standard prints
+            // no radius, and its SI column rounds the printed dimensions to the millimetre
+            // and the tenth, so the closed-form area of a row sits up to 4.4 percent from
+            // the declared area even with the catalog radius (owner decision of 2026-10-18:
+            // a warning, never a refusal). The bound is the typo detector: 150 rows warn,
+            // none beyond 5 percent. The nominal SI mass of the designation follows the
+            // area at 7850 kg/m3 within 2.2 percent (worst W14X38, whose nominal 58 kg/m
+            // rounds up from the 56.7 its area gives).
+            let area = section.area_mm2.unwrap();
+            let mass = section.mass_per_meter_kg.unwrap();
+            let mass_from_area = area * 7850.0 / 1.0e6;
+            assert!(
+                (mass - mass_from_area).abs() / mass_from_area <= 0.022,
+                "{}: mass {mass} kg/m vs area-derived {mass_from_area}",
+                entry.designation
+            );
+            if let Some(warning) = entry.record.declared_area_warning() {
+                warned += 1;
+                assert_eq!(warning.declared_mm2, area, "{}", entry.designation);
+                assert!(
+                    warning.relative_difference < 0.05,
+                    "{}: declared area {area} mm2 is {} off the outline",
+                    entry.designation,
+                    warning.relative_difference
+                );
+            }
+            designations.push(entry.designation.clone());
+        }
+        assert_eq!(warned, 150, "rows carrying the declared-area warning");
+        // Spot checks against the standard's printed SI column and the catalog's radius:
+        // designation, [h, b, tw, tf, r], area mm2, nominal mass kg/m.
+        let spot = |designation: &str, values: [f64; 5], area: f64, mass: f64| {
+            let entry = library.entry(designation).unwrap();
+            let DefinitionRecord::SectionProfile {
+                shape: SectionShape::Parametric(p),
+                section,
+            } = &entry.record
+            else {
+                panic!("{designation} is not a parametric section");
+            };
+            assert_eq!(p.values(), values, "{designation}");
+            assert_eq!(section.area_mm2, Some(area), "{designation}");
+            assert_eq!(section.mass_per_meter_kg, Some(mass), "{designation}");
+        };
+        spot("W44X335", [1118.0, 405.0, 26.0, 45.0, 30.0], 63500.0, 499.0);
+        // The W 36 X 800 designation cell prints its area before its weight in both public
+        // copies (`W36 X 236.4800`); the row is read from its metric designation W920 X 1191.
+        spot(
+            "W36X800",
+            [1081.0, 457.0, 60.5, 109.0, 0.0],
+            152500.0,
+            1191.0,
+        );
+        spot("W24X68", [603.0, 228.0, 10.5, 14.9, 30.0], 13000.0, 101.0);
+        spot("W12X40", [303.0, 203.0, 7.5, 13.1, 19.0], 7610.0, 60.0);
+        spot("W6X8.5", [148.0, 100.0, 4.3, 4.9, 8.0], 1630.0, 13.0);
+        spot("W4X13", [106.0, 103.0, 7.1, 8.8, 0.0], 2470.0, 19.3);
+        spot("HP14X117", [361.0, 378.0, 20.4, 20.4, 30.0], 22200.0, 174.0);
+        spot("HP8X36", [204.0, 207.0, 11.3, 11.3, 13.0], 6840.0, 53.0);
+        // The declared-area warning: widest on W24X68, where the catalog radius is larger
+        // than the fillet the standard's area allows; absent where the two agree.
+        let difference = |designation: &str| {
+            library
+                .entry(designation)
+                .unwrap()
+                .record
+                .declared_area_warning()
+                .map(|w| w.relative_difference)
+        };
+        assert!((difference("W24X68").unwrap() - 0.0431).abs() < 0.001);
+        assert!((difference("W12X40").unwrap() - 0.0123).abs() < 0.0005);
+        assert_eq!(difference("W6X8.5"), None);
+        // The W and HP rows exactly as ASTM A6/A6M-05a Annex A2 prints them, 274 + 11.
+        let assortment = [
+            "W44X335 W44X290 W44X262 W44X230",
+            "W40X593 W40X503 W40X431 W40X397 W40X372 W40X362 W40X324 W40X297 W40X277 W40X249",
+            "W40X215 W40X199 W40X392 W40X331 W40X327 W40X294 W40X278 W40X264 W40X235 W40X211",
+            "W40X183 W40X167 W40X149",
+            "W36X800 W36X652 W36X529 W36X487 W36X441 W36X395 W36X361 W36X330 W36X302 W36X282",
+            "W36X262 W36X247 W36X231 W36X256 W36X232 W36X210 W36X194 W36X182 W36X170 W36X160",
+            "W36X150 W36X135",
+            "W33X387 W33X354 W33X318 W33X291 W33X263 W33X241 W33X221 W33X201 W33X169 W33X152",
+            "W33X141 W33X130 W33X118",
+            "W30X391 W30X357 W30X326 W30X292 W30X261 W30X235 W30X211 W30X191 W30X173 W30X148",
+            "W30X132 W30X124 W30X116 W30X108 W30X99 W30X90",
+            "W27X539 W27X368 W27X336 W27X307 W27X281 W27X258 W27X235 W27X217 W27X194 W27X178",
+            "W27X161 W27X146 W27X129 W27X114 W27X102 W27X94 W27X84",
+            "W24X370 W24X335 W24X306 W24X279 W24X250 W24X229 W24X207 W24X192 W24X176 W24X162",
+            "W24X146 W24X131 W24X117 W24X104 W24X103 W24X94 W24X84 W24X76 W24X68 W24X62 W24X55",
+            "W21X201 W21X182 W21X166 W21X147 W21X132 W21X122 W21X111 W21X101 W21X93 W21X83 W21X73",
+            "W21X68 W21X62 W21X55 W21X48 W21X57 W21X50 W21X44",
+            "W18X311 W18X283 W18X258 W18X234 W18X211 W18X192 W18X175 W18X158 W18X143 W18X130",
+            "W18X119 W18X106 W18X97 W18X86 W18X76 W18X71 W18X65 W18X60 W18X55 W18X50 W18X46",
+            "W18X40 W18X35",
+            "W16X100 W16X89 W16X77 W16X67 W16X57 W16X50 W16X45 W16X40 W16X36 W16X31 W16X26",
+            "W14X730 W14X665 W14X605 W14X550 W14X500 W14X455 W14X426 W14X398 W14X370 W14X342",
+            "W14X311 W14X283 W14X257 W14X233 W14X211 W14X193 W14X176 W14X159 W14X145 W14X132",
+            "W14X120 W14X109 W14X99 W14X90 W14X82 W14X74 W14X68 W14X61 W14X53 W14X48 W14X43",
+            "W14X38 W14X34 W14X30 W14X26 W14X22",
+            "W12X336 W12X305 W12X279 W12X252 W12X230 W12X210 W12X190 W12X170 W12X152 W12X136",
+            "W12X120 W12X106 W12X96 W12X87 W12X79 W12X72 W12X65 W12X58 W12X53 W12X50 W12X45",
+            "W12X40 W12X35 W12X30 W12X26 W12X22 W12X19 W12X16 W12X14",
+            "W10X112 W10X100 W10X88 W10X77 W10X68 W10X60 W10X54 W10X49 W10X45 W10X39 W10X33",
+            "W10X30 W10X26 W10X22 W10X19 W10X17 W10X15 W10X12",
+            "W8X67 W8X58 W8X48 W8X40 W8X35 W8X31 W8X28 W8X24 W8X21 W8X18 W8X15 W8X13 W8X10",
+            "W6X25 W6X20 W6X15 W6X16 W6X12 W6X9 W6X8.5",
+            "W5X19 W5X16",
+            "W4X13",
+            "HP14X117 HP14X102 HP14X89 HP14X73",
+            "HP12X84 HP12X74 HP12X63 HP12X53",
+            "HP10X57 HP10X42",
+            "HP8X36",
+        ];
+        let mut expected: Vec<&str> = assortment.iter().flat_map(|g| g.split(' ')).collect();
+        expected.sort();
+        designations.sort();
+        assert_eq!(designations, expected);
+        // Refused, never a near match: the jumbo shapes newer editions of the standard carry
+        // (the Nucor-Yamato size list names them; the declared 05a tables do not), the other
+        // shape families of the same annex (not in this slice), the metric designation of the
+        // same rows (no aliases), and every other spelling.
+        for absent in [
+            "W44X408",
+            "W44X368",
+            "W40X655",
+            "W30X433",
+            "W21X223",
+            "W14X808",
+            "HP12X89",
+            "HP16X183",
+            "HP18X204",
+            "S24X121",
+            "M12X11.6",
+            "C15X50",
+            "MC18X58",
+            "L8X8X1",
+            "W1100X499",
+            "W44x335",
+            "W 44 X 335",
+            "IPE300",
+        ] {
+            assert_eq!(
+                library.entry(absent).unwrap_err().code,
+                ErrorCode::NotFound,
+                "{absent} is not in the shipped series"
+            );
+        }
+    }
+
+    #[test]
+    fn the_shipped_brazil_w_and_hp_library_reads_with_every_entry_admitted() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/brazil/profiles-abnt-nbr-15980.usda"
+        );
+        let library = load(path).unwrap();
+        assert_eq!(library.info.id, "brazil-abnt-nbr-15980-profiles");
+        assert_eq!(library.info.version.as_deref(), Some("1"));
+        assert!(
+            library
+                .info
+                .licence
+                .as_deref()
+                .is_some_and(|l| !l.is_empty()),
+            "the shipped library declares its licence"
+        );
+        assert!(
+            library
+                .info
+                .source
+                .as_deref()
+                .is_some_and(|s| !s.is_empty()),
+            "the shipped library declares its source"
+        );
+        // No transcription slips: every entry is admitted.
+        assert_eq!(library.rejected, []);
+        // The pack carries the usa pack's A6/A6M-05a W and HP rows (274 + 11 minus the one row
+        // whose printed SI designation another row already owns: the annex prints W920 X 345
+        // for W36X231 and W36X232 alike, the Nucor-Yamato size list names W920 x 345 for W36
+        // x 232 and lists no W36 x 231, and one library cannot carry two rows under one
+        // designation).
+        assert_eq!(library.entries.len(), 284);
+        // The thirteen shapes the Nucor-Yamato catalog does not roll carry a sharp corner;
+        // every other row carries one of the catalog's radii, exactly as in the usa pack.
+        let sharp = [
+            "W 1000 x 494,0", // W40X331
+            "W 920 x 1191,0", // W36X800
+            "W 310 x 21,0",   // W12X14
+            "W 250 x 28,4",   // W10X19
+            "W 250 x 25,3",   // W10X17
+            "W 250 x 22,3",   // W10X15
+            "W 250 x 17,9",   // W10X12
+            "W 200 x 22,5",   // W8X15
+            "W 200 x 19,3",   // W8X13
+            "W 200 x 15,0",   // W8X10
+            "W 130 x 28,1",   // W5X19
+            "W 130 x 23,8",   // W5X16
+            "W 100 x 19,3",   // W4X13
+        ];
+        let catalog_radii = [8.0, 8.5, 10.0, 13.0, 15.0, 19.0, 20.0, 30.0];
+        let mut designations = Vec::new();
+        let mut warned = 0;
+        for entry in &library.entries {
+            let DefinitionRecord::SectionProfile {
+                shape: SectionShape::Parametric(parametric),
+                section,
+            } = &entry.record
+            else {
+                panic!("{} is not a parametric section", entry.designation);
+            };
+            // W and HP shapes have parallel flanges: the i_shape family.
+            assert_eq!(parametric.family(), SectionFamily::IShape);
+            // Every row declares the edition of the national standard the regional producers
+            // print for these dimensions; the values behind it are the annex's SI column.
+            assert_eq!(
+                section.standard.as_deref(),
+                Some("ABNT NBR 15980:2024"),
+                "{}",
+                entry.designation
+            );
+            // The designation is the producers' print form, and its mass tail is the row's
+            // nominal SI mass, decimal comma, one decimal place.
+            let mass = section.mass_per_meter_kg.unwrap();
+            let tail = format!("{mass:.1}").replace('.', ",");
+            assert!(
+                entry.designation.contains(" x ") && entry.designation.ends_with(&tail),
+                "{} does not carry its mass {tail}",
+                entry.designation
+            );
+            let radius = parametric.values()[4];
+            if sharp.contains(&entry.designation.as_str()) {
+                assert_eq!(radius, 0.0, "{}", entry.designation);
+            } else {
+                assert!(
+                    catalog_radii.contains(&radius),
+                    "{}: radius {radius}",
+                    entry.designation
+                );
+            }
+            // The same declared-area expectation as the usa pack, row for row: the standards
+            // print no radius and round their SI dimensions, so 150 rows sit more than one
+            // percent from the closed-form area, none beyond five (owner decision of
+            // 2026-10-18: a warning, never a refusal). The nominal SI mass of the designation
+            // follows the area at 7850 kg/m3 within 2.2 percent.
+            let area = section.area_mm2.unwrap();
+            let mass_from_area = area * 7850.0 / 1.0e6;
+            assert!(
+                (mass - mass_from_area).abs() / mass_from_area <= 0.022,
+                "{}: mass {mass} kg/m vs area-derived {mass_from_area}",
+                entry.designation
+            );
+            if let Some(warning) = entry.record.declared_area_warning() {
+                warned += 1;
+                assert_eq!(warning.declared_mm2, area, "{}", entry.designation);
+                assert!(
+                    warning.relative_difference < 0.05,
+                    "{}: declared area {area} mm2 is {} off the outline",
+                    entry.designation,
+                    warning.relative_difference
+                );
+            }
+            designations.push(entry.designation.clone());
+        }
+        assert_eq!(warned, 150, "rows carrying the declared-area warning");
+        // Spot checks: the usa pack's re-entry value for value, under the metric designation.
+        // designation, [h, b, tw, tf, r], area mm2, nominal mass kg/m.
+        let spot = |designation: &str, values: [f64; 5], area: f64, mass: f64| {
+            let entry = library.entry(designation).unwrap();
+            let DefinitionRecord::SectionProfile {
+                shape: SectionShape::Parametric(p),
+                section,
+            } = &entry.record
+            else {
+                panic!("{designation} is not a parametric section");
+            };
+            assert_eq!(p.values(), values, "{designation}");
+            assert_eq!(section.area_mm2, Some(area), "{designation}");
+            assert_eq!(section.mass_per_meter_kg, Some(mass), "{designation}");
+        };
+        spot(
+            "W 1100 x 499,0",
+            [1118.0, 405.0, 26.0, 45.0, 30.0],
+            63500.0,
+            499.0,
+        );
+        // The W 36 X 800 designation cell prints its area before its weight in both public
+        // copies; the row is read from its metric designation W920 X 1191.
+        spot(
+            "W 920 x 1191,0",
+            [1081.0, 457.0, 60.5, 109.0, 0.0],
+            152500.0,
+            1191.0,
+        );
+        spot(
+            "W 920 x 345,0",
+            [943.0, 308.0, 22.1, 39.9, 30.0],
+            44000.0,
+            345.0,
+        );
+        spot(
+            "W 610 x 101,0",
+            [603.0, 228.0, 10.5, 14.9, 30.0],
+            13000.0,
+            101.0,
+        );
+        spot(
+            "W 310 x 60,0",
+            [303.0, 203.0, 7.5, 13.1, 19.0],
+            7610.0,
+            60.0,
+        );
+        spot("W 150 x 13,0", [148.0, 100.0, 4.3, 4.9, 8.0], 1630.0, 13.0);
+        spot("W 100 x 19,3", [106.0, 103.0, 7.1, 8.8, 0.0], 2470.0, 19.3);
+        spot(
+            "HP 360 x 174,0",
+            [361.0, 378.0, 20.4, 20.4, 30.0],
+            22200.0,
+            174.0,
+        );
+        spot(
+            "HP 200 x 53,0",
+            [204.0, 207.0, 11.3, 11.3, 13.0],
+            6840.0,
+            53.0,
+        );
+        spot("W 250 x 22,3", [254.0, 102.0, 5.8, 6.9, 0.0], 2850.0, 22.3);
+        spot("W 130 x 23,8", [127.0, 127.0, 6.1, 9.1, 0.0], 3040.0, 23.8);
+        // The declared-area warning: widest on W 610 x 101,0, where the catalog radius is
+        // larger than the fillet the standard's area allows; absent where the two agree.
+        let difference = |designation: &str| {
+            library
+                .entry(designation)
+                .unwrap()
+                .record
+                .declared_area_warning()
+                .map(|w| w.relative_difference)
+        };
+        assert!((difference("W 610 x 101,0").unwrap() - 0.0431).abs() < 0.001);
+        assert!((difference("W 310 x 60,0").unwrap() - 0.0123).abs() < 0.0005);
+        assert_eq!(difference("W 150 x 13,0"), None);
+        // The W and HP rows in the producers' designation form, 273 + 11.
+        let assortment = [
+            "W 1100 x 499,0 W 1100 x 433,0 W 1100 x 390,0 W 1100 x 343,0",
+            "W 1000 x 883,0 W 1000 x 748,0 W 1000 x 642,0 W 1000 x 591,0 W 1000 x 554,0 W 1000 x 539,0 W 1000 x 483,0 W 1000 x 443,0 W 1000 x 412,0 W 1000 x 371,0 W 1000 x 321,0 W 1000 x 296,0 W 1000 x 584,0 W 1000 x 494,0 W 1000 x 486,0 W 1000 x 438,0 W 1000 x 415,0 W 1000 x 393,0 W 1000 x 350,0 W 1000 x 314,0 W 1000 x 272,0 W 1000 x 249,0 W 1000 x 222,0",
+            "W 920 x 1191,0 W 920 x 970,0 W 920 x 787,0 W 920 x 725,0 W 920 x 656,0 W 920 x 588,0 W 920 x 537,0 W 920 x 491,0 W 920 x 449,0 W 920 x 420,0 W 920 x 390,0 W 920 x 368,0 W 920 x 381,0 W 920 x 345,0 W 920 x 313,0 W 920 x 289,0 W 920 x 271,0 W 920 x 253,0 W 920 x 238,0 W 920 x 223,0 W 920 x 201,0",
+            "W 840 x 576,0 W 840 x 527,0 W 840 x 473,0 W 840 x 433,0 W 840 x 392,0 W 840 x 359,0 W 840 x 329,0 W 840 x 299,0 W 840 x 251,0 W 840 x 226,0 W 840 x 210,0 W 840 x 193,0 W 840 x 176,0",
+            "W 760 x 582,0 W 760 x 531,0 W 760 x 484,0 W 760 x 434,0 W 760 x 389,0 W 760 x 350,0 W 760 x 314,0 W 760 x 284,0 W 760 x 257,0 W 760 x 220,0 W 760 x 196,0 W 760 x 185,0 W 760 x 173,0 W 760 x 161,0 W 760 x 147,0 W 760 x 134,0",
+            "W 690 x 802,0 W 690 x 548,0 W 690 x 500,0 W 690 x 457,0 W 690 x 419,0 W 690 x 384,0 W 690 x 350,0 W 690 x 323,0 W 690 x 289,0 W 690 x 265,0 W 690 x 240,0 W 690 x 217,0 W 690 x 192,0 W 690 x 170,0 W 690 x 152,0 W 690 x 140,0 W 690 x 125,0",
+            "W 610 x 551,0 W 610 x 498,0 W 610 x 455,0 W 610 x 415,0 W 610 x 372,0 W 610 x 341,0 W 610 x 307,0 W 610 x 285,0 W 610 x 262,0 W 610 x 241,0 W 610 x 217,0 W 610 x 195,0 W 610 x 174,0 W 610 x 155,0 W 610 x 153,0 W 610 x 140,0 W 610 x 125,0 W 610 x 113,0 W 610 x 101,0 W 610 x 92,0 W 610 x 82,0",
+            "W 530 x 300,0 W 530 x 272,0 W 530 x 248,0 W 530 x 219,0 W 530 x 196,0 W 530 x 182,0 W 530 x 165,0 W 530 x 150,0 W 530 x 138,0 W 530 x 123,0 W 530 x 109,0 W 530 x 101,0 W 530 x 92,0 W 530 x 82,0 W 530 x 72,0 W 530 x 85,0 W 530 x 74,0 W 530 x 66,0",
+            "W 460 x 464,0 W 460 x 421,0 W 460 x 384,0 W 460 x 349,0 W 460 x 315,0 W 460 x 286,0 W 460 x 260,0 W 460 x 235,0 W 460 x 213,0 W 460 x 193,0 W 460 x 177,0 W 460 x 158,0 W 460 x 144,0 W 460 x 128,0 W 460 x 113,0 W 460 x 106,0 W 460 x 97,0 W 460 x 89,0 W 460 x 82,0 W 460 x 74,0 W 460 x 68,0 W 460 x 60,0 W 460 x 52,0",
+            "W 410 x 149,0 W 410 x 132,0 W 410 x 114,0 W 410 x 100,0 W 410 x 85,0 W 410 x 75,0 W 410 x 67,0 W 410 x 60,0 W 410 x 53,0 W 410 x 46,1 W 410 x 38,8",
+            "W 360 x 1086,0 W 360 x 990,0 W 360 x 900,0 W 360 x 818,0 W 360 x 744,0 W 360 x 677,0 W 360 x 634,0 W 360 x 592,0 W 360 x 551,0 W 360 x 509,0 W 360 x 463,0 W 360 x 421,0 W 360 x 382,0 W 360 x 347,0 W 360 x 314,0 W 360 x 287,0 W 360 x 262,0 W 360 x 237,0 W 360 x 216,0 W 360 x 196,0 W 360 x 179,0 W 360 x 162,0 W 360 x 147,0 W 360 x 134,0 W 360 x 122,0 W 360 x 110,0 W 360 x 101,0 W 360 x 91,0 W 360 x 79,0 W 360 x 72,0 W 360 x 64,0 W 360 x 58,0 W 360 x 51,0 W 360 x 44,6 W 360 x 39,0 W 360 x 32,9",
+            "W 310 x 500,0 W 310 x 454,0 W 310 x 415,0 W 310 x 375,0 W 310 x 342,0 W 310 x 313,0 W 310 x 283,0 W 310 x 253,0 W 310 x 226,0 W 310 x 202,0 W 310 x 179,0 W 310 x 158,0 W 310 x 143,0 W 310 x 129,0 W 310 x 117,0 W 310 x 107,0 W 310 x 97,0 W 310 x 86,0 W 310 x 79,0 W 310 x 74,0 W 310 x 67,0 W 310 x 60,0 W 310 x 52,0 W 310 x 44,5 W 310 x 38,7 W 310 x 32,7 W 310 x 28,3 W 310 x 23,8 W 310 x 21,0",
+            "W 250 x 167,0 W 250 x 149,0 W 250 x 131,0 W 250 x 115,0 W 250 x 101,0 W 250 x 89,0 W 250 x 80,0 W 250 x 73,0 W 250 x 67,0 W 250 x 58,0 W 250 x 49,1 W 250 x 44,8 W 250 x 38,5 W 250 x 32,7 W 250 x 28,4 W 250 x 25,3 W 250 x 22,3 W 250 x 17,9",
+            "W 200 x 100,0 W 200 x 86,0 W 200 x 71,0 W 200 x 59,0 W 200 x 52,0 W 200 x 46,1 W 200 x 41,7 W 200 x 35,9 W 200 x 31,3 W 200 x 26,6 W 200 x 22,5 W 200 x 19,3 W 200 x 15,0",
+            "W 150 x 37,1 W 150 x 29,8 W 150 x 22,5 W 150 x 24,0 W 150 x 18,0 W 150 x 13,5 W 150 x 13,0",
+            "W 130 x 28,1 W 130 x 23,8",
+            "W 100 x 19,3",
+            "HP 360 x 174,0 HP 360 x 152,0 HP 360 x 132,0 HP 360 x 108,0",
+            "HP 310 x 125,0 HP 310 x 110,0 HP 310 x 93,0 HP 310 x 79,0",
+            "HP 250 x 85,0 HP 250 x 62,0",
+            "HP 200 x 53,0",
+        ];
+        // The designations carry spaces themselves, so the group strings split on the series
+        // prefix that starts every one, never on a bare space.
+        let mut expected: Vec<&str> = Vec::new();
+        for group in &assortment {
+            let mut rest: &str = group;
+            loop {
+                match rest.find(" W ").or_else(|| rest.find(" HP ")) {
+                    Some(index) => {
+                        expected.push(rest[..index].trim_end());
+                        rest = &rest[index + 1..];
+                    }
+                    None => {
+                        expected.push(rest.trim_end());
+                        break;
+                    }
+                }
+            }
+        }
+        expected.sort();
+        designations.sort();
+        assert_eq!(designations, expected);
+        // Refused, never a near match: the EDI inch form of a shipped row and its compact
+        // metric designation (the library has no aliases; the inch form resolves through the
+        // `usa` pack), the shapes of the newer editions of the standard, the two light W 150
+        // rows Gerdau rolls outside both standards, the designation W 920 x 345,0's sibling
+        // is named above, and every other spelling or family of the same annex.
+        for absent in [
+            "W44X335",
+            "W12X40",
+            "HP14X117",
+            "W36X232",
+            "W1100X499",
+            "W44x335",
+            "W 44 X 335",
+            "w 310 x 60,0",
+            "W 310 x 60",
+            "W 1100 x 607,0",
+            "W 360 x 1202,0",
+            "HP 410 x 272,0",
+            "HP 460 x 304,0",
+            "W 150 x 9,2",
+            "W 150 x 10,4",
+            "S 310 x 74,0",
+            "C 250 x 38,1",
+            "L 102 x 102 x 12,7",
+            "BT 100 x 10",
+            "IPE300",
+        ] {
+            assert_eq!(
+                library.entry(absent).unwrap_err().code,
+                ErrorCode::NotFound,
+                "{absent} is not in the shipped series"
+            );
+        }
+    }
+
+    #[test]
+    fn the_brazil_and_usa_libraries_resolve_one_shape_under_both_designation_forms() {
+        // The library has no alias field: the same row resolves under the producers' metric
+        // designation through the `brazil` pack and under the EDI inch form through the `usa`
+        // pack, and never the other way round.
+        let brazil = load(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/brazil/profiles-abnt-nbr-15980.usda"
+        ))
+        .unwrap();
+        let usa = load(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/usa/profiles-astm-a6-w-hp.usda"
+        ))
+        .unwrap();
+        let lookup = Lookup::new(vec![
+            Source {
+                path: "brazil".to_owned(),
+                library: brazil,
+                layer: LAYER_ENVIRONMENT,
+            },
+            Source {
+                path: "usa".to_owned(),
+                library: usa,
+                layer: LAYER_ENVIRONMENT,
+            },
+        ]);
+        let area = |designation: &str| match &lookup.find(designation).unwrap().1.record {
+            DefinitionRecord::SectionProfile { section, .. } => section.area_mm2,
+            _ => None,
+        };
+        assert_eq!(area("W 310 x 60,0"), area("W12X40"), "the same row's area");
+        assert_eq!(area("W 310 x 60,0"), Some(7610.0));
+        assert_eq!(area("HP 360 x 174,0"), area("HP14X117"));
+    }
+
+    #[test]
+    fn the_shipped_south_america_a6_w_library_reads_with_every_entry_admitted() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/south-america/profiles-astm-a6-w.usda"
+        );
+        let library = load(path).unwrap();
+        assert_eq!(library.info.id, "south-america-astm-a6-w-profiles");
+        assert_eq!(library.info.version.as_deref(), Some("1"));
+        assert!(
+            library
+                .info
+                .licence
+                .as_deref()
+                .is_some_and(|l| !l.is_empty()),
+            "the shipped library declares its licence"
+        );
+        assert!(
+            library
+                .info
+                .source
+                .as_deref()
+                .is_some_and(|s| !s.is_empty()),
+            "the shipped library declares its source"
+        );
+        // No transcription slips: every entry is admitted.
+        assert_eq!(library.rejected, []);
+        assert_eq!(library.entries.len(), 274);
+        // The thirteen shapes the Nucor-Yamato catalog does not roll have no printed radius
+        // and carry a sharp corner; every other row carries one of the catalog's radii.
+        let sharp = [
+            "W1000x494",
+            "W920x1191",
+            "W310x21",
+            "W250x28.4",
+            "W250x25.3",
+            "W250x22.3",
+            "W250x17.9",
+            "W200x22.5",
+            "W200x19.3",
+            "W200x15",
+            "W130x28.1",
+            "W130x23.8",
+            "W100x19.3",
+        ];
+        let catalog_radii = [8.0, 8.5, 10.0, 13.0, 15.0, 19.0, 20.0, 30.0];
+        let mut designations = Vec::new();
+        let mut warned = 0;
+        for entry in &library.entries {
+            let DefinitionRecord::SectionProfile {
+                shape: SectionShape::Parametric(parametric),
+                section,
+            } = &entry.record
+            else {
+                panic!("{} is not a parametric section", entry.designation);
+            };
+            // W shapes have parallel flanges: the i_shape family.
+            assert_eq!(parametric.family(), SectionFamily::IShape);
+            assert_eq!(
+                section.standard.as_deref(),
+                Some("ASTM A6/A6M-05a"),
+                "{}",
+                entry.designation
+            );
+            let radius = parametric.values()[4];
+            if sharp.contains(&entry.designation.as_str()) {
+                assert_eq!(radius, 0.0, "{}", entry.designation);
+            } else {
+                assert!(
+                    catalog_radii.contains(&radius),
+                    "{}: radius {radius}",
+                    entry.designation
+                );
+            }
+            // As in the USA pack, this one expects the D3 warning: the standard prints no
+            // radius and rounds its SI column, so the closed-form area of a row sits up to
+            // 4.4 percent from the declared area even with the catalog radius (owner
+            // decision of 2026-10-18: a warning, never a refusal). The bound is the typo
+            // detector: the pin below counts the warning rows, none beyond 5 percent. The
+            // nominal SI mass of the designation follows the area at 7850 kg/m3 within 2.2
+            // percent (worst W360x58, whose nominal 58 kg/m rounds up from the 56.7 its
+            // area gives).
+            let area = section.area_mm2.unwrap();
+            let mass = section.mass_per_meter_kg.unwrap();
+            let mass_from_area = area * 7850.0 / 1.0e6;
+            assert!(
+                (mass - mass_from_area).abs() / mass_from_area <= 0.022,
+                "{}: mass {mass} kg/m vs area-derived {mass_from_area}",
+                entry.designation
+            );
+            if let Some(warning) = entry.record.declared_area_warning() {
+                warned += 1;
+                assert_eq!(warning.declared_mm2, area, "{}", entry.designation);
+                assert!(
+                    warning.relative_difference < 0.05,
+                    "{}: declared area {area} mm2 is {} off the outline",
+                    entry.designation,
+                    warning.relative_difference
+                );
+            }
+            designations.push(entry.designation.clone());
+        }
+        assert_eq!(warned, 142, "rows carrying the declared-area warning");
+        // Spot checks against the standard's printed SI column and the catalog's radius:
+        // designation, [h, b, tw, tf, r], area mm2, nominal mass kg/m.
+        let spot = |designation: &str, values: [f64; 5], area: f64, mass: f64| {
+            let entry = library.entry(designation).unwrap();
+            let DefinitionRecord::SectionProfile {
+                shape: SectionShape::Parametric(p),
+                section,
+            } = &entry.record
+            else {
+                panic!("{designation} is not a parametric section");
+            };
+            assert_eq!(p.values(), values, "{designation}");
+            assert_eq!(section.area_mm2, Some(area), "{designation}");
+            assert_eq!(section.mass_per_meter_kg, Some(mass), "{designation}");
+        };
+        spot(
+            "W1100x499",
+            [1118.0, 405.0, 26.0, 45.0, 30.0],
+            63500.0,
+            499.0,
+        );
+        // The W 36 X 800 designation cell prints its area before its weight in both public
+        // copies; the row is read from its metric designation W920 X 1191, which the pack
+        // keeps as its name.
+        spot(
+            "W920x1191",
+            [1081.0, 457.0, 60.5, 109.0, 0.0],
+            152500.0,
+            1191.0,
+        );
+        spot("W610x101", [603.0, 228.0, 10.5, 14.9, 30.0], 13000.0, 101.0);
+        spot("W310x60", [303.0, 203.0, 7.5, 13.1, 19.0], 7610.0, 60.0);
+        // The light rows keep the printed decimal of the metric mass where the standard
+        // prints one.
+        spot("W150x13", [148.0, 100.0, 4.3, 4.9, 8.0], 1630.0, 13.0);
+        spot("W150x13.5", [150.0, 100.0, 4.3, 5.5, 8.0], 1730.0, 13.5);
+        spot("W100x19.3", [106.0, 103.0, 7.1, 8.8, 0.0], 2470.0, 19.3);
+        // The declared-area warning: widest on W610x101, where the catalog radius is larger
+        // than the fillet the standard's area allows; absent where the two agree.
+        let difference = |designation: &str| {
+            library
+                .entry(designation)
+                .unwrap()
+                .record
+                .declared_area_warning()
+                .map(|w| w.relative_difference)
+        };
+        assert!((difference("W610x101").unwrap() - 0.0431).abs() < 0.001);
+        assert!((difference("W310x60").unwrap() - 0.0123).abs() < 0.0005);
+        assert_eq!(difference("W150x13"), None);
+        // The W rows exactly as ASTM A6/A6M-05a Annex A2 prints them, under the standard's
+        // own metric designations. The one exception is the metric-name collision the
+        // standard itself prints: W 36 X 231 and W 36 X 232 both carry W920 X 345, so the
+        // two rows keep their EDI inch designations and no row is named W920x345.
+        let assortment = [
+            "W1100x499 W1100x433 W1100x390 W1100x343",
+            "W1000x883 W1000x748 W1000x642 W1000x591 W1000x554 W1000x539 W1000x483 W1000x443 W1000x412 W1000x371",
+            "W1000x321 W1000x296 W1000x584 W1000x494 W1000x486 W1000x438 W1000x415 W1000x393 W1000x350 W1000x314",
+            "W1000x272 W1000x249 W1000x222",
+            "W920x1191 W920x970 W920x787 W920x725 W920x656 W920x588 W920x537 W920x491 W920x449 W920x420",
+            "W920x390 W920x368 W36X231 W920x381 W36X232 W920x313 W920x289 W920x271 W920x253 W920x238",
+            "W920x223 W920x201",
+            "W840x576 W840x527 W840x473 W840x433 W840x392 W840x359 W840x329 W840x299 W840x251 W840x226",
+            "W840x210 W840x193 W840x176",
+            "W760x582 W760x531 W760x484 W760x434 W760x389 W760x350 W760x314 W760x284 W760x257 W760x220",
+            "W760x196 W760x185 W760x173 W760x161 W760x147 W760x134",
+            "W690x802 W690x548 W690x500 W690x457 W690x419 W690x384 W690x350 W690x323 W690x289 W690x265",
+            "W690x240 W690x217 W690x192 W690x170 W690x152 W690x140 W690x125",
+            "W610x551 W610x498 W610x455 W610x415 W610x372 W610x341 W610x307 W610x285 W610x262 W610x241",
+            "W610x217 W610x195 W610x174 W610x155 W610x153 W610x140 W610x125 W610x113 W610x101 W610x92 W610x82",
+            "W530x300 W530x272 W530x248 W530x219 W530x196 W530x182 W530x165 W530x150 W530x138 W530x123 W530x109",
+            "W530x101 W530x92 W530x82 W530x72 W530x85 W530x74 W530x66",
+            "W460x464 W460x421 W460x384 W460x349 W460x315 W460x286 W460x260 W460x235 W460x213 W460x193",
+            "W460x177 W460x158 W460x144 W460x128 W460x113 W460x106 W460x97 W460x89 W460x82 W460x74 W460x68",
+            "W460x60 W460x52",
+            "W410x149 W410x132 W410x114 W410x100 W410x85 W410x75 W410x67 W410x60 W410x53 W410x46.1 W410x38.8",
+            "W360x1086 W360x990 W360x900 W360x818 W360x744 W360x677 W360x634 W360x592 W360x551 W360x509",
+            "W360x463 W360x421 W360x382 W360x347 W360x314 W360x287 W360x262 W360x237 W360x216 W360x196",
+            "W360x179 W360x162 W360x147 W360x134 W360x122 W360x110 W360x101 W360x91 W360x79 W360x72 W360x64",
+            "W360x58 W360x51 W360x44.6 W360x39 W360x32.9",
+            "W310x500 W310x454 W310x415 W310x375 W310x342 W310x313 W310x283 W310x253 W310x226 W310x202",
+            "W310x179 W310x158 W310x143 W310x129 W310x117 W310x107 W310x97 W310x86 W310x79 W310x74 W310x67",
+            "W310x60 W310x52 W310x44.5 W310x38.7 W310x32.7 W310x28.3 W310x23.8 W310x21",
+            "W250x167 W250x149 W250x131 W250x115 W250x101 W250x89 W250x80 W250x73 W250x67 W250x58 W250x49.1",
+            "W250x44.8 W250x38.5 W250x32.7 W250x28.4 W250x25.3 W250x22.3 W250x17.9",
+            "W200x100 W200x86 W200x71 W200x59 W200x52 W200x46.1 W200x41.7 W200x35.9 W200x31.3 W200x26.6 W200x22.5 W200x19.3 W200x15",
+            "W150x37.1 W150x29.8 W150x22.5 W150x24 W150x18 W150x13.5 W150x13",
+            "W130x28.1 W130x23.8",
+            "W100x19.3",
+        ];
+        let mut expected: Vec<&str> = assortment.iter().flat_map(|g| g.split(' ')).collect();
+        expected.sort();
+        designations.sort();
+        assert_eq!(designations, expected);
+        // Refused, never a near match: the jumbo shapes newer editions of the standard carry
+        // (the Nucor-Yamato size list names them; the declared 05a tables do not), the HP
+        // shapes of the same annex (no public Chilean source lists them), the inch designations
+        // of the rows the pack names in the metric form, the collision designation the standard
+        // prints twice, and every other spelling.
+        for absent in [
+            "W44X408",
+            "W44X368",
+            "W40X655",
+            "W30X433",
+            "W21X223",
+            "W14X808",
+            "W18X41",
+            "W24X56",
+            "HP14X117",
+            "HP8X36",
+            "HP12X89",
+            "HP16X183",
+            "S24X121",
+            "W12X40",
+            "W44X335",
+            "W36X247",
+            "W920x345",
+            "W310X60",
+            "w310x60",
+            "W 310 x 60",
+            "IPE300",
+        ] {
+            assert_eq!(
+                library.entry(absent).unwrap_err().code,
+                ErrorCode::NotFound,
+                "{absent} is not in the shipped series"
+            );
+        }
+        // The two collision rows answer under their inch designations, and under no other
+        // name: the same standard prints W920 X 345 for both, so the metric name cannot
+        // resolve one row.
+        assert!(library.entry("W36X231").is_ok());
+        assert!(library.entry("W36X232").is_ok());
+    }
+
+    #[test]
+    fn the_shipped_brazil_nbr_7007_materials_library_reads_with_every_entry_admitted() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../environments/brazil/materials-nbr-7007.usda"
+        );
+        let library = load_material(path).unwrap();
+        assert_eq!(library.info.id, "brazil-nbr-7007-materials");
+        assert_eq!(library.info.version.as_deref(), Some("1"));
+        assert!(
+            library
+                .info
+                .licence
+                .as_deref()
+                .is_some_and(|l| !l.is_empty()),
+            "the shipped library declares its licence"
+        );
+        assert!(
+            library
+                .info
+                .source
+                .as_deref()
+                .is_some_and(|s| !s.is_empty()),
+            "the shipped library declares its source"
+        );
+        // No transcription slips: every entry is admitted.
+        assert_eq!(library.rejected, []);
+        assert_eq!(library.entries.len(), 4);
+        // The grades the open public listings and the producers' prints corroborate, in the
+        // loader's designation order. Every row declares the edition the public listings name
+        // (10/2022, vigente) and the metric 7850 kg/m3 density of every shipped pack.
+        let expected: [&str; 4] = ["AR 350", "AR 350 COR", "AR 415", "MR 250"];
+        let grades: Vec<&str> = library
+            .entries
+            .iter()
+            .map(|entry| match &entry.record {
+                DefinitionRecord::Material { grade, .. } => grade.as_deref().unwrap(),
+                _ => panic!("{} is not a material grade", entry.designation),
+            })
+            .collect();
+        assert_eq!(grades, expected);
+        for entry in &library.entries {
+            assert!(
+                matches!(
+                    &entry.record,
+                    DefinitionRecord::Material { density_kg_m3: Some(7850.0), standard, .. }
+                        if standard.as_deref() == Some("ABNT NBR 7007:2022")
+                ),
+                "{}",
+                entry.designation
+            );
+            // The designation is the producers' print form: the strength prefix and the yield
+            // number, spaced.
+            assert_eq!(entry.designation, entry.designation.to_uppercase());
+            assert!(entry.designation.contains(' '));
+        }
+        // Refused, never a near match: no compact spelling (the current Gerdau print runs the
+        // strength prefix and the number together; the shipped rows are the spaced forms the
+        // listings print), no grade one listing names and no producer corroborates (BR 190),
+        // no strength level the public listings do not carry, and no ASTM name — the A36,
+        // A572 and A588 neighbours of the standard's informative mapping are not rows.
+        for absent in [
+            "AR350",
+            "AR 350COR",
+            "MR250",
+            "BR 190",
+            "BR190",
+            "AR 345",
+            "AR 500",
+            "MR 325",
+            "A36",
+            "A572 Grade 50",
+            "A588",
+        ] {
+            assert_eq!(
+                library.entry(absent).unwrap_err().code,
+                ErrorCode::NotFound,
+                "{absent} is not a shipped grade"
+            );
+        }
     }
 
     #[test]

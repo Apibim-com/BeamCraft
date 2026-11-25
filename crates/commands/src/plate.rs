@@ -392,9 +392,18 @@ fn decode_hole_records(prim: &Prim) -> Result<Vec<HoleRecord>, Refusal> {
             _ => None,
         })
         .ok_or_else(bad)?;
+    // The prism axis of each record (A13, epic #556 slice 2): the vertical kinds store the
+    // unit +Z, a part cut stores its leaning unit axis with a positive Z part.
+    let axes = property(prim, "steel:hole:axisDirections")
+        .and_then(|value| match value {
+            Value::Array(items) => items.iter().map(numbers::<3>).collect::<Option<Vec<_>>>(),
+            _ => None,
+        })
+        .ok_or_else(bad)?;
     if polygons.len() != ids.len()
         || polygons.len() != ordinals.len()
         || polygons.len() != kinds.len()
+        || polygons.len() != axes.len()
         || polygons.len() != owners.len()
     {
         return Err(bad());
@@ -404,13 +413,15 @@ fn decode_hole_records(prim: &Prim) -> Result<Vec<HoleRecord>, Refusal> {
         .zip(ids)
         .zip(ordinals)
         .zip(kinds)
+        .zip(axes)
         .zip(owners)
-        .map(|((((polygon_mm, id), ordinal), kind), owner)| {
+        .map(|(((((polygon_mm, id), ordinal), kind), axis), owner)| {
             Ok(HoleRecord {
                 operation_id: OpId::parse(&id).map_err(|_| bad())?,
                 ordinal: ordinal.ok_or_else(bad)?,
                 polygon_mm,
                 kind,
+                axis_direction_mm: axis,
                 owner: match owner.as_str() {
                     "" => None,
                     text => Some(ElementId::parse(text).map_err(|_| bad())?),
@@ -785,16 +796,17 @@ fn decode_cut(prim: &Prim) -> Result<Vec<CutRecord>, Refusal> {
         .collect()
 }
 
-/// The member-hole operation records of a committed member (A04.2): all nine attributes or
+/// The member-hole operation records of a committed member (A04.2): all eleven attributes or
 /// none, aligned with each other, the polygons cut by the vertex counts, every ordinal strictly
 /// increasing and every id a full UUIDv7. A damaged or half-authored record is an integrity
 /// error, never a default.
 fn decode_member_hole_records(prim: &Prim) -> Result<Vec<MemberHoleRecord>, Refusal> {
-    const FIELDS: [&str; 10] = [
+    const FIELDS: [&str; 11] = [
         "steel:mhole:pointsMm",
         "steel:mhole:vertexCounts",
         "steel:mhole:operationIds",
         "steel:mhole:ordinals",
+        "steel:mhole:kinds",
         "steel:mhole:axisPointsMm",
         "steel:mhole:axisDirections",
         "steel:mhole:extents",
@@ -832,9 +844,19 @@ fn decode_member_hole_records(prim: &Prim) -> Result<Vec<MemberHoleRecord>, Refu
             .collect::<Result<_, _>>()?,
         _ => return Err(bad()),
     };
+    let kinds: Vec<steel::model::command::MemberHoleKind> = match property(prim, FIELDS[4]) {
+        Some(Value::Array(values)) => values
+            .iter()
+            .map(|v| {
+                steel::model::command::MemberHoleKind::parse(text(v).ok_or_else(bad)?)
+                    .ok_or_else(bad)
+            })
+            .collect::<Result<Vec<_>, _>>()?,
+        _ => return Err(bad()),
+    };
     let mut axis_points = Vec::new();
     let mut directions = Vec::new();
-    for (field, sink) in [(FIELDS[4], &mut axis_points), (FIELDS[5], &mut directions)] {
+    for (field, sink) in [(FIELDS[5], &mut axis_points), (FIELDS[6], &mut directions)] {
         match property(prim, field) {
             Some(Value::Array(values)) => {
                 for v in values.iter() {
@@ -852,10 +874,10 @@ fn decode_member_hole_records(prim: &Prim) -> Result<Vec<MemberHoleRecord>, Refu
             _ => Err(bad()),
         }
     };
-    let extents: Vec<HoleExtent> = match property(prim, FIELDS[6]) {
+    let extents: Vec<HoleExtent> = match property(prim, FIELDS[7]) {
         Some(Value::Array(values)) => {
-            let from = doubles(FIELDS[7])?;
-            let to = doubles(FIELDS[8])?;
+            let from = doubles(FIELDS[8])?;
+            let to = doubles(FIELDS[9])?;
             values
                 .iter()
                 .zip(from)
@@ -877,14 +899,14 @@ fn decode_member_hole_records(prim: &Prim) -> Result<Vec<MemberHoleRecord>, Refu
     }
     // The generating bolt group of each record (the F06 member-hole amendment); the empty
     // string is a hand-placed one.
-    let owners: Vec<String> = match property(prim, FIELDS[9]) {
+    let owners: Vec<String> = match property(prim, FIELDS[10]) {
         Some(Value::Array(values)) => values
             .iter()
             .map(|v| text(v).map(str::to_owned).ok_or_else(bad))
             .collect::<Result<_, _>>()?,
         _ => return Err(bad()),
     };
-    if polygons.len() != owners.len() {
+    if polygons.len() != owners.len() || polygons.len() != kinds.len() {
         return Err(bad());
     }
     polygons
@@ -895,11 +917,16 @@ fn decode_member_hole_records(prim: &Prim) -> Result<Vec<MemberHoleRecord>, Refu
         .zip(directions)
         .zip(extents)
         .zip(owners)
+        .zip(kinds)
         .map(
-            |((((((polygon_mm, id), ordinal), axis_point_mm), axis_direction), extent), owner)| {
+            |(
+                ((((((polygon_mm, id), ordinal), axis_point_mm), axis_direction), extent), owner),
+                kind,
+            )| {
                 Ok(MemberHoleRecord {
                     operation_id: OpId::parse(&id).map_err(|_| bad())?,
                     ordinal,
+                    kind,
                     axis_point_mm,
                     axis_direction,
                     extent,

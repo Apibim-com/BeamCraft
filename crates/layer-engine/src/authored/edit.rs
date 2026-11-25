@@ -65,6 +65,61 @@ pub(super) fn layer_sublayers(bytes: &[u8]) -> Result<Vec<String>, Diagnostic> {
         _ => Err(invalid()),
     }
 }
+/// The `customLayerData` of a USDA layer's bytes, or `None` when it declares none: the reader
+/// of the root-layer records of a verified revision (D1 project, #628 environment).
+pub(super) fn root_custom_layer_data(bytes: &[u8]) -> Result<Option<sdf::Value>, Diagnostic> {
+    let layer = parse_bytes(bytes)?;
+    let value = layer
+        .try_field(&sdf::Path::abs_root(), "customLayerData")
+        .map_err(|_| corrupt())?;
+    Ok(value.map(|v| v.as_ref().clone()))
+}
+/// The environment record of the bytes of a root layer (#628), with the same rules as
+/// [`super::project_environment_record`]: absent is `None`, a malformed record is `INVALID_ID`.
+pub fn project_environment_record_bytes(
+    bytes: &[u8],
+) -> Result<Option<super::ProjectEnvironmentRecord>, Diagnostic> {
+    let Some(value) = root_custom_layer_data(bytes)? else {
+        return Ok(None);
+    };
+    let sdf::Value::Dictionary(data) = value else {
+        return Ok(None);
+    };
+    let text = |key: &str| match data.get(key) {
+        None => Ok(None),
+        Some(sdf::Value::String(text)) => Ok(Some(text.clone())),
+        Some(_) => Err(super::fail(
+            ErrorCode::InvalidId,
+            "invalid project environment record",
+        )),
+    };
+    let id = text(super::PROJECT_ENVIRONMENT_ID_KEY)?;
+    let version = text(super::PROJECT_ENVIRONMENT_VERSION_KEY)?;
+    let Some(id) = id else {
+        if version.is_some() {
+            return Err(super::fail(
+                ErrorCode::InvalidId,
+                "invalid project environment record: a version without an id",
+            ));
+        }
+        return Ok(None);
+    };
+    if !label_is_valid(&id) {
+        return Err(super::fail(
+            ErrorCode::InvalidId,
+            "invalid project environment record",
+        ));
+    }
+    if let Some(version) = &version
+        && !label_is_valid(version)
+    {
+        return Err(super::fail(
+            ErrorCode::InvalidId,
+            "invalid project environment record",
+        ));
+    }
+    Ok(Some(super::ProjectEnvironmentRecord { id, version }))
+}
 /// The distinct layer-schema pins (`customLayerData:bimSchemaDigest`) of the request's owned
 /// USDA layers, in ascending order: what `schema_pins` compares with this build's mapping.
 /// A pin that is not a text is reported as the empty string (it is never accepted either).
@@ -542,6 +597,7 @@ pub(super) fn serialize(data: &sdf::Data, max: usize) -> Result<Vec<u8>, Diagnos
     TextWriter::write(data, &mut output).map_err(|_| limit())?;
     Ok(output.bytes)
 }
+
 fn create(
     data: &mut sdf::Data,
     e: &Element,
@@ -2149,5 +2205,35 @@ fn field_opinion(
             b,
             name,
         )?)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The N03/LEW-05 LF policy: every generated USDA layer is LF on all platforms, with
+    /// exactly one final LF, so the cross-platform digests compare the bytes the writer
+    /// wrote. Nothing in the engine emits CR; this pins the property on real writer output
+    /// instead of leaving it an unasserted construction detail.
+    #[test]
+    fn generated_layer_bytes_are_lf_only_with_one_final_newline() {
+        let bytes = definition_bytes(&Definition::Material {
+            density_kg_m3: Some(7850.0),
+            grade: Some("S355".to_owned()),
+            standard: Some("EN 10025-2:2019".to_owned()),
+            display_name: Some("Structural steel".to_owned()),
+        })
+        .unwrap();
+        assert!(!bytes.contains(&b'\r'), "the writer emitted a CR byte");
+        assert_eq!(bytes.last(), Some(&b'\n'), "the layer does not end with LF");
+        assert!(
+            !bytes.ends_with(b"\n\n"),
+            "the layer ends with a blank line"
+        );
+        assert!(
+            bytes.starts_with(b"#usda 1.0\n"),
+            "the layer header is not the canonical text form"
+        );
     }
 }

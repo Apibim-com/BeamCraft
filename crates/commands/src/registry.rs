@@ -553,6 +553,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--offset", "N"),
             opt("--limit", "N"),
             opt("--shadow-offset", "N"),
+            opt("--namespace", "profile|fastener|material|all"),
         ],
     ),
     entry(
@@ -568,6 +569,7 @@ pub const COMMANDS: &[Command] = &[
             one(1, "--fastener-library", "FILE"),
             one(1, "--project", "ROOT"),
             opt("--user-library", "FILE"),
+            opt("--namespace", "profile|fastener|material"),
         ],
     ),
     entry(
@@ -892,6 +894,10 @@ pub const COMMANDS: &[Command] = &[
             req("--id", "UUID"),
             req("--operation-id", "UUID"),
             req("--polygon", "X,Y;X,Y;..."),
+            // The member form: the polygon lives in the member-hole frame named by the pair
+            // (through cut, a section-plane direction), the plate form takes neither.
+            opt("--axis-point", "U,V,W"),
+            opt("--axis-direction", "X,Y,Z"),
         ],
     ),
     entry(
@@ -1376,7 +1382,8 @@ pub const COMMANDS: &[Command] = &[
             req("--name", "TEXT"),
             req("--parts", "UUID,UUID,..."),
             opt("--fastener-library", "FILE"),
-            req("--designation", "TEXT"),
+            one(1, "--fastener-digest", "SHA256"),
+            one(1, "--designation", "TEXT"),
             req("--point1", "X,Y,Z"),
             req("--point2", "X,Y,Z"),
             req("--plane-normal", "X,Y,Z"),
@@ -1409,6 +1416,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--name", "TEXT"),
             opt("--parts", "UUID,UUID,..."),
             opt("--fastener-library", "FILE"),
+            opt("--fastener-digest", "SHA256"),
             opt("--designation", "TEXT"),
             opt("--point1", "X,Y,Z"),
             opt("--point2", "X,Y,Z"),

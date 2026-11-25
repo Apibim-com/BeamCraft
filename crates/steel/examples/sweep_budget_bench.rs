@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! Certification cost of sweep-shaped meshes at and beyond the sweep budget (axisrow/BeamCraft#629, item 1).
+//! Certification cost of sweep-shaped meshes at and beyond the sweep budget (#629, item 1).
 //!
 //! The 10 m / R 12 m arc of an I 300×150 r15 section needs about 4 896 vertices and 9 788
 //! triangles, which the sweep budget (4 096 / 8 192) refuses. Before raising that budget, the
@@ -40,7 +40,7 @@ use steel::kernel::section::{Representation, outline};
 use steel::kernel::sweep::{Sweep, SweepPath, sweep};
 use steel::model::section::{ParametricSection, SectionFamily, SectionShape};
 
-/// The I 300×150 r15 section of the axisrow/BeamCraft#629 example, as the kernel admits it.
+/// The I 300×150 r15 section of the #629 example, as the kernel admits it.
 fn i_section() -> Option<SectionShape> {
     let parameters =
         ParametricSection::new(SectionFamily::IShape, vec![300.0, 150.0, 7.0, 10.0, 15.0]);

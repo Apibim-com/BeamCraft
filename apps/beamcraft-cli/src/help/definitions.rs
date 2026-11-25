@@ -8,7 +8,7 @@ pub(super) const HELP: &str = concat!(
     "--density keeps an unknown density, so mass stays unknown): define-material --store ROOT ",
     "[--density KG_M3] [--revision-id UUID] [--actor-id UUID] [--project-id UUID] ",
     "[--workspace-id UUID]; define-material --store ROOT (--library FILE | --environment FILE) ",
-    "--designation GRADE [--name TEXT] [same ids] (axisrow/BeamCraft#636: every value comes from one material ",
+    "--designation GRADE [--name TEXT] [same ids] (#636: every value comes from one material ",
     "library entry — a single file, or the material libraries an environment lists — so the ",
     "definition never needs the file again; an unknown grade is refused); define-profile ",
     "--store ROOT --width MM --height MM [same ids] ",

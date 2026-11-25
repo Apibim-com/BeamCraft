@@ -27,6 +27,7 @@ fn success() -> Report {
         rustc: "rustc 1.99.1".into(),
         cargo: "cargo 1.99.1".into(),
         nextest: "cargo-nextest 0.9.149".into(),
+        max_jobs: None,
         expected_tests: 2,
         executed_tests: 2,
         ignored_tests: Vec::new(),
@@ -183,6 +184,13 @@ fn publish_preserves_human_text_escapes_delimiters_and_replaces_one_block() {
     assert!(report::from_body("").is_err());
     assert!(report::from_body(&format!("{body}{body}")).is_err());
     assert!(report::from_body(report::BEGIN).is_err());
+    github::confirm_stored(&body, &r).unwrap();
+    github::confirm_stored("Human text only, no machine block", &r)
+        .expect_err("a silent no-op publication must fail loudly");
+    let mut different = success();
+    different.executed_tests += 1;
+    github::confirm_stored(&body, &different)
+        .expect_err("a stored block differing from this report must fail loudly");
 }
 
 #[test]
@@ -200,32 +208,30 @@ fn sync_report_must_bind_full_scope_tree_and_both_actual_parents() {
 }
 
 #[test]
-fn required_ci_jobs_cannot_be_skipped_or_failed_while_the_other_os_is_intentionally_skipped() {
-    let oses = vec!["macos-latest".into(), "windows-latest".into()];
+fn required_ci_jobs_cannot_be_skipped_or_failed_while_platform_tests_run_beside_the_pipeline() {
+    let oses = vec!["macos-15".into(), "windows-latest".into()];
     let mut needs = serde_json::json!({});
-    for name in [
-        "plan",
-        "quality",
-        "wasm",
-        "deny",
-        "test-archive-macos",
-        "test-macos",
-        "test-archive-windows",
-        "test-windows",
-    ] {
+    for name in ["plan", "quality", "wasm", "deny"] {
         needs[name] = serde_json::json!({"result":"success"});
     }
-    for name in ["test-archive-ubuntu", "test-ubuntu", "build-timings"] {
-        needs[name] = serde_json::json!({"result":"skipped"});
-    }
+    needs["build-timings"] = serde_json::json!({"result":"skipped"});
+    // Platform test lanes are absent from the CI wall: the verdict accepts their
+    // hand-off to ci-platform.yml and must not require them here.
     github::verdict(&needs, &oses, "pull_request").unwrap();
     for bad in ["failure", "cancelled", "skipped"] {
         let mut changed = needs.clone();
-        changed["test-windows"]["result"] = bad.into();
+        changed["quality"]["result"] = bad.into();
         assert!(github::verdict(&changed, &oses, "pull_request").is_err());
     }
     needs["plan"]["result"] = "failure".into();
     assert!(github::verdict(&needs, &oses, "pull_request").is_err());
+    // A push keeps the cold release gate required.
+    let mut push = needs.clone();
+    push["plan"]["result"] = "success".into();
+    push["build-timings"] = serde_json::json!({"result":"success"});
+    github::verdict(&push, &oses, "push").unwrap();
+    push["build-timings"] = serde_json::json!({"result":"skipped"});
+    assert!(github::verdict(&push, &oses, "push").is_err());
 }
 
 #[test]
@@ -249,4 +255,70 @@ fn inventory_and_junit_are_structured_not_green_log_grep() {
             .unwrap()
             .passed
     );
+}
+
+#[test]
+fn the_job_ceiling_is_opt_in_validated_and_applied_to_every_child() {
+    use std::ffi::OsStr;
+    use std::path::Path;
+    use std::process::Command;
+    assert_eq!(local::max_jobs(None).unwrap(), None);
+    assert_eq!(local::max_jobs(Some(OsStr::new(""))).unwrap(), None);
+    assert_eq!(local::max_jobs(Some(OsStr::new("6"))).unwrap(), Some(6));
+    for bad in ["0", "-1", "4x", " 4", "99999999999"] {
+        assert!(local::max_jobs(Some(OsStr::new(bad))).is_err(), "{bad:?}");
+    }
+
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let config = root.join("unused.toml");
+    let args = |command: &Command| -> Vec<String> {
+        command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect()
+    };
+    let build_jobs = |command: &Command| {
+        command
+            .get_envs()
+            .find(|(key, _)| *key == "CARGO_BUILD_JOBS")
+            .and_then(|(_, value)| value.map(|value| value.to_string_lossy().into_owned()))
+    };
+    let plain = local::cargo(root, None);
+    assert_eq!(build_jobs(&plain), None);
+    assert_eq!(build_jobs(&local::cargo(root, Some(6))), Some("6".into()));
+    let run = args(&local::nextest(root, "run", "gate-full", &config, Some(6)));
+    assert_eq!(run[run.len() - 2..], ["-j", "6"]);
+    for uncapped in [
+        local::nextest(root, "run", "gate-full", &config, None),
+        local::nextest(root, "list", "gate-full", &config, Some(6)),
+    ] {
+        assert!(!args(&uncapped).iter().any(|arg| arg == "-j"));
+    }
+    // Every child starts below interactive work: clamped to utility QoS on macOS, niced on
+    // other Unix systems, a below-normal priority class on Windows.
+    let (launcher, policy): (&str, &[&str]) = match std::env::consts::OS {
+        "macos" => ("taskpolicy", &["-c", "utility"]),
+        "linux" => ("nice", &["-n", "10"]),
+        _ => ("cargo", &[]),
+    };
+    assert_eq!(plain.get_program(), launcher);
+    assert_eq!(args(&plain)[..policy.len()], policy[..]);
+
+    // The ceiling is receipt provenance: an unset one leaves the wire format unchanged.
+    let mut report = success();
+    let json = serde_json::to_value(&report).unwrap();
+    assert!(json.get("max_jobs").is_none());
+    assert_eq!(
+        serde_json::from_value::<Report>(json).unwrap().max_jobs,
+        None
+    );
+    report.max_jobs = Some(6);
+    let json = serde_json::to_value(&report).unwrap();
+    assert_eq!(json["max_jobs"], 6);
+    assert_eq!(
+        serde_json::from_value::<Report>(json).unwrap().max_jobs,
+        Some(6)
+    );
+    report.max_jobs = Some(0);
+    assert!(report.validate().is_err());
 }

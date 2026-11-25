@@ -4,7 +4,236 @@ Decisions that shape the plan, newest first. Each names its date and, where one 
 document that records it in detail. A later decision overrides an earlier one where they differ.
 Open questions are at the end.
 
+## 2026-11-24
+
+- **South America profile geometry is the A6/A6M-05a W imports, named in the standard's
+  metric designations.** Owner decision of 2026-11-24 on the South America pack (axisrow/BeamCraft#711,
+  completing the pack the decision of 2026-11-23 defined): the `south-america` environment
+  gains a profile library with the W-shape series of ASTM A6/A6M-05a Annex A2 — the route
+  the 2026-11-23 decision deferred to, since NCh203.Of2006 covers material requirements
+  only and Chilean W shapes are imports with no national section standard. The rows are
+  the USA pack's re-entered SI-column facts, value for value, with the root radius from
+  the Nucor-Yamato catalog as there; the declared standard on every row stays
+  `ASTM A6/A6M-05a` and is a provenance statement, not a currency claim. The designations
+  are the standard's own metric ones (`W310x60`), the form the route direction names for
+  the regional producer print — the asked verification on the CINTAC public pages found no
+  Chilean producer print to override it: CINTAC lists no W shapes at all and the Aceros
+  AZA catalog carries angle and Estrella profiles only, so no Chilean print shows a form.
+  No public Chilean source lists the imported W assortment either, so the pack ships the
+  declared edition's complete W series rather than an invented availability subset, and
+  the HP shapes stay `NOT_FOUND`. The standard prints one metric designation for two rows
+  (W920 X 345 for W 36 X 231 and W 36 X 232), so those two keep their EDI inch
+  designations and the collision designation names no row. An admitted availability or
+  HP source enters under the standing pack discipline in its own slice and never edits
+  these rows in place. The design note is
+  [`south-america-a6-w-profiles.md`](../design/south-america-a6-w-profiles.md).
+
+- **The Philippines pack is the A6 geometry alias plus the ESC-verified grade bindings.**
+  Decision of 2026-11-24 on the Philippines regional pack (axisrow/BeamCraft#713, part of axisrow/BeamCraft#649), taken under the
+  standing pack discipline and the sourcing principle once the USA admission decisions it waits
+  on had landed (2026-10-18 profile route, in force since the `usa` A6 slice): the
+  `philippines` environment ships the thin alias the issue anticipates — the 285 ASTM
+  A6/A6M-05a W and HP rows of the `usa` pack re-declared unchanged (EDI inch designations,
+  Nucor-Yamato radii) — beside one material library binding the grade designations the ESC
+  Steel Philippines wide-flange page names (escsteelstructures.ph): ASTM A36 and the complete
+  A572 strength-grade set under the `usa` pack's editions (A36/A36M-19, A572/A572M-21), the EN
+  10025-2:2019 grade set the `europe` pack re-entered (ESC names the BS publication of the same
+  EN), SS400 of JIS G 3101:2015, SM400A/B/C, SM490A/B/C and SM490YA/YB of JIS G 3106:2020 (the
+  edition the public English copy prints; its foreword replaces G 3106:2017), and SN400A/B/C
+  and SN490B/C of JIS G 3136:2012 — that standard's complete set, SN490A is no grade of it.
+  The geometry stays the A6 facts because ESC, the regional evidence, prints no section
+  designations and no dimension tables (verified 2026-11-24): it is the verification of the
+  environment, never a table source, and nothing is invented for the region. ESC prints no
+  editions either, so every row declares the best publicly documented edition of its standard
+  on the GOST 26020-83 stance (a provenance statement, not a currency claim); a designation
+  whose standard has no publicly documented edition ships no row. The KS D 3503 (SS400) and
+  KS D 3515 (SM400A, SM400B, SM490A, SM490B) the page names carry the same designation strings
+  the JIS rows ship, so they would add no row, and their editions had no public documentation
+  at the retrieval date — no KS row is declared, and the fact is recorded here and in
+  `ATTRIBUTION.md`. Not in the pack: A992 (ESC does not name it for the region), the SM520 and
+  SM570 and SS330/SS490/SS540 grades the full JIS sets carry but ESC does not name, S450J0
+  (deleted in the 2019 EN revision), the metric designation forms of the shipped rows and
+  fasteners (axisrow/BeamCraft#708 carries the fastener set). NSCP referencing stays an engineering-rule matter:
+  the code names the sections, it is no catalogue source.
+- **The Brazil pack ships the A6 assortment under the producers' metric designations and the
+  national standard they declare; the producers stay cross-check-only.** The 2026-11-23 Brazil
+  route (the sourcing principle and the A6 decision above, applied to axisrow/BeamCraft#710) lands as the
+  `brazil` environment's first slice: the W and HP shapes of the A6/A6M-05a Annex A2
+  assortment — the `usa` pack's verified rows, value for value — declared `ABNT NBR 15980:2024`
+  on every row, the current edition of the national standard whose W/HP content is that
+  assortment and which both regional producers print for these dimensions (verified against
+  Gerdau's own catalog of 09/26, which declares the dimensions per "ABNT NBR 15980 e ASTM
+  A6/A6M" and maps A6 table A2.1 to NBR 15980 table A.4, and Gerdau's 2018 table naming the
+  2011 edition of the same declaration; ArcelorMittal Brasil names the 2024 edition per the
+  #877 research, and its JS-gated catalogue PDF was not downloaded or read). The producer
+  catalogs grant no reproduction right (ArcelorMittal reserves its content; Gerdau grants
+  none): they are designation-form, availability and cross-check sources only, and no table is
+  copied from them. Nothing is purchased: the official NBR 15980:2024 text stays buy-deferred
+  until a slice needs NBR-specific content. The designations take the producers' print form
+  «W 310 x 60,0» (one decimal, decimal comma), which Gerdau's own tables confirm byte for byte
+  on the 106 rows they roll. The annex prints one SI designation for two of its shapes (W920
+  X 345 for W36X231 and W36X232); the designation names W36X232 — the shape the Nucor-Yamato
+  size list rolls and prints under it — and W36X231 stays `NOT_FOUND` until a source
+  distinguishes them. Materials are not in the slice: NBR 7007 is a named candidate, no
+  national grade source is admitted, the environment lists no material library and every grade
+  is `NOT_FOUND`. [Design note](../design/brazil-abnt-nbr-15980-profiles.md).
+
+- **NBR 7007 is admitted for the Brazil grade pack per the EN 10365/CEN precedent — the same
+  footing as every shipped pack — and the grades slice closes axisrow/BeamCraft#710.** Owner decision of
+  2026-11-24: the shipped packs already re-enter facts — route (a), BeamCraft's own data, no
+  text or table copied, values from public copies — from standards owned by private
+  associations (CEN for the EN 10365 packs of `europe`, `middle-east` and `south-africa`, BIS
+  for the IS packs of `india`, Standards Australia for the AS/NZS packs of `australia`), so
+  NBR 7007 (ABNT) is the same class and the same footing as every shipped pack. The 2026-11-23
+  state-owned principle governs the upstream coverage mandate, not the pack data practice. The
+  official text stays unpurchased, and the rows are the grade designations the open public
+  listings corroborate, declared with the edition the listings name (the 2022 edition, October
+  2022, vigente, pinned from the public listing of the ABNT catalogue). Four grades ship —
+  MR 250, AR 350, AR 350 COR and AR 415 — in the spaced designation form the listings print;
+  the compact unspaced spellings of the current Gerdau print stay `NOT_FOUND`, as do the ASTM
+  names of the producers' equivalence mappings (the relations are not aliases, as the NCh203
+  pack ruled) and the BR 190 light grade one standards-database listing names with no producer
+  corroboration. With the profile pack of the same date, the axisrow/BeamCraft#710 acceptance — the producers'
+  tables and the ABNT grades — is covered; the remaining families (angles, flat bars, channels,
+  S and M shapes) and edition bumps stay under the standing pack discipline, each with its own
+  source decision. [Design note](../design/brazil-abnt-nbr-15980-profiles.md).
+
+## 2026-11-23
+
+- **Canada is the ASTM A6/A6M assortment under metric designations; CISC is not a source.**
+  Owner decision of 2026-11-23 on the Canada pack (axisrow/BeamCraft#709), from the data-source decision memo of
+  the same date: the `canada` environment's W and HP libraries carry the same ASTM A6/A6M-05a
+  rows as the `usa` environment, re-entered by hand as BeamCraft's own data from the same two
+  public copies of the standard, with the Nucor-Yamato catalog as the root-radius source, and
+  every row declares `ASTM A6/A6M-05a`. The designations are the metric form the standard's
+  Annex A2 prints for each row (W310x60 — the table's designation with its spaces dropped and
+  the separator spelled in the lowercase form Canadian practice and the Nucor-Yamato catalog
+  print), and the EDI inch designation ships beside it as the alias entry of the same row, so
+  both names resolve; the library format has no alias field, so a row is one entry per name
+  ([design note](../design/canada-astm-a6-profiles.md)). The declared tables print W920 X 345
+  for two distinct rows (W36X231 and W36X232); the metric name is carried once, for the row the
+  table prints first, and W36X232 answers through its inch alias. CISC publications and web
+  content are not an admitted source: the [CISC Terms of Use](https://www.cisc-icca.ca/terms-of-use)
+  state that "no one has permission to copy, redistribute, reproduce or republish in any form"
+  its information; CISC material may be read to learn which shapes the Canadian market stocks,
+  never for values. No producer availability cross-check is admitted yet; it follows in a later
+  slice if a Canadian producer's public catalogue is admitted. CSA G40.20/G40.21 remains the
+  steel, shipped as the axisrow/BeamCraft#702 material pack; no grade rows ship in this slice. Canadian HSS and
+  the Canadian bolt and hole rules are a separate decision.
+
+- **The Middle East pack is a curated EN+ASTM mix, re-entered from the declared standards.**
+  Owner decision of 2026-11-23, resolving the content question of the Middle East regional pack
+  (axisrow/BeamCraft#712, part of axisrow/BeamCraft#649) in the direction of upstream #877 (comment 7087135753): the `middle-east`
+  environment ships the EN 10365:2017 sections — the IPE, HEA and HEB rows of the `europe` pack,
+  carried over unchanged and declared `EN 10365:2017` on every entry — beside the ASTM grades
+  A36, A572 and A992, and none of the BS, American or Australian series. The data route is own
+  re-entry from the declared standards: the EN rows are the same facts the `europe` pack already
+  re-entered and verified, and the grade rows are the designations the `usa` pack ships, each
+  declared with the edition the regional producer prints on its grade rows (ASTM A36/A36M-19,
+  A572/A572M-21 and A992/A992M-20). The EMSTEEL Heavy Sections catalogue
+  (emsteel.com/pdf/2025/05/heavy-section.pdf, retrieved 2026-11-23) is admitted as a cross-check
+  source only: it confirms the shipped rows and the editions, and no table is copied from it.
+  A family the pack holds no re-entered table for is not invented: the HL, HD and HP series and
+  the HEA/HEB sizes above 600 stay `NOT_FOUND` until a slice re-enters them under the standing
+  pack discipline. The edition stance follows the GOST 26020-83 row of 2026-11-16: the declared
+  edition is the one whose public tables the rows were verified against and the one the
+  producer declares, so the pack stays on EN 10365:2017. EN 10365:2026 supersedes that edition
+  (approved by CEN on 2026-04-27, national implementation due by 2027-01); moving the EN series
+  to it is a separate owner decision, taken under the standing pack discipline, and never edits
+  the existing rows in place. Fasteners are not part of the pack (axisrow/BeamCraft#708 carries the fastener set).
+
+- **The South America pack starts as a grades-only `south-america` environment with the national
+  grades of NCh203.Of2006.** Owner decision of 2026-11-23 on the South America pack (axisrow/BeamCraft#711): act
+  and document in detail, from open online sources only — nothing is purchased, and every source
+  is linked in `ATTRIBUTION.md`. The region's research found one national standard admitted under
+  the maintainer's national-standards principle: NCh203.Of2006, *Acero para uso estructural -
+  Requisitos*, the official Chilean standard for structural steel, which
+  [Decreto 231 of the Ministry of Public Works](https://www.bcn.cl/leychile/navegar?idNorma=249463)
+  declared an official norm of the Republic in 2006, annulling NCh203.Of77 and NCh1159.Of77. Peru
+  and Colombia name ASTM in their regulations, and the section standards of Argentina (IRAM) and
+  Colombia (ICONTEC) belong to private bodies the state recognises: state-recognised is not
+  state-owned, so those standards do not enter under the principle. The pack therefore takes the
+  shape the loader already admits for `usa` and `canada` (axisrow/BeamCraft#697), one material library and no
+  profile library, and carries the standard's own designations — the steel type letter (A, M, Y),
+  the minimum yield strength in MPa and the class ES (general construction) or ESP (constructions
+  under dynamic loads): A240ES, A270ES, A345ES, M345ES, Y345ES, A250ESP and A345ESP. They are
+  national rows, not ASTM aliases: the relations the standard's informative Annex C draws to ASTM
+  A36 and A572 Grade 50 are conditional on verifying further requirements, so an ASTM name would
+  claim an equivalence the standard does not grant. The declared edition is NCh203.Of2006, the
+  edition every source read names. The standard's text is published by INN; the designations were
+  read from a public technical manual that reproduces the standard's two classification tables
+  and cross-checked against Chilean producer and industry documents, with M345ES and Y345ES
+  resting on that table alone. Profiles are deferred: they follow when the axisrow/BeamCraft#708 route (the public
+  ASTM A6/A6M tables) lands. The design note is
+  [`blank-environment.md`](../design/blank-environment.md).
+
+- **USA profile geometry comes from ASTM A6/A6M, not from AISC.** Owner decision: the `usa`
+  environment's rolled-shape libraries re-enter, by hand as BeamCraft's own data, the nominal
+  dimensions, areas and masses of ASTM A6/A6M Annex A2, the route every shipped regional pack
+  takes (facts of a public standard, with the standard and its edition recorded). No standard is
+  bought: the declared edition is the edition of the public copy the rows were read from, for
+  the first slice A6/A6M-05a (W and HP shapes, [design note](../design/usa-astm-a6-profiles.md)),
+  and the declared edition is a provenance statement, not a claim that it is current, as for
+  GOST 26020-83 on 2026-11-16. The AISC Shapes Database and the AISC Manual tables are not an
+  admitted source for catalogue data, neither as copied or converted tables nor as cross-checks:
+  aisc.org grants "personal, internal and noncommercial" use only and forbids distribution and
+  derivative works ([AISC Terms & Conditions §5](https://www.aisc.org/aisc/about-aisc/terms-conditions)),
+  and the database itself carries no licence. AISC specifications remain engineering-rule
+  sources under `AGENTS.md` §2. The values are the standard's own SI column (A6/A6M, Annex A2);
+  a pack converts and rounds nothing. A value a source prints only in inches is converted
+  exactly (x 25.4) and the pack says so. The root radius, which A6/A6M does not print, is taken
+  from the Nucor-Yamato Steel Structural Shapes catalog, which permits reproduction when the
+  revision date and Nucor-Yamato Steel Company are named as the source
+  ([catalog](https://nucoryamato.com/staticdata/catalog.pdf)); that catalog is also the row
+  cross-check. `declared_area_warning` is expected on part of the ASTM rows under either area
+  convention and is not a pack defect there (the decision of 2026-10-18). HSS, tees and the
+  sloped-flange families wait for their own source decisions.
+- **Sourcing principle for regional packs.** Owner decision: national standards whose owner is
+  the state are usable. The standards of private publishers enter a pack only through an open
+  public copy of the official text or through a producer catalog that expressly permits its
+  use. No pack purchases a standard. Every source a pack takes a value from is linked in the
+  documentation with its edition or revision and the retrieval date, in `ATTRIBUTION.md` and in
+  the pack's design note.
+
+- **The South Africa pack ships the IPE series under EN 10365:2017 and the SANS 50025 grade
+  sets.** The series decision of the South Africa pack (axisrow/BeamCraft#714, one of the regional packs of the
+  2026-10-27 coverage decision) is taken for its first slice, following the owner direction on
+  upstream #877 (SANS 50025 / EN 10025 for grades, DIN 1025 for the IPE series; independently
+  sourced data, a permitted licence and attribution per dataset) and the sourcing principle
+  above: SANS 50025 is a national standard, and every source the pack takes a value from is
+  linked in `ATTRIBUTION.md` and in the design note
+  ([`blank-environment.md`](../design/blank-environment.md)):
+  - *Sections:* the IPE series, IPE 100 to IPE 600, with `steel:profile:standard =
+    "EN 10365:2017"` on every row. DIN 1025-5 (the IPE part, commonly cited as 1994-03) is
+    superseded by EN 10365:2017, which carries the IPE series, so the live EN string is the
+    declared standard and the rows are the `europe` pack's IPE rows, value for value.
+  - *Materials:* the structural grade sets of SANS 50025-2, -3 and -4, declared per row as the
+    2009 SANS editions (`SANS 50025-2:2009`, `SANS 50025-3:2009`, `SANS 50025-4:2009`). The
+    2009 SANS parts are the national adoptions of the EN 10025 2004 editions (SANS 50025-2:2009
+    states its identical implementation of EN 10025-2:2004 and EN corrigendum 1:2005), so the
+    pack ships the 2004 grade sets: S450J0 is in, and the grades the 2019 EN revision added —
+    the S460 JR, J0, J2 and K2 qualities, S500J0, S500M and S500ML — stay `NOT_FOUND`. EN 10025
+    parts 2, 3 and 4 have since been revised to 2019; whether the pack follows is a future
+    edition decision, taken as its own PR that never edits the existing rows in place.
+  - *Not in this slice:* the BS UB/UC series (with UBP and PFC) that South African practice also
+    uses. The direction names the IPE series only, so the series question of axisrow/BeamCraft#714 — BS UB/UC,
+    the EN re-designations or both — stays open for those families, and UB, UC, UBP and PFC
+    designations are `NOT_FOUND` until the owner decides. ArcelorMittal South Africa's I-sections
+    catalogue is a cross-check source only (no table is copied from it); fasteners are out of
+    scope (axisrow/BeamCraft#708).
+
 ## 2026-11-22
+
+- **The completed Apple USD Tools run is the macOS interoperability evidence for N03, and is
+  sufficient for that acceptance item.** Owner decision on
+  [#476](https://github.com/Apibim-com/BeamCraft/issues/476): the differential run of 2026-11-05
+  (Apple USD Tools 0.25.11 against `openusd` 0.8.0, recorded in
+  [`usd-sdk-differential.md`](../design/usd-sdk-differential.md)) needs no further macOS work.
+  For Omniverse interoperability, use a supported Windows or Linux setup. The LEW-05
+  cross-platform SHA-256 comparison is run manually, one run per platform — never a CI gate —
+  over a fixed-identity stack, and the digests hash the generated files exactly as BeamCraft
+  writes them: LF line endings on all platforms, with one final LF. The digest mode, the
+  recorded table and the open legs live in the design note.
 
 - **C05 offline-client acceptance uses 250 operations per client.** Each client
   authors distinct operations and may save them in batches. After publishing both
@@ -30,6 +259,42 @@ Open questions are at the end.
   guarantee for those files. U23 is retired (#229). This
   decision supersedes the proposed manifest extension in the
   [F12 external reference workflow](../contracts/f12-external-reference-workflow-v0.1.md#5-required-acceptance-cases-and-implementation-gates).
+
+## 2026-11-16
+
+- **The Russia parallel-flange packs stay declared GOST 26020-83.** The GOST edition question
+  of the Russia-pack findings (axisrow/BeamCraft#628 comment 6879292471) is resolved by delegation through the
+  documentation and the shipped packs (axisrow/BeamCraft#646): the `russia` Б/Ш/К libraries (81 entries, axisrow/BeamCraft#633,
+  axisrow/BeamCraft#667) carry `steel:profile:standard = "GOST 26020-83"` — the edition whose public tables the
+  rows were re-entered and verified against — and nothing in them changes. What the newer
+  editions change for the shipped shapes: GOST R 57837-2017 (introduced 2018; Rosstandart
+  cancelled GOST 26020-83 for RF use on 2018-11-30) extends the assortment (К rows such as
+  30К4/35К4 and the 50К series, 80Ш1–100Ш5, the С series) and republishes shared designations
+  with different geometry — 30B1 is 40.80 cm² there against 26020-83's 41.92 cm² — so a
+  designation alone is not unique across editions. The chain moved once more since the pack
+  research: GOST 35087-2024, the interstate standard in force in RF since 2024-12-01
+  (Rosstandart order 915-ст of 2024-07-11), carries the same extended assortment (including the
+  У series of inclined-flange beams) and is industry-recorded as the successor of
+  GOST R 57837-2017. The shipped edition therefore stays GOST 26020-83, declared on every
+  entry: the declared standard per entry is what disambiguates a designation, and the market
+  rolling both editions makes the declared edition a provenance statement, not a normative
+  claim. A pack of the 57837-2017/35087-2024 generation remains a separate owner decision,
+  taken under the standing pack discipline — its own PR naming the standard, edition and
+  verification sources; it never edits the existing rows in place.
+
+- **The inclined-flange GOST 8239/8240 series ride the kernel `tapered_i` and `tapered_c`
+  families.** The second delegated question of axisrow/BeamCraft#628/#646: the shipped pack (axisrow/BeamCraft#688) expresses
+  the GOST 8239-89 I beams through `tapered_i` and the GOST 8240-89 slope-series channels
+  through `tapered_c` — the inclined-flange families of axisrow/BeamCraft#676 — not `custom` outlines or a new
+  family. The reasoning: the flange slope is data per row (`steel:profile:k`, rise over run),
+  so one family serves GB/T 706 (1:6 / 1:10 exactly), GOST 8239/8240 (roll-pass ranges
+  6–12 % / 4–10 %, shipped at the range middles — the standards print no per-row slope) and the
+  EN 10365 UPN channels (axisrow/BeamCraft#703, k = 0.08 / 0.05); `t` is the mean flange thickness at the middle
+  of the leg, the convention both GOST standards dimension and the family's own parameter (a
+  root-measured thickness converts pack-side, as UPN did); and the exact closed-form area
+  degrades to the parallel-flange families at k = 0. The successor standard keeps the same
+  conventions: the type У rows of GOST 35087-2024 also dimension t as the mean flange
+  thickness.
 
 ## 2026-11-14
 
@@ -60,6 +325,24 @@ Open questions are at the end.
   with [the K10 and K11 evidence](k10-k11-acceptance-evidence.md) recording what was delivered
   and the follow-ups that stay documented and unscheduled. The M3 milestone closes on the same
   decision.
+
+## 2026-11-08
+
+- **O-G5, the magnetic grid mode (T01.8), is answered.** The owner delegated the resolution
+  ("делай O-G5", 2026-11-08); the answers below go with the T01.8 delivery. The magnetic switch
+  is the element's own explicit grid binding, not a session flag: `bind-grid` binds a placed
+  member (plates follow in a later slice) to a local grid, `unbind-grid` releases it, and
+  "magnetic on" means bound. A bound element stores its geometry in the grid's local frame and
+  its world geometry is derived at read time, so a shared-grid edit writes only the grid and
+  never rewrites a section element outside its scope. Deleting a grid with followers refuses
+  with `GRID_IN_USE`; a shape rewrite of a bound element refuses `GRID_IN_USE` until the
+  binding is released, and the release materializes the current world geometry — no implicit
+  detach, so the local record and the world snapshot never diverge silently; a pinned foreign
+  grid is never followed (`FOREIGN_READ_ONLY`). Following is on the grid frame — origin and
+  rotation —
+  not on individual lines; line-level following and automatic session-wide modes stay post-MVP.
+  The T01 contract section 7.5 and the acceptance cases GR-P17 and GR-N20 to GR-N23 carry the
+  delivered semantics.
 
 ## 2026-11-07
 
@@ -444,8 +727,13 @@ Owner answers to [issue #129](https://github.com/Apibim-com/BeamCraft/issues/129
   the catalogue when a profile is inserted from a library, otherwise the kernel computes it with
   the exact arc formula and the mass is marked computed (`area_source`: `catalogue` | `computed`).
   A tabulated mass per metre is a reference field only. Full values are stored; rounding happens
-  only on output (0.1 kg by default). Check case: section 30B1 of GOST 27772-2015, 6 m, 7850 kg/m³
-  gives 192.2 kg from the catalogue area (40.8 cm²) and 192.17 kg from the exact arcs.
+  only on output (0.1 kg by default). Check case: section 30B1, 6 m, 7850 kg/m³ gives 192.2 kg
+  from the catalogue area (40.8 cm²) and 192.17 kg from the exact arcs. The 40.8 cm² value is the
+  new-generation assortment of the designation — STO ASChM 20-93 / GOST R 57837-2017 give 30B1 as
+  h 298, b 149, s 5.5, t 8, R 13, the dimensions of the P-Mass reference section these numbers
+  come from; GOST 27772-2015 grades the steel, not the section. GOST 26020-83's 30B1 is
+  41.92 cm² / 32.9 kg/m — the edition the shipped `russia` environment admits. Which assortment
+  generation or generations BeamCraft carries is an open owner question (axisrow/BeamCraft#628).
 - **Declared versus computed area (A07 D3).** A difference above 1 percent is a warning
   (`declared_area_warning`), never a refusal: catalogues use simplified radii.
 - **History compaction (U14).** Undo past the compaction boundary is impossible and shown in the
@@ -495,6 +783,28 @@ Owner answers to [issue #129](https://github.com/Apibim-com/BeamCraft/issues/129
   ordered arithmetic of F06 are BeamCraft's own.
 - **MSRV 1.96** (required by `openusd`).
 
+## Q03 model checks: automatic geometry versus owner decisions (2026-11-15)
+
+For the `check-model` harness (design in issue axisrow/BeamCraft#634, contract in
+[the Q03 draft](../contracts/q03-model-checks-draft-v0.1.md)), the boundary is fixed:
+
+- **The engine computes and reports; it does not decide or edit.** Checks recompute dependent
+  requirements from recorded inputs and the current model on every run, but never change cut
+  geometry. Whether cuts must follow dimension changes without an explicit modelling command
+  remains a separate, still-open owner decision; parametric connections stay deferred by
+  `ROADMAP.md`.
+- **The product does not invent dimensions.** Only dimensions explicitly required by the owner
+  are checkable inputs; the sample's 10 mm corner cut is such an input, independent of any weld
+  leg, and stays 10 mm until the owner changes it. A measured value never substitutes an
+  expected value.
+- **No normative rule ships unverified.** The normative research (SP 16.13330.2017 15.5.2 and
+  14.1.7/Table 38, EN 1993-1-8:2005 §6.2.6, AISC FAQ 8.2.4/8.3.4/8.3.6/8.3.8 over AWS D1.1
+  7.21.1, AISC Design Guide 1, retrievals in the contract) justifies no universal corner-cut
+  range and no automatic upper bound for this joint. `CORNER_OVERCUT` checks only against an
+  explicit recorded bound; weld adequacy stays `unknown` in v0.1; the supported rule set
+  contains no normative rule until a slice pins one with document, edition, clause, joint types,
+  required inputs and retrieval.
+
 ## Open questions
 
 | # | Question | Blocks |
@@ -503,7 +813,7 @@ Owner answers to [issue #129](https://github.com/Apibim-com/BeamCraft/issues/129
 | 2 | macOS runtime verification without project hardware; Developer ID signing/notarization is deferred after the MVP by the 2026-10-27 decision | Q02 runtime acceptance |
 | 3 | IFC reference conversion and editable steel import: supported subsets, mapping, kernel admission, budgets and provenance (both input workflows in the MVP from 2026-10-27) | E04 reference-loading slice and native steel IFC import |
 | 4 | Live channel and permission model (C07, C08) | C07, C08 |
-| 5 | Grid contract draft: owner answers to O-G5, O-G7 and O-G11 to O-G16 ([contract](../contracts/t01-project-grids-draft-v0.1.md) section 12) | T01.3, T01.4, T01.7, T01.8 |
+| 5 | ~~Grid contract draft: owner answers to O-G5, O-G7 and O-G11 to O-G16~~ Answered: O-G7 and O-G11 to O-G16 by the 2026-10-26 defaults, O-G5 (magnetic mode) on 2026-11-08 — both recorded in the [contract](../contracts/t01-project-grids-draft-v0.1.md) sections 12 and 7.5 | — |
 | 5 | Where saved views and review notes live: workspace only or a shared review layer | W01, W02 |
 | 6 | Variant sets in our own layers (N07) | N07 |
 | 7 | Local use of the third-party USD sample under its licence | N08 |
@@ -514,3 +824,4 @@ Owner answers to [issue #129](https://github.com/Apibim-com/BeamCraft/issues/129
 | 12 | Which DIN or ISO numbers make the first fastener set and who enters the values (bolt amendment O-B2a) | A14.1 |
 | 13 | Whole sub-assembly nested instead of a conflict when a workshop weld meets a part already in an assembly (weld amendment O-W1) | A06.2, A16 |
 | 14 | Whether bolts and welds are numbered, and where defaults for omitted command arguments live (project, user or both) | A09 follow-up |
+| 15 | Whether the South Africa pack adds the BS UB/UC series (with UBP and PFC) beside its IPE series, and whether its grades follow the 2019 revisions of EN 10025 | axisrow/BeamCraft#714 |

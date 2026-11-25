@@ -4,7 +4,7 @@
 //! Q03 slice 2: the validated geometric method behind `check-model`, and the
 //! clash verdict.
 //!
-//! The candidate method of axisrow/BeamCraft#634 — decompose a part into convex pieces, then
+//! The candidate method of #634 — decompose a part into convex pieces, then
 //! compare piece by piece — was rejected in favour of the simpler method the
 //! contract of `docs/contracts/q03-model-checks-draft-v0.1.md` section 7
 //! actually demands: compare the two **final evaluated closed meshes**
@@ -12,7 +12,7 @@
 //! exact predicates, so the relation of two parts is a fact about their
 //! surfaces and cannot depend on a triangulation or on an artificial
 //! decomposition; there are no internal faces to offset. The method was
-//! validated on the adversarial cases of axisrow/BeamCraft#634: face contact, edge contact,
+//! validated on the adversarial cases of #634: face contact, edge contact,
 //! separation, full containment without a surface meeting, corner overlap,
 //! plane-cut and holed bodies, rotated placements, and re-triangulations that
 //! keep the vertex set (`kernel::contact::tests`).
