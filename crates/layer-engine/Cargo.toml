@@ -16,7 +16,7 @@ path = "tests/layer_engine.rs"
 
 [dependencies]
 beamcraft-model.workspace = true
-openusd = { version = "=0.8.0", default-features = false }
+openusd = { version = "=0.9.0", default-features = false }
 
 [lints]
 workspace = true
