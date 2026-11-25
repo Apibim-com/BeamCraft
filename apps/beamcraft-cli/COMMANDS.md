@@ -190,7 +190,7 @@ read.
 ```text
 list-library (--library FILE | --environment FILE | --fastener-library FILE | --project ROOT)
     [--user-library FILE] [--family TEXT] [--filter TEXT] [--offset N] [--limit N]
-    [--shadow-offset N]
+    [--shadow-offset N] [--namespace profile|fastener|material|all]
 ```
 
 ### show-library
@@ -200,7 +200,7 @@ read.
 ```text
 show-library --designation TEXT
     (--library FILE | --environment FILE | --fastener-library FILE | --project ROOT)
-    [--user-library FILE]
+    [--user-library FILE] [--namespace profile|fastener|material]
 ```
 
 ### add-library
@@ -389,8 +389,9 @@ cut-by-line --store ROOT --id UUID --operation-id UUID --point-a X,Y,Z --point-b
 write.
 
 ```text
-cut-by-polygon --store ROOT --id UUID --operation-id UUID --polygon X,Y;X,Y;... [--op-id UUID]
-    [--revision-id UUID] [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
+cut-by-polygon --store ROOT --id UUID --operation-id UUID --polygon X,Y;X,Y;...
+    [--axis-point U,V,W] [--axis-direction X,Y,Z] [--op-id UUID] [--revision-id UUID]
+    [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
 ```
 
 ### cut-by-part
@@ -747,12 +748,12 @@ welds --store ROOT [--offset N] [--limit N]
 write.
 
 ```text
-create-bolt-group --store ROOT --name TEXT --parts UUID,UUID,... --designation TEXT --point1 X,Y,Z
-    --point2 X,Y,Z --plane-normal X,Y,Z --offset-start MM [--fastener-library FILE]
-    [--rotation-deg DEG] [--on-plane MM] [--depth MM] [--spacings MM,MM,...] [--count N]
-    [--pitch MM] [--offset-end MM] [--washer-under-head true|false]
-    [--washer-under-nut true|false] [--length-mode auto|fixed] [--length MM]
-    [--hole-mode generate|none] [--hole-clearance MM] [--new-id UUID] [--op-id UUID]
+create-bolt-group --store ROOT --name TEXT --parts UUID,UUID,... --point1 X,Y,Z --point2 X,Y,Z
+    --plane-normal X,Y,Z --offset-start MM (--fastener-digest SHA256 | --designation TEXT)
+    [--fastener-library FILE] [--rotation-deg DEG] [--on-plane MM] [--depth MM]
+    [--spacings MM,MM,...] [--count N] [--pitch MM] [--offset-end MM]
+    [--washer-under-head true|false] [--washer-under-nut true|false] [--length-mode auto|fixed]
+    [--length MM] [--hole-mode generate|none] [--hole-clearance MM] [--new-id UUID] [--op-id UUID]
     [--revision-id UUID] [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
 ```
 
@@ -762,9 +763,9 @@ write.
 
 ```text
 update-bolt-group --store ROOT --target UUID [--name TEXT] [--parts UUID,UUID,...]
-    [--fastener-library FILE] [--designation TEXT] [--point1 X,Y,Z] [--point2 X,Y,Z]
-    [--plane-normal X,Y,Z] [--rotation-deg DEG] [--on-plane MM] [--depth MM] [--offset-start MM]
-    [--spacings MM,MM,...] [--count N] [--pitch MM] [--offset-end MM]
+    [--fastener-library FILE] [--fastener-digest SHA256] [--designation TEXT] [--point1 X,Y,Z]
+    [--point2 X,Y,Z] [--plane-normal X,Y,Z] [--rotation-deg DEG] [--on-plane MM] [--depth MM]
+    [--offset-start MM] [--spacings MM,MM,...] [--count N] [--pitch MM] [--offset-end MM]
     [--washer-under-head true|false] [--washer-under-nut true|false] [--length-mode auto|fixed]
     [--length MM] [--hole-mode generate|none] [--hole-clearance MM] [--repin true] [--op-id UUID]
     [--revision-id UUID] [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]

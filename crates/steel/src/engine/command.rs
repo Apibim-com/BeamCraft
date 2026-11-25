@@ -41,7 +41,8 @@ use beamcraft_geom::tolerance::TOLERANCE_POLICY_VERSION;
 use beamcraft_kernel::diagnostic::Failure;
 use beamcraft_kernel::measure::analytic_mass_kg;
 use beamcraft_kernel::ops::{
-    Body, CutPlane, HoleCutter, Keep, OpCode, OpFailure, OpResult, plane_cut, through_hole,
+    Body, CutPlane, HoleCutter, Keep, OpCode, OpFailure, OpResult, oblique_through_hole, plane_cut,
+    through_hole,
 };
 use beamcraft_kernel::profile::diagnostic::{ProfileFailure, ProfileField};
 use beamcraft_kernel::profile::{Cavity, Point2, extrude};
@@ -72,7 +73,10 @@ pub const HOLED_VOLUME_ALGORITHM: &str = "kernel-g09-through-hole-volume/1;toler
 
 /// Version label of the volume algorithm of an element with a plane cut (A03): the midpoint of
 /// the G06 enclosure of the certified result of the kernel plane cut, taken after any holes.
-pub const CUT_VOLUME_ALGORITHM: &str = "kernel-a03-plane-cut-volume/1;tolerance-policy-3";
+/// The second generation binds the authored operation records into the member's net signature
+/// (the P-Mass rule), so an element record written under the first label is a superseded value.
+pub const CUT_VOLUME_ALGORITHM: &str =
+    "kernel-a03-plane-cut-volume/2;ops-signed;tolerance-policy-3";
 
 /// Algorithm label of a bent plate's volume record (A10): the sealed G13 loft of the derived
 /// cross-section, whose analytic value is the unfolded outline area times the thickness.
@@ -211,6 +215,22 @@ impl AuthoredPlate {
     pub fn hole_polygons_in_replay_order(&self) -> Vec<Vec<[f64; 2]>> {
         let mut holes = self.holes_mm.clone();
         holes.extend(self.hole_records.iter().map(|r| r.polygon_mm.clone()));
+        holes
+    }
+
+    /// The replay-order through cuts with their prism axes: `(0, 0, 1)` for the vertical
+    /// kinds and the record's own axis for a part cut (A13, epic #556 slice 2).
+    pub fn hole_prisms_in_replay_order(&self) -> Vec<(Vec<[f64; 2]>, [f64; 3])> {
+        let mut holes = self
+            .holes_mm
+            .iter()
+            .map(|polygon| (polygon.clone(), [0.0, 0.0, 1.0]))
+            .collect::<Vec<_>>();
+        holes.extend(
+            self.hole_records
+                .iter()
+                .map(|r| (r.polygon_mm.clone(), r.axis_direction_mm)),
+        );
         holes
     }
 }
@@ -662,7 +682,7 @@ pub fn evaluate_plate(authored: &AuthoredPlate) -> Result<PlateBody, CommandErro
             let base = shifted
                 .as_ref()
                 .map_or_else(|| SolidMesh::from_box(&result), |(_, mesh)| mesh.clone());
-            let holes = authored.hole_polygons_in_replay_order();
+            let holes = authored.hole_prisms_in_replay_order();
             let solid = apply_holes_and_cut(
                 || match &shifted {
                     Some((body, _)) => Ok(body.clone()),
@@ -861,7 +881,7 @@ fn evaluate_contour(authored: &AuthoredPlate) -> Result<PlateBody, CommandError>
             )
         })?,
     };
-    let holes = authored.hole_polygons_in_replay_order();
+    let holes = authored.hole_prisms_in_replay_order();
     let solid = apply_holes_and_cut(
         || match &shifted {
             Some((body, _)) => Ok(body.clone()),
@@ -978,23 +998,37 @@ fn apply_holes_and_cut(
     base: SolidMesh,
     thickness_mm: f64,
     offset_mm: f64,
-    holes: &[Vec<[f64; 2]>],
+    holes: &[(Vec<[f64; 2]>, [f64; 3])],
     cuts: &[CutRecord],
 ) -> Result<SolidMesh, CommandError> {
     let mut body = body().map_err(|f| map_operation(&f))?;
     let mut last = None;
-    for (ordinal, hole) in holes.iter().enumerate() {
+    for (ordinal, (hole, axis)) in holes.iter().enumerate() {
         let cavity = Cavity::polygon(hole.iter().map(|[x, y]| Point2::new(*x, *y)).collect());
         let ordinal = u16::try_from(ordinal).map_err(|_| {
             CommandError::new(ErrorCode::LimitExceeded, "holes_mm", "too many holes")
         })?;
-        let cutter = HoleCutter::new(
-            cavity,
-            offset_mm - CUTTER_OVERSHOOT_MM,
-            offset_mm + thickness_mm + CUTTER_OVERSHOOT_MM,
-            ordinal,
-        );
-        let applied = through_hole(&body, &cutter).map_err(|f| map_operation(&f))?;
+        // A vertical axis is the certified Z-prism path byte for bit; an oblique one (a
+        // part cut leaning against the plate) sweeps the same cavity along its own axis.
+        let applied = if axis[0] == 0.0 && axis[1] == 0.0 && axis[2] == 1.0 {
+            let cutter = HoleCutter::new(
+                cavity,
+                offset_mm - CUTTER_OVERSHOOT_MM,
+                offset_mm + thickness_mm + CUTTER_OVERSHOOT_MM,
+                ordinal,
+            );
+            through_hole(&body, &cutter).map_err(|f| map_operation(&f))?
+        } else {
+            let dz = axis[2];
+            let cutter = HoleCutter::oblique(
+                cavity,
+                *axis,
+                (offset_mm - CUTTER_OVERSHOOT_MM) / dz,
+                (offset_mm + thickness_mm + CUTTER_OVERSHOOT_MM) / dz,
+                ordinal,
+            );
+            oblique_through_hole(&body, &cutter).map_err(|f| map_operation(&f))?
+        };
         body = applied.body().clone();
         last = Some(applied);
     }
@@ -1179,6 +1213,7 @@ fn add_hole_at(
         ordinal,
         polygon_mm: command.polygon()?,
         kind: crate::model::command::HoleKind::Hole,
+        axis_direction_mm: [0.0, 0.0, 1.0],
         owner: None,
     });
     let body = evaluate_plate(&next).map_err(|error| {
@@ -2325,6 +2360,7 @@ mod tests {
                 [100.0, 200.0],
             ],
             kind: crate::model::command::HoleKind::PolygonCut,
+            axis_direction_mm: [0.0, 0.0, 1.0],
             owner: None,
         });
         let edit = crate::model::command::UpdateHole {
@@ -2371,6 +2407,7 @@ mod tests {
                 [100.0, 200.0],
             ],
             kind: crate::model::command::HoleKind::Hole,
+            axis_direction_mm: [0.0, 0.0, 1.0],
             owner: Some(group),
         });
         let edit = crate::model::command::UpdateHole {

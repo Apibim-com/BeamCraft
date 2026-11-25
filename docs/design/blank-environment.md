@@ -17,7 +17,9 @@ saved setting.
   prefers it when no environment is saved. These profiles first shipped as a separate `starter`
   environment next to an empty `blank`; the two were merged on 2026-11-01 so that the base
   environment is usable on its own. Regional environments ship beside it since 2026-11-14:
-  `environments/europe/` holds the real EN 10365:2022 IPE, HEA and HEB nominal dimensions, the
+  `environments/europe/` holds the real EN 10365:2017 IPE, HEA and HEB nominal dimensions
+  (HEA and HEB running to 1000 since the axisrow/BeamCraft#790 extension of 2026-11-24) with the HL, HLZ, HD and
+  HP extra-wide flange series beside them, the
   parallel-flange UPE channel series and, since 2026-11-15, a second profile library with the
   EN 10219-2:2006 cold-formed hollow sections (SHS, RHS and CHS common sizes, validated against
   the hollow closed-form area) and, since 2026-11-15, the DIN hex-bolt fastener set completed
@@ -58,14 +60,62 @@ saved setting.
   fastener set (M12/16/20/24, the environment's fastener library, BC-ENV-002) and, since
   2026-11-16, a material library with the complete published grade set of GB/T 1591-2018
   (fifty-three designations across the as-rolled, normalizing and thermomechanical delivery
-  families; see `ATTRIBUTION.md`), `environments/usa/` (2026-11-15) holds, so far, only a material
-  library with the ASTM grades A36, A992 and the complete A572 Grade 42–65 set — the USA
-  profile pack waits on the axisrow/BeamCraft#649 provenance audit, so the environment lists no profile or
-  fastener libraries and the grades are its whole content — and `environments/canada/`
-  (2026-11-15) is grades-only the same way: the complete weldable category of
-  CSA G40.20-13/G40.21-13 (260W, 300W, 350W, 380W, 400W, 480W, 550W), and `environments/australia/`
+  families; see `ATTRIBUTION.md`), `environments/usa/` (2026-11-15) holds a material
+  library with the ASTM grades A36, A992 and the complete A572 Grade 42–65 set and, since
+  2026-11-23, a profile library with the W and HP shapes of ASTM A6/A6M-05a (285 rows of the
+  standard's own SI column, the root radius from the Nucor-Yamato catalog that permits its
+  use; the declared-area warning is expected on 150 of them; see `usa-astm-a6-profiles.md`)
+  and, since 2026-11-24, a fastener library with the RCSC 2025 structural bolt set (the
+  F3125 A325 and A490 heavy hex bolts, 1/2 to 1-1/2 in, each row declaring the standard
+  hole of Table 3.1; see `usa-rcsc-fasteners.md`) — and `environments/canada/`
+  (2026-11-15) started grades-only the same way, with the complete weldable category of
+  CSA G40.20-13/G40.21-13 (260W, 300W, 350W, 380W, 400W, 480W, 550W), and since 2026-11-24
+  carries a profile library too: the W and HP shapes of ASTM A6/A6M-05a under the metric
+  designations the standard prints, with the EDI inch designations shipped as alias entries
+  (569 entries; see `canada-astm-a6-profiles.md`). `environments/south-america/`
+  (2026-11-23, axisrow/BeamCraft#711) started grades-only and is national: the complete grade set of NCh203.Of2006,
+  the official Chilean structural steel standard, in the standard's own designations — the
+  general-construction class ES (A240ES, A270ES, A345ES, M345ES, Y345ES) and the dynamic-load class
+  ESP (A250ESP, A345ESP). Its status is public:
+  [Decreto 231 of 2006 of the Ministry of Public Works declares NCh203.Of2006 an official norm of
+  the Republic](https://www.bcn.cl/leychile/navegar?idNorma=249463) and annuls NCh203.Of77 and
+  NCh1159.Of77. Since 2026-11-24 the environment carries, beside the material library, a profile
+  library with the complete W-shape series of ASTM A6/A6M-05a Annex A2 (274 rows, the USA pack's
+  re-entered SI-column facts, named by the standard's metric designations `W310x60`; the two rows
+  the standard names alike — W920 X 345 — keep their inch designations, the HP shapes stay
+  `NOT_FOUND` because no public Chilean source lists them, and no Chilean source lists the W
+  assortment either, so no availability subset is invented; see `south-america-a6-w-profiles.md`):
+  `create-project --environment south-america` lets
+  a new model select one (`--material A270ES`). The standard's text is published by INN; the rows
+  were read from a public technical manual that reproduces the standard's two classification
+  tables and cross-checked against Chilean producer tables, with M345ES and Y345ES resting on
+  that table alone (sources in `ATTRIBUTION.md`). Finally, `environments/australia/`
   carries, since 2026-11-16, a material library with the AS/NZS 3678-2016 base grades
-  (250, 300, 350, 400, 450 — the steel the AS/NZS 3679.2 welded sections are welded from).
+  (250, 300, 350, 400, 450 — the steel the AS/NZS 3679.2 welded sections are welded from),
+  and `environments/middle-east/` (2026-11-23, the curated mix of the owner decision of that
+  day) holds one profile library with the EN 10365:2017 IPE, HEA, HEB, HL, HLZ, HD and HP rows
+  of the `europe` pack, IPE sizes 100 to 600 and HEA/HEB sizes 100 to 1000 (one hundred
+  seventy-five rows carried over unchanged, the axisrow/BeamCraft#790 extension of 2026-11-24 included), and a
+  material library with
+  the ASTM grades A36, A992 and the complete A572 Grade 42–65 set of the `usa` pack, each
+  declared with the edition the regional producer prints (A36/A36M-19, A572/A572M-21,
+  A992/A992M-20); the HEM series and the channels stay `NOT_FOUND`, the
+  BS, American and Australian series are outside the mix, and the environment
+  lists no fastener library (see `ATTRIBUTION.md`). `environments/south-africa/` (2026-11-23,
+  axisrow/BeamCraft#714) holds a profile library with the EN 10365:2017 IPE series (IPE 100 to IPE 600, the
+  `europe` pack's IPE rows, declared against the live EN string because EN 10365 superseded
+  DIN 1025-5; cross-checked against the
+  [EMSTEEL Heavy Sections catalogue](https://emsteel.com/pdf/2025/05/heavy-section.pdf)) and a
+  material library with the structural grade sets of SANS 50025-2/-3/-4:2009, the national
+  adoptions of the EN 10025 2004 editions (twenty-seven designations: S235 to S450 in the JR,
+  J0, J2 and K2 qualities, S275 to S460 in N, NL, M and ML; editions per the
+  [SABS catalogue](https://store.sabs.co.za/sans-50025-2-2009-ed-1-00.html), grade sets read from
+  public text copies of [EN 10025-2:2004](https://www.corrugatedmetalculvert.com/pdf/BS_EN_10025-2-2004.pdf),
+  [EN 10025-3:2004](https://www.corrugatedmetalculvert.com/pdf/BS_EN_10025-3-2004.pdf) and
+  [EN 10025-4:2004](https://www.corrugatedmetalculvert.com/pdf/BS_EN_10025-4-2004.pdf), all
+  retrieved 2026-11-23; see `ATTRIBUTION.md`); the BS UB/UC series is an open owner question and
+  the environment lists no fastener library (owner decision of 2026-11-23 in
+  `docs/plan/decisions.md`).
 * `create-project --environment ID` looks the environment up (built-in, then the user's), reads
   and admits it, then copies it into the project folder (`environment/`) and publishes the two
   default materials. The project therefore carries its environment: closing and reopening it, or

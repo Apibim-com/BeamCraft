@@ -43,8 +43,8 @@ use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
 use session::Refusal;
 use session::pipeline::{
-    Base, RevisionSummary, control, digest_of, host_uuid, integrity, load_base, open_base,
-    summarize,
+    Base, RevisionSummary, control, digest_of, has_head, host_uuid, integrity, load_base,
+    open_base, summarize,
 };
 use std::collections::BTreeMap;
 use steel::engine::command::evaluate_plate;
@@ -293,7 +293,7 @@ fn apply_cut(
     if let Some(replayed) = replay_cut(store, request, fingerprint, remove)? {
         return Ok(replayed);
     }
-    if head.is_none() {
+    if !has_head(&head) {
         return Err(not_found());
     }
     let before: BTreeMap<String, ContentDigest> = base
@@ -309,7 +309,7 @@ fn apply_cut(
         expected,
         ..
     } = base;
-    let (plates, members, definitions, instances, history, hole_history) = {
+    let (plates, members, definitions, instances, history, hole_history, member_hole_history) = {
         let mut reader = Reader::default();
         let opened = reader.open(base_request.clone(), &control)?;
         let decoded = decode(&reader, &opened, &control)?;
@@ -332,8 +332,10 @@ fn apply_cut(
             decoded.instances,
             decoded.cut_history,
             decoded.hole_history,
+            decoded.member_hole_history,
         )
     };
+    let _ = &member_hole_history;
     let head_plate = plates.iter().find(|r| r.authored.id == command.target_id);
     let head_member = members.iter().find(|r| r.authored.id == command.target_id);
     let head_element = match (head_plate, head_member) {
@@ -612,7 +614,7 @@ pub fn a13_record(
 ) -> Result<A13Result, Refusal> {
     let control = control();
     let (head, base) = load_base(store, &request.project, &request.workspace)?;
-    if head.is_none() {
+    if !has_head(&head) {
         return Err(not_found());
     }
     let before: BTreeMap<String, ContentDigest> = base
@@ -628,7 +630,7 @@ pub fn a13_record(
         expected,
         ..
     } = base;
-    let (plates, members, definitions, instances, history, hole_history) = {
+    let (plates, members, definitions, instances, history, hole_history, member_hole_history) = {
         let mut reader = Reader::default();
         let opened = reader.open(base_request.clone(), &control)?;
         let decoded = decode(&reader, &opened, &control)?;
@@ -640,6 +642,7 @@ pub fn a13_record(
             decoded.instances,
             decoded.cut_history,
             decoded.hole_history,
+            decoded.member_hole_history,
         )
     };
     let find = |id: ElementId| -> Option<CutElement> {
@@ -688,13 +691,20 @@ pub fn a13_record(
                 .map(|c| c.operation_id)
                 .chain(r.authored.hole_records.iter().map(|c| c.operation_id))
         })
-        .chain(
-            members
+        .chain(members.iter().flat_map(|r| {
+            r.authored
+                .cuts
                 .iter()
-                .flat_map(|r| r.authored.cuts.iter().map(|c| c.operation_id)),
-        )
+                .map(|c| c.operation_id)
+                .chain(r.authored.hole_records.iter().map(|c| c.operation_id))
+        }))
         .chain(
             hole_history
+                .values()
+                .flat_map(|h| h.retired.iter().copied()),
+        )
+        .chain(
+            member_hole_history
                 .values()
                 .flat_map(|h| h.retired.iter().copied()),
         )
@@ -737,7 +747,14 @@ pub fn a13_record(
                 .cuts
                 .iter()
                 .find(|c| c.operation_id == operation)
-                .map(|c| c.ordinal),
+                .map(|c| c.ordinal)
+                .or_else(|| {
+                    r.authored
+                        .hole_records
+                        .iter()
+                        .find(|c| c.operation_id == operation)
+                        .and_then(|c| u16::try_from(c.ordinal).ok())
+                }),
             None => None,
         })
         .unwrap_or(0);
@@ -780,6 +797,14 @@ pub fn a13_record(
             .is_some_and(|r| r.operation_id == operation)
         {
             authored.cuts.pop();
+        } else if authored
+            .hole_records
+            .last()
+            .is_some_and(|r| r.operation_id == operation)
+        {
+            // The member polygon cut joins the member's record list; a retry of it rebuilds
+            // from the record before it, as the plate through-cut retry does.
+            authored.hole_records.pop();
         }
     };
     let probe_plate_of = |id: ElementId| -> Option<steel::engine::command::AuthoredPlate> {
@@ -866,7 +891,7 @@ pub fn a13_record(
                         &no_used,
                         probe_next,
                     ) {
-                        Ok(outcome) => AuthoredState::Plate(outcome.authored),
+                        Ok(outcome) => state_of_part(outcome.authored),
                         Err(_) => return None,
                     },
                 ),
@@ -879,7 +904,7 @@ pub fn a13_record(
                         &no_used,
                         probe_next,
                     ) {
-                        Ok(outcome) => AuthoredState::Plate(outcome.authored),
+                        Ok(outcome) => state_of_part(outcome.authored),
                         Err(_) => return None,
                     },
                 ),
@@ -1125,64 +1150,130 @@ pub fn a13_record(
             }
         }
         A13Command::Polygon(c) => {
+            // The record counter follows the target kind: the plate through-cut counter for a
+            // plate, the member-hole counter for a member (the A04.2 counter is the member's
+            // only record counter, and the polygon cut joins it).
+            let next_ordinal = if member_of(c.target_id).is_some() {
+                member_hole_history
+                    .get(&c.target_id)
+                    .map_or(0, |h| h.next_ordinal)
+            } else {
+                hole_history.get(&c.target_id).map_or(0, |h| h.next_ordinal)
+            };
             let outcome = steel::engine::fabricate::cut_by_polygon(
                 c,
                 plate_of(c.target_id).as_ref(),
                 member_of(c.target_id).as_ref(),
                 &used_contains,
-                hole_history.get(&c.target_id).map_or(0, |h| h.next_ordinal),
+                next_ordinal,
             )?;
-            let authored = outcome.authored.clone();
-            let element = evaluate_state(AuthoredState::Plate(authored.clone()))?;
             footprint = outcome
                 .footprint
                 .clone()
                 .union(instances.dependencies(c.target_id)?)?;
-            ordinal = None;
-            changes.push(steel_layer::hole_records(
-                authored.id.to_string(),
-                authored.hole_records.clone(),
-            ));
-            changes.push(mesh_change_of(&element)?);
-            let group = instances.group(c.target_id)?;
-            let others: Vec<CutElement> = group
-                .iter()
-                .filter(|id| **id != c.target_id)
-                .map(|id| shared_with_holes(&plates, *id, &element))
-                .collect::<Result<_, _>>()?;
-            elements.push(element);
-            for (id, other) in group.iter().filter(|id| **id != c.target_id).zip(others) {
-                footprint = footprint
-                    .union(Footprint::for_update(*id, false, false, true, false, None)?)?;
-                changes.push(mesh_change_of(&other)?);
-                elements.push(other);
+            match outcome.authored {
+                steel::engine::fabricate::AuthoredPart::Plate(authored) => {
+                    let element = evaluate_state(AuthoredState::Plate(authored.clone()))?;
+                    ordinal = None;
+                    changes.push(steel_layer::hole_records(
+                        authored.id.to_string(),
+                        authored.hole_records.clone(),
+                    ));
+                    changes.push(mesh_change_of(&element)?);
+                    let group = instances.group(c.target_id)?;
+                    let others: Vec<CutElement> = group
+                        .iter()
+                        .filter(|id| **id != c.target_id)
+                        .map(|id| shared_with_holes(&plates, *id, &element))
+                        .collect::<Result<_, _>>()?;
+                    elements.push(element);
+                    for (id, other) in group.iter().filter(|id| **id != c.target_id).zip(others) {
+                        footprint = footprint
+                            .union(Footprint::for_update(*id, false, false, true, false, None)?)?;
+                        changes.push(mesh_change_of(&other)?);
+                        elements.push(other);
+                    }
+                }
+                steel::engine::fabricate::AuthoredPart::Member(authored) => {
+                    // The A13 member polygon cut is an owned member record (epic #556 slice
+                    // 1): the member counter, the member record change and the instance group
+                    // replay, exactly as the A04.2 hole adapter does.
+                    let element = evaluate_state(AuthoredState::Member(authored.clone()))?;
+                    ordinal = None;
+                    changes.push(steel_layer::member_holes(
+                        authored.id.to_string(),
+                        authored.hole_records.clone(),
+                    ));
+                    changes.push(mesh_change_of(&element)?);
+                    let group = instances.group(c.target_id)?;
+                    let others: Vec<CutElement> = group
+                        .iter()
+                        .filter(|id| **id != c.target_id)
+                        .map(|id| shared_with_member_holes(&members, *id, &element))
+                        .collect::<Result<_, _>>()?;
+                    elements.push(element);
+                    for (id, other) in group.iter().filter(|id| **id != c.target_id).zip(others) {
+                        footprint = footprint
+                            .union(Footprint::for_update(*id, false, false, true, false, None)?)?;
+                        changes.push(mesh_change_of(&other)?);
+                        elements.push(other);
+                    }
+                }
             }
         }
         A13Command::Part(c) => {
+            // The record counter follows the target kind, exactly as the polygon arm does.
+            let next_ordinal = if member_of(c.target_id).is_some() {
+                member_hole_history
+                    .get(&c.target_id)
+                    .map_or(0, |h| h.next_ordinal)
+            } else {
+                hole_history.get(&c.target_id).map_or(0, |h| h.next_ordinal)
+            };
             let outcome = steel::engine::fabricate::cut_by_part(
                 c,
                 plate_of(c.target_id).as_ref(),
                 member_of(c.target_id).as_ref(),
                 plate_of(c.tool_id).as_ref(),
                 &used_contains,
-                hole_history.get(&c.target_id).map_or(0, |h| h.next_ordinal),
+                next_ordinal,
             )?;
-            let authored = outcome.authored.clone();
-            let element = evaluate_state(AuthoredState::Plate(authored.clone()))?;
+            let element = match &outcome.authored {
+                steel::engine::fabricate::AuthoredPart::Plate(authored) => {
+                    let element = evaluate_state(AuthoredState::Plate(authored.clone()))?;
+                    changes.push(steel_layer::hole_records(
+                        authored.id.to_string(),
+                        authored.hole_records.clone(),
+                    ));
+                    element
+                }
+                steel::engine::fabricate::AuthoredPart::Member(authored) => {
+                    let element = evaluate_state(AuthoredState::Member(authored.clone()))?;
+                    changes.push(steel_layer::member_holes(
+                        authored.id.to_string(),
+                        authored.hole_records.clone(),
+                    ));
+                    element
+                }
+            };
             footprint = outcome
                 .footprint
                 .clone()
                 .union(instances.dependencies(c.target_id)?)?;
-            changes.push(steel_layer::hole_records(
-                authored.id.to_string(),
-                authored.hole_records.clone(),
-            ));
+            ordinal = None;
             changes.push(mesh_change_of(&element)?);
             let group = instances.group(c.target_id)?;
+            let member_target = member_of(c.target_id).is_some();
             let others: Vec<CutElement> = group
                 .iter()
                 .filter(|id| **id != c.target_id)
-                .map(|id| shared_with_holes(&plates, *id, &element))
+                .map(|id| {
+                    if member_target {
+                        shared_with_member_holes(&members, *id, &element)
+                    } else {
+                        shared_with_holes(&plates, *id, &element)
+                    }
+                })
                 .collect::<Result<_, _>>()?;
             elements.push(element);
             for (id, other) in group.iter().filter(|id| **id != c.target_id).zip(others) {
@@ -1406,6 +1497,30 @@ fn shared_with_holes(
         .clone();
     authored.hole_records = r.authored.hole_records.clone();
     Ok(CutElement::Plate(Box::new(PlateRecord {
+        authored,
+        body: r.body.clone(),
+        quantities: r.quantities,
+    })))
+}
+
+/// The instance-group sibling of a member polygon cut: the canonical member's record list, the
+/// sibling's own pose and profile (the A04.2 member path mirrored).
+fn shared_with_member_holes(
+    members: &[steel::engine::committed::MemberRecord],
+    id: ElementId,
+    canonical: &CutElement,
+) -> Result<CutElement, Refusal> {
+    let CutElement::Member(r) = canonical else {
+        return Err(integrity("a member polygon cut canonical is not a member"));
+    };
+    let mut authored = members
+        .iter()
+        .find(|m| m.authored.id == id)
+        .ok_or_else(|| integrity("shared instance member is not evaluated"))?
+        .authored
+        .clone();
+    authored.hole_records = r.authored.hole_records.clone();
+    Ok(CutElement::Member(Box::new(MemberRecord {
         authored,
         body: r.body.clone(),
         quantities: r.quantities,

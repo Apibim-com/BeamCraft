@@ -18,8 +18,8 @@ use beamcraft_commands::definition::{DefineRequest, DefinitionRecord, define};
 use beamcraft_commands::grid::{GridContext, create_grid};
 use beamcraft_commands::level::{LevelContext, create_level};
 use beamcraft_commands::project::{
-    ProjectContext, ProjectLayout, create_project, create_project_in_place, create_project_scoped,
-    create_project_unique, install_environment,
+    ProjectContext, ProjectEnvironmentChoice, ProjectLayout, create_project,
+    create_project_in_place, create_project_scoped, create_project_unique, install_environment,
 };
 use beamcraft_commands::template::TemplateEntry;
 use beamcraft_host::ids::IdSource;
@@ -32,7 +32,7 @@ use beamcraft_model::grid::CreateGrid;
 use beamcraft_model::id::ElementId;
 use beamcraft_model::id::{OpId, ProjectId, RevisionId, Uuid7, WorkspaceId};
 use session::Refusal;
-use session::environment::{environment_folders, find_environment};
+use session::environment::{environment_folders, find_environment, read_environment_file};
 use session::pipeline::summarize;
 use session::project::{ProjectInfo, ProjectState, list_projects};
 use session::settings::{Settings, SettingsError, default_dir};
@@ -165,13 +165,46 @@ fn run(args: &[OsString]) -> Run<Json> {
             };
             // The environment the project is seeded from: --environment names one and overrides
             // the settings; without it the active environment of the settings is the choice of
-            // the person, so it seeds the same way an explicit one does.
+            // the person, so it seeds the same way an explicit one does. The file is resolved
+            // and read before the first revision, so the identity it declares (id and version)
+            // is recorded in the root layer that revision commits (#628); a choice that
+            // resolves to nothing or does not read refuses before any folder is made.
             let chosen = match given("--environment") {
                 Some(id) => Some((id.to_owned(), "option")),
                 None if !sectioned => settings
                     .as_ref()
                     .and_then(|s| s.environment.clone())
                     .map(|id| (id, "settings")),
+                None => None,
+            };
+            let chosen_file = match &chosen {
+                Some((id, source)) if !sectioned => {
+                    let (folders, _) = environment_folders(given("--config-dir").map(Path::new));
+                    match find_environment(&folders, id) {
+                        Some(file) => Some((file, *source)),
+                        None => {
+                            let mut error = Refusal {
+                                rule_id: None,
+                                code: ErrorCode::NotFound,
+                                message: "the environment is not among the built-in or user environments",
+                            };
+                            if *source == "settings" {
+                                error.message = "the active environment of the settings is not among the built-in or user environments";
+                            }
+                            return Err(error);
+                        }
+                    }
+                }
+                _ => None,
+            };
+            let choice = match &chosen_file {
+                Some((file, _)) => {
+                    let info = read_environment_file(file)?;
+                    Some(ProjectEnvironmentChoice {
+                        id: info.id,
+                        version: info.version,
+                    })
+                }
                 None => None,
             };
             let context = ProjectContext {
@@ -228,18 +261,22 @@ fn run(args: &[OsString]) -> Run<Json> {
                 let Some((id, source)) = &chosen else {
                     return Ok(None);
                 };
-                let seeded = seed_project(path, id, given("--config-dir"), &context)
-                    .map_err(|mut error| {
-                        // Name the settings as the source when the selected environment is missing.
-                        // Errors inside an environment keep their own diagnostic.
-                        if *source == "settings"
-                            && error.message
-                                == "the environment is not among the built-in or user environments"
-                        {
-                            error.message = "the active environment of the settings is not among the built-in or user environments";
-                        }
-                        error
-                    })?;
+                let Some((file, _)) = &chosen_file else {
+                    return Ok(None);
+                };
+                let seeded = seed_project(path, id, file, &context).map_err(|mut error| {
+                    // The person did not type a settings-chosen environment id, so the not-found
+                    // refusal of the search itself names where the choice came from. Deeper
+                    // not-found refusals (a listed library file that is gone, say) keep their own
+                    // text: only the exact search refusal is rewritten.
+                    if *source == "settings"
+                        && error.message
+                            == "the environment is not among the built-in or user environments"
+                    {
+                        error.message = "the active environment of the settings is not among the built-in or user environments";
+                    }
+                    error
+                })?;
                 Ok(Some((seeded, *source)))
             };
             let (info, seeded) = if let Some((parent, name)) = named_folder {
@@ -247,8 +284,10 @@ fn run(args: &[OsString]) -> Run<Json> {
                     Some(layout) => {
                         create_project_scoped(parent, name, unique, layout, &context, &mut NoFault)
                     }
-                    None if unique => create_project_unique(parent, name, &context, &mut NoFault),
-                    None => create_project(parent, name, &context, &mut NoFault),
+                    None if unique => {
+                        create_project_unique(parent, name, choice.as_ref(), &context, &mut NoFault)
+                    }
+                    None => create_project(parent, name, choice.as_ref(), &context, &mut NoFault),
                 }?;
                 match prepare(&info.path) {
                     Ok(seeded) => (info, seeded),
@@ -261,7 +300,14 @@ fn run(args: &[OsString]) -> Run<Json> {
             } else {
                 let current = std::env::current_dir()
                     .map_err(|_| invalid("the current directory is not usable"))?;
-                create_project_in_place(&current, layout.as_ref(), &context, &mut NoFault, prepare)?
+                create_project_in_place(
+                    &current,
+                    layout.as_ref(),
+                    &context,
+                    &mut NoFault,
+                    choice.as_ref(),
+                    prepare,
+                )?
             };
             let recorded = dir.is_ok_and(|dir| remember(&dir, &info.path).is_ok());
             let mut reply = Json::object([
@@ -401,28 +447,15 @@ struct Seeded {
     levels: u64,
 }
 
-/// Gives the new project at `dir` its environment and its default materials: the environment `id`
-/// is copied into the project folder (`environment/`), so later commands resolve profile names
-/// against it without any option, and the two default materials are published, one revision each.
-/// Profiles are not copied: a profile is defined in the model when it is first used. An environment
-/// that is not found or does not read is refused.
-fn seed_project(
-    dir: &Path,
-    id: &str,
-    config_dir: Option<&str>,
-    context: &ProjectContext,
-) -> Run<Seeded> {
-    let (folders, _) = environment_folders(config_dir.map(Path::new));
-    let file = find_environment(&folders, id).ok_or(Refusal {
-        rule_id: None,
-        code: ErrorCode::NotFound,
-        message: "the environment is not among the built-in or user environments",
-    })?;
-    let file = file
-        .to_str()
-        .ok_or(invalid("the environment path is not UTF-8"))?;
+/// Gives the new project at `dir` its environment and its default materials: the environment
+/// `file` (already resolved and read for the recorded identity) is copied into the project
+/// folder (`environment/`), so later commands resolve profile names against it without any
+/// option, and the two default materials are published, one revision each. Profiles are not
+/// copied: a profile is defined in the model when it is first used. An environment that does
+/// not read or a listed library that is gone is refused.
+fn seed_project(dir: &Path, id: &str, file: &Path, context: &ProjectContext) -> Run<Seeded> {
     // Read and admitted first; a refused environment copies nothing.
-    install_environment(dir, Path::new(file))?;
+    install_environment(dir, file)?;
     let blobs = BlobStore::new(dir).map_err(|e| Refusal {
         rule_id: None,
         code: e.code(),
@@ -464,7 +497,7 @@ fn seed_project(
     }
     // The starter layout the environment declares (#840): its grids and levels, each through the
     // same engine command as create-grid and create-level, one revision apiece.
-    let template = beamcraft_commands::template::load_environment(Path::new(file))?;
+    let template = beamcraft_commands::template::load_environment(file)?;
     let actor = HostUuid7::parse(&context.actor.to_string()).map_err(Refusal::from)?;
     for entry in template.entries {
         match entry {

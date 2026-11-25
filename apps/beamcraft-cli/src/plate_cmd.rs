@@ -13,14 +13,16 @@ use beamcraft_commands::cut::{
     A13Command, A13Request, CutElement, CutRequest, a13_record, cut_by_plane_record,
 };
 use beamcraft_commands::definition::{
-    DefineRequest, Defined, DefinitionRecord, NameResolution, define, definition_path,
-    head_definitions, resolve_name,
+    DefineRequest, Defined, DefinitionRecord, define, definition_path, head_definitions,
 };
 use beamcraft_commands::delete::{DeleteRequest, DeletedKind, delete_element};
 use beamcraft_commands::edit::{UpdateRequest, UpdatedPart, update_element};
 use beamcraft_commands::history::{Direction, Step, project_step, step, timeline};
 use beamcraft_commands::hole::{AddHoleRequest, add_hole_command};
-use beamcraft_commands::library::{Lookup, open_lookup, project_library_chain};
+use beamcraft_commands::library::{
+    EnvironmentCopyLost, LAYER_LIBRARY, LAYER_MODEL, Lookup, Namespace, ProjectChain, Resolution,
+    Resolved, Shadowed, Source, load_fastener, open_lookup, project_library_chain, resolve,
+};
 use beamcraft_commands::member::{
     CreateCurvedBeamRequest, CreateMemberRequest, CreatePolybeamRequest, create_curved_beam,
     create_member, create_polybeam,
@@ -346,7 +348,12 @@ a13_options!(
     "--axis",
     "--keep"
 );
-a13_options!(A13_POLYGON_OPTIONS_ALL, "--polygon");
+a13_options!(
+    A13_POLYGON_OPTIONS_ALL,
+    "--polygon",
+    "--axis-point",
+    "--axis-direction"
+);
 a13_options!(A13_PART_OPTIONS_ALL, "--tool");
 a13_options!(A13_FIT_OPTIONS_ALL, "--tool");
 a13_options!(
@@ -710,7 +717,7 @@ pub(crate) fn check_project_option(
     }
 }
 
-fn digest_option(text: &str) -> Run<ContentDigest> {
+pub(crate) fn digest_option(text: &str) -> Run<ContentDigest> {
     text.parse::<ContentDigest>()
         .map_err(|_| invalid("a digest is not 64 lower-case hexadecimal characters"))
 }
@@ -722,7 +729,7 @@ const MAX_LISTED_CANDIDATES: usize = 16;
 
 /// The diagnostics of an ambiguous name: at most [`MAX_LISTED_CANDIDATES`] candidates and, when
 /// there are more, a final object with the total and how to list the rest.
-fn ambiguity_diagnostics(found: &[(ContentDigest, DefinitionRecord)]) -> Vec<Json> {
+pub(crate) fn ambiguity_diagnostics(found: &[(ContentDigest, DefinitionRecord)]) -> Vec<Json> {
     let mut diagnostics: Vec<Json> = found
         .iter()
         .take(MAX_LISTED_CANDIDATES)
@@ -744,22 +751,26 @@ fn ambiguity_diagnostics(found: &[(ContentDigest, DefinitionRecord)]) -> Vec<Jso
 }
 
 /// A definition chosen by its full digest (`keys.0`) or by a readable name (`keys.1`), never
-/// both. A name is resolved against the definitions of the head revision by display name or
-/// catalogue label; no match is `NOT_FOUND` and a name that matches several definitions is
-/// `INVALID_ARGUMENT` with the first candidates in `candidates`, never a guess. For an operation
-/// the ledger already accepted, a name that still describes the definition the element was bound
-/// to resolves to that definition (`replay`), so a retry is a replay even after another
-/// definition with the same name was published; any other name resolves normally and the
-/// engine's content fingerprint rejects the changed request.
+/// both. A name is resolved by [`resolve`] in its `namespace`, the model first and then the
+/// project's chain; a definition a chain answers is defined in the model when it is first used.
+/// No match is `NOT_FOUND`, and a name the model matches to several definitions is
+/// `INVALID_ARGUMENT` with the first candidates in `candidates`, never a guess. Every name that
+/// went through the layers is noted in `lookups` for the reply. For an operation the ledger
+/// already accepted, a name that still describes the definition the element was bound to
+/// resolves to that definition (`replay`), so a retry is a replay even after another definition
+/// with the same name was published; any other name resolves normally and the engine's content
+/// fingerprint rejects the changed request.
 fn selected(
     store: &RevisionStore,
     options: &BTreeMap<&str, &str>,
     keys: (&'static str, &'static str),
-    profiles: bool,
+    namespace: Namespace,
     replay: Option<&AcceptedBinding>,
     candidates: &mut Vec<Json>,
+    lookups: &mut Lookups,
 ) -> Run<Option<ContentDigest>> {
     let (digest_key, name_key) = keys;
+    let profiles = namespace == Namespace::Profile;
     match (options.get(digest_key), options.get(name_key)) {
         (Some(_), Some(_)) => Err(invalid("give the digest or the name, not both")),
         (Some(text), None) => digest_option(text).map(Some),
@@ -773,38 +784,33 @@ fn selected(
                 };
                 if let Some(digest) = original
                     && binding.definitions.get(&digest).is_some_and(|record| {
-                        record.is_profile() == profiles && record.selectable_names().contains(name)
+                        record.namespace() == namespace && record.selectable_names().contains(name)
                     })
                 {
                     return Ok(Some(digest));
                 }
             }
             let definitions = head_definitions(store)?;
-            match resolve_name(&definitions, name, profiles) {
-                NameResolution::Found(digest) => Ok(Some(digest)),
-                NameResolution::NotFound => {
-                    // A name the model does not have yet is looked up in the environment the
-                    // project was created with: a profile designation or a material grade is
-                    // defined in the model when it is first used.
-                    let from_environment = if profiles {
-                        define_from_environment(store, options, name)?
-                    } else {
-                        define_material_from_environment(store, options, name)?
-                    };
-                    if let Some(digest) = from_environment {
-                        return Ok(Some(digest));
-                    }
-                    Err(Refusal {
-                        rule_id: None,
-                        code: ErrorCode::NotFound,
-                        message: if profiles {
-                            "no profile definition in the head has this name"
-                        } else {
-                            "no material definition in the head has this name"
-                        },
-                    })
+            match resolve(
+                Some(&definitions),
+                || project_chain(options),
+                namespace,
+                name,
+            )? {
+                Resolution::Found(found) => {
+                    lookups.note(name, &found);
+                    pin(store, options, &found).map(Some)
                 }
-                NameResolution::Ambiguous(found) => {
+                Resolution::NotFound => Err(Refusal {
+                    rule_id: None,
+                    code: ErrorCode::NotFound,
+                    message: if profiles {
+                        "no profile definition in the head or in any library of the lookup has this name"
+                    } else {
+                        "no material definition in the head or in any library of the lookup has this name"
+                    },
+                }),
+                Resolution::Ambiguous(found) => {
                     candidates.extend(ambiguity_diagnostics(&found));
                     Err(invalid(
                         "the name matches more than one definition; use a unique name or the digest",
@@ -1000,7 +1006,7 @@ fn define_command(
     };
     let definition = if command == "define-material" {
         if given("--library").is_some() || given("--environment").is_some() {
-            // axisrow/BeamCraft#636: the definition takes every value from one material library entry (a single
+            // #636: the definition takes every value from one material library entry (a single
             // --library file, or the material libraries of an --environment), so it never needs
             // the file again. Nothing combines with the entry's own values.
             if ["--density", "--grade", "--standard"]
@@ -1194,6 +1200,7 @@ fn create(
         ));
     }
     let name = given("--name").unwrap_or("Plate").to_owned();
+    let mut lookups = Lookups::default();
     let command = CreatePlate {
         class: given("--class")
             .map(|v| {
@@ -1231,9 +1238,10 @@ fn create(
             store,
             options,
             ("--material-digest", "--material"),
-            false,
+            Namespace::Material,
             replay.as_ref(),
             candidates,
+            &mut lookups,
         )?,
         holes_mm: holes(options)?,
     };
@@ -1249,9 +1257,9 @@ fn create(
         },
         &mut NoFault,
     )?;
-    match created {
-        CreatedDraft::Evaluated(created) => created_json(&created, op_id),
-        CreatedDraft::Unsupported(created) => Ok(Json::object([
+    let reply = match created {
+        CreatedDraft::Evaluated(created) => created_json(&created, op_id)?,
+        CreatedDraft::Unsupported(created) => Json::object([
             (
                 "outcome",
                 Json::text(if created.replayed {
@@ -1267,8 +1275,9 @@ fn create(
             // Kept, but without a body (D-7, K1): say so at create time instead of leaving it
             // to be discovered from a view, total or export later (issue 545).
             ("warning", Json::text(kept_without_geometry(&created.plate))),
-        ])),
-    }
+        ]),
+    };
+    Ok(with_lookups(reply, &lookups))
 }
 
 /// The create-time notice of a plate saved without geometry.
@@ -1534,6 +1543,7 @@ fn update_command(
             return Err(invalid("relative transforms are separate updates"));
         }
     }
+    let mut lookups = Lookups::default();
     let patch = ElementPatch {
         class: given("--class")
             .map(|v| {
@@ -1588,9 +1598,10 @@ fn update_command(
                 store,
                 options,
                 ("--profile-digest", "--profile"),
-                true,
+                Namespace::Profile,
                 None,
                 candidates,
+                &mut lookups,
             )?,
             // A straight member's roll and section position, with the same flags a new
             // member takes; the section flags replace the position whole (unnamed ones are the
@@ -1622,40 +1633,43 @@ fn update_command(
         // The element stays without evaluated geometry; its authored inputs are the result.
         UpdatedPart::AuthoredOnly(record) => unsupported_plate_json(record)?,
     };
-    Ok(Json::object([
-        (
-            "outcome",
-            Json::text(if updated.replayed {
-                "element_update_replayed"
-            } else {
-                "element_updated"
-            }),
-        ),
-        ("op_id", Json::text(op_id.to_string())),
-        (
-            "effect",
-            Json::object([
-                ("name", Json::Bool(updated.effect.name)),
-                ("class", Json::Bool(updated.effect.class)),
-                ("material", Json::Bool(updated.effect.material)),
-                ("shape", Json::Bool(updated.effect.shape)),
-                ("placement", Json::Bool(updated.effect.placement)),
-                ("orientation", Json::Bool(updated.effect.orientation)),
-                ("level", Json::Bool(updated.effect.level)),
-                ("rotate", Json::Bool(updated.effect.rotate)),
-                ("mirror", Json::Bool(updated.effect.mirror)),
-                ("move", Json::Bool(updated.effect.move_mm)),
-                ("profile", Json::Bool(updated.effect.profile)),
-            ]),
-        ),
-        (
-            "changed_layers",
-            Json::Array(updated.changed_layers.iter().map(Json::text).collect()),
-        ),
-        ("element", element),
-        ("revision", revision_json(&updated.revision)),
-        ("footprint", footprint_json(updated.footprint.as_ref())),
-    ]))
+    Ok(with_lookups(
+        Json::object([
+            (
+                "outcome",
+                Json::text(if updated.replayed {
+                    "element_update_replayed"
+                } else {
+                    "element_updated"
+                }),
+            ),
+            ("op_id", Json::text(op_id.to_string())),
+            (
+                "effect",
+                Json::object([
+                    ("name", Json::Bool(updated.effect.name)),
+                    ("class", Json::Bool(updated.effect.class)),
+                    ("material", Json::Bool(updated.effect.material)),
+                    ("shape", Json::Bool(updated.effect.shape)),
+                    ("placement", Json::Bool(updated.effect.placement)),
+                    ("orientation", Json::Bool(updated.effect.orientation)),
+                    ("level", Json::Bool(updated.effect.level)),
+                    ("rotate", Json::Bool(updated.effect.rotate)),
+                    ("mirror", Json::Bool(updated.effect.mirror)),
+                    ("move", Json::Bool(updated.effect.move_mm)),
+                    ("profile", Json::Bool(updated.effect.profile)),
+                ]),
+            ),
+            (
+                "changed_layers",
+                Json::Array(updated.changed_layers.iter().map(Json::text).collect()),
+            ),
+            ("element", element),
+            ("revision", revision_json(&updated.revision)),
+            ("footprint", footprint_json(updated.footprint.as_ref())),
+        ]),
+        &lookups,
+    ))
 }
 
 /// One contour edit of a plate (A12.3, `move-plate-vertex`, `move-plate-edge`,
@@ -2069,13 +2083,37 @@ fn a13_command(store: &RevisionStore, name: &str, options: &BTreeMap<&str, &str>
             axis: translation(given("--axis").ok_or_else(|| invalid("--axis is required"))?)?,
             keep: keep_side(options)?,
         }),
-        "cut-by-polygon" => A13Command::Polygon(CutByPolygon {
-            target_id: element("--id")?,
-            operation_id,
-            polygon_mm: polygon_pairs(
-                given("--polygon").ok_or_else(|| invalid("--polygon is required"))?,
-            )?,
-        }),
+        "cut-by-polygon" => {
+            // The member form (epic #556 slice 1): `--axis-point "U,V,W"` and
+            // `--axis-direction "X,Y,Z"` name the member-hole frame the polygon lives in,
+            // through-cut only; the plate form takes neither.
+            let member_frame = match (given("--axis-point"), given("--axis-direction")) {
+                (None, None) => (None, None),
+                (Some(point), Some(direction)) => {
+                    let triple = |text: &str| -> Run<[f64; 3]> {
+                        match numbers_list(text, 3)?[..] {
+                            [a, b, c] => Ok([a, b, c]),
+                            _ => Err(invalid("a member cut has the wrong number of values")),
+                        }
+                    };
+                    (Some(triple(point)?), Some(triple(direction)?))
+                }
+                _ => {
+                    return Err(invalid(
+                        "--axis-point and --axis-direction are required together",
+                    ));
+                }
+            };
+            A13Command::Polygon(CutByPolygon {
+                target_id: element("--id")?,
+                operation_id,
+                polygon_mm: polygon_pairs(
+                    given("--polygon").ok_or_else(|| invalid("--polygon is required"))?,
+                )?,
+                axis_point_mm: member_frame.0,
+                axis_direction: member_frame.1,
+            })
+        }
         "cut-by-part" => A13Command::Part(CutByPart {
             target_id: element("--id")?,
             operation_id,
@@ -2825,6 +2863,7 @@ fn lofted_create(
     };
     let start = contour_points(given("--start").ok_or_else(|| invalid("--start is required"))?)?;
     let end = contour_points(given("--end").ok_or_else(|| invalid("--end is required"))?)?;
+    let mut lookups = Lookups::default();
     let command = CreateLoftedPlate {
         new_id,
         name: given("--name").unwrap_or("Lofted plate").to_owned(),
@@ -2846,9 +2885,10 @@ fn lofted_create(
             store,
             options,
             ("--material-digest", "--material"),
-            false,
+            Namespace::Material,
             None,
             candidates,
+            &mut lookups,
         )?,
     };
     let created = beamcraft_commands::loft::create_lofted(
@@ -2870,43 +2910,46 @@ fn lofted_create(
         ("mesh_digest", Json::text(created.mesh_digest.as_str())),
         ("triangles", Json::uint(created.triangles as u64)),
     ]);
-    Ok(Json::object([
-        (
-            "outcome",
-            Json::text(if created.replayed {
-                "lofted_plate_replayed"
-            } else {
-                "lofted_plate_created"
-            }),
-        ),
-        ("op_id", Json::text(op_id.to_string())),
-        (
-            "plate",
-            Json::object([
-                ("id", Json::text(created.plate.id.to_string())),
-                ("name", Json::text(created.plate.name.as_str())),
-                ("class", num(f64::from(created.plate.class))?),
-            ]),
-        ),
-        (
-            "start_points_mm",
-            Json::Array(
-                created
-                    .plate
-                    .start_points_mm
-                    .iter()
-                    .map(point_json)
-                    .collect(),
+    Ok(with_lookups(
+        Json::object([
+            (
+                "outcome",
+                Json::text(if created.replayed {
+                    "lofted_plate_replayed"
+                } else {
+                    "lofted_plate_created"
+                }),
             ),
-        ),
-        (
-            "end_points_mm",
-            Json::Array(created.plate.end_points_mm.iter().map(point_json).collect()),
-        ),
-        ("geometry", geometry),
-        ("revision", revision_json(&created.revision)),
-        ("footprint", footprint_json(created.footprint.as_ref())),
-    ]))
+            ("op_id", Json::text(op_id.to_string())),
+            (
+                "plate",
+                Json::object([
+                    ("id", Json::text(created.plate.id.to_string())),
+                    ("name", Json::text(created.plate.name.as_str())),
+                    ("class", num(f64::from(created.plate.class))?),
+                ]),
+            ),
+            (
+                "start_points_mm",
+                Json::Array(
+                    created
+                        .plate
+                        .start_points_mm
+                        .iter()
+                        .map(point_json)
+                        .collect(),
+                ),
+            ),
+            (
+                "end_points_mm",
+                Json::Array(created.plate.end_points_mm.iter().map(point_json).collect()),
+            ),
+            ("geometry", geometry),
+            ("revision", revision_json(&created.revision)),
+            ("footprint", footprint_json(created.footprint.as_ref())),
+        ]),
+        &lookups,
+    ))
 }
 
 /// One authored contour point as a JSON array.
@@ -3475,22 +3518,25 @@ fn create_member_command(
     } else {
         None
     };
+    let mut lookups = Lookups::default();
     let profile_digest = selected(
         store,
         options,
         ("--profile-digest", "--profile"),
-        true,
+        Namespace::Profile,
         replay.as_ref(),
         candidates,
+        &mut lookups,
     )?
     .ok_or_else(|| invalid("--profile-digest or --profile is required"))?;
     let material_digest = selected(
         store,
         options,
         ("--material-digest", "--material"),
-        false,
+        Namespace::Material,
         replay.as_ref(),
         candidates,
+        &mut lookups,
     )?;
     let command = CreateStraightMember {
         new_id,
@@ -3534,20 +3580,23 @@ fn create_member_command(
         },
         &mut NoFault,
     )?;
-    Ok(Json::object([
-        (
-            "outcome",
-            Json::text(if created.replayed {
-                "member_replayed"
-            } else {
-                "member_created"
-            }),
-        ),
-        ("op_id", Json::text(op_id.to_string())),
-        ("member", member_json(&created.member)?),
-        ("revision", revision_json(&created.revision)),
-        ("footprint", footprint_json(created.footprint.as_ref())),
-    ]))
+    Ok(with_lookups(
+        Json::object([
+            (
+                "outcome",
+                Json::text(if created.replayed {
+                    "member_replayed"
+                } else {
+                    "member_created"
+                }),
+            ),
+            ("op_id", Json::text(op_id.to_string())),
+            ("member", member_json(&created.member)?),
+            ("revision", revision_json(&created.revision)),
+            ("footprint", footprint_json(created.footprint.as_ref())),
+        ]),
+        &lookups,
+    ))
 }
 
 /// The member path of `--points "X,Y,Z;X,Y,Z;..."`: at least three three-component points in
@@ -3653,22 +3702,25 @@ fn create_polybeam_command(
     } else {
         None
     };
+    let mut lookups = Lookups::default();
     let profile_digest = selected(
         store,
         options,
         ("--profile-digest", "--profile"),
-        true,
+        Namespace::Profile,
         replay.as_ref(),
         candidates,
+        &mut lookups,
     )?
     .ok_or_else(|| invalid("--profile-digest or --profile is required"))?;
     let material_digest = selected(
         store,
         options,
         ("--material-digest", "--material"),
-        false,
+        Namespace::Material,
         replay.as_ref(),
         candidates,
+        &mut lookups,
     )?;
     let command = CreatePolybeam {
         new_id,
@@ -3717,28 +3769,31 @@ fn create_polybeam_command(
             &mut NoFault,
         )?
     };
-    Ok(Json::object([
-        (
-            "outcome",
-            Json::text(if created.replayed {
-                if curved {
-                    "curved_beam_replayed"
+    Ok(with_lookups(
+        Json::object([
+            (
+                "outcome",
+                Json::text(if created.replayed {
+                    if curved {
+                        "curved_beam_replayed"
+                    } else {
+                        "polybeam_replayed"
+                    }
                 } else {
-                    "polybeam_replayed"
-                }
-            } else {
-                if curved {
-                    "curved_beam_created"
-                } else {
-                    "polybeam_created"
-                }
-            }),
-        ),
-        ("op_id", Json::text(op_id.to_string())),
-        ("member", member_json(&created.member)?),
-        ("revision", revision_json(&created.revision)),
-        ("footprint", footprint_json(created.footprint.as_ref())),
-    ]))
+                    if curved {
+                        "curved_beam_created"
+                    } else {
+                        "polybeam_created"
+                    }
+                }),
+            ),
+            ("op_id", Json::text(op_id.to_string())),
+            ("member", member_json(&created.member)?),
+            ("revision", revision_json(&created.revision)),
+            ("footprint", footprint_json(created.footprint.as_ref())),
+        ]),
+        &lookups,
+    ))
 }
 
 /// The P14 section-placement flags of `create-member`: absence of every flag is `None` (the
@@ -3934,6 +3989,9 @@ fn member_json(record: &MemberRecord) -> Run<Json> {
                             ("operation_id", Json::text(r.operation_id.to_string())),
                             ("ordinal", Json::uint(r.ordinal as u64)),
                             ("extent", Json::text(r.extent.as_str())),
+                            // The record kind: a fastener hole (A04.2) or a member polygon
+                            // cut (A13).
+                            ("kind", Json::text(r.kind.as_str())),
                             // The generating bolt group (the F06 member-hole amendment);
                             // null for a hand-placed hole.
                             (
@@ -5233,14 +5291,151 @@ fn project_lookup(options: &BTreeMap<&str, &str>) -> Run<Option<Lookup>> {
     Ok(Some(chain.lookup))
 }
 
-/// The fastener resolver over the same layered chain. A project whose environment copy
-/// declares no fastener libraries keeps the explicit `--fastener-library` file requirement
-/// unless the firm layer of the application data provides one.
-pub(crate) fn project_fastener_lookup(options: &BTreeMap<&str, &str>) -> Run<Option<Lookup>> {
-    let Some(store) = options.get("--store") else {
-        return Ok(None);
+/// The project's chain for the names of a creation command ([`selected`]): the project's own
+/// copy of its environment (the project layer), then the user-owned firm libraries of the
+/// application data, then the built-in neutral environment. It is built when a name reaches the
+/// libraries: the model layer answers before this chain, so a name the head already defines
+/// never builds it.
+fn project_chain(options: &BTreeMap<&str, &str>) -> Run<ProjectChain> {
+    let store = options
+        .get("--store")
+        .ok_or_else(|| invalid("--store is required"))?;
+    project_library_chain(std::path::Path::new(store), None)
+}
+
+/// The fastener chain of `create-bolt-group` and `update-bolt-group`: the one
+/// `--fastener-library` file the command names, a chain of a single `library` layer that answers
+/// alone, or else the fastener libraries of the project's chain (BC-ENV-002: bolts ride the
+/// environment the project was created with).
+pub(crate) fn fastener_chain(options: &BTreeMap<&str, &str>) -> Run<ProjectChain> {
+    let Some(path) = options.get("--fastener-library") else {
+        return project_chain(options);
     };
-    Ok(project_library_chain(std::path::Path::new(store), None)?.fastener_lookup)
+    Ok(ProjectChain {
+        lookup: Lookup::default(),
+        fastener_lookup: Some(Lookup::new(vec![Source {
+            path: (*path).to_owned(),
+            library: load_fastener(path)?,
+            layer: LAYER_LIBRARY,
+        }])),
+        material_lookup: None,
+        environment: None,
+        environment_lost: None,
+        firm_refused: Vec::new(),
+    })
+}
+
+/// Pins the definition a chain answered into the model and answers its digest: a profile
+/// designation or a material grade is defined in the model when it is first used. Definitions
+/// are content-addressed, so one that is already there is not written again. The model layer is
+/// pinned already and answers by its digest, so nothing is written for it.
+fn pin(
+    store: &RevisionStore,
+    options: &BTreeMap<&str, &str>,
+    found: &Resolved,
+) -> Run<ContentDigest> {
+    if found.layer == LAYER_MODEL {
+        return Ok(found.digest);
+    }
+    let mut source = IdSource::system();
+    let mut fresh = || {
+        source.next_id().map_err(|_| Refusal {
+            rule_id: None,
+            code: ErrorCode::BackendUnavailable,
+            message: "no identity could be generated",
+        })
+    };
+    let actor = match options.get("--actor-id") {
+        Some(text) => Uuid7::parse(text).map_err(Refusal::from)?,
+        None => Uuid7::parse(&fresh()?.to_string()).map_err(Refusal::from)?,
+    };
+    Ok(define(
+        store,
+        &DefineRequest {
+            revision_id: RevisionId::from_uuid(fresh()?),
+            op_id: OpId::from_uuid(fresh()?),
+            actor,
+            project: ProjectId::from_uuid(fresh()?),
+            workspace: WorkspaceId::from_uuid(fresh()?),
+            definition: found.record.clone(),
+        },
+        &mut NoFault,
+    )?
+    .digest)
+}
+
+/// A shadow record of a reply: the name, the library and layer that answer it, and the weaker
+/// library and layer it shadows.
+pub(crate) fn shadow_json(records: impl IntoIterator<Item = Shadowed>) -> Json {
+    Json::Array(
+        records
+            .into_iter()
+            .map(|s| {
+                Json::object([
+                    ("designation", Json::text(s.designation)),
+                    ("used_library", Json::text(s.used_library)),
+                    ("used_layer", Json::text(s.used_layer)),
+                    ("shadowed_library", Json::text(s.shadowed_library)),
+                    ("shadowed_layer", Json::text(s.shadowed_layer)),
+                ])
+            })
+            .collect(),
+    )
+}
+
+/// The lost environment copy of a project, as a reply reports it beside the chain's answer.
+pub(crate) fn environment_lost_json(lost: &EnvironmentCopyLost) -> Json {
+    Json::object([
+        ("path", Json::text(lost.path.clone())),
+        ("message", Json::text(lost.message.clone())),
+    ])
+}
+
+/// What the names of a command resolved through, for its reply: one record per name that went
+/// through the layers, and the lost environment a consulted chain reported (#628).
+#[derive(Default)]
+pub(crate) struct Lookups {
+    records: Vec<Json>,
+    environment_lost: Option<Json>,
+}
+
+impl Lookups {
+    /// Notes that `name` of its namespace answered through the layers with `found`.
+    pub(crate) fn note(&mut self, name: &str, found: &Resolved) {
+        if self.environment_lost.is_none() {
+            self.environment_lost = found.environment_lost.as_ref().map(environment_lost_json);
+        }
+        self.records.push(Json::object([
+            ("namespace", Json::text(found.record.namespace().token())),
+            ("name", Json::text(name)),
+            ("layer", Json::text(found.layer)),
+            (
+                "library",
+                found
+                    .library
+                    .as_ref()
+                    .map_or(Json::Null, |info| Json::text(info.id.clone())),
+            ),
+            ("shadowed", shadow_json(found.shadowed.iter().cloned())),
+        ]));
+    }
+}
+
+/// The reply of a command that resolved names through the layers: its `lookups`, and the
+/// `environment_lost` a consulted chain reported, beside the command's own fields. A command
+/// that gave digests, or no name, keeps its reply as it was.
+pub(crate) fn with_lookups(reply: Json, lookups: &Lookups) -> Json {
+    let mut fields = match reply {
+        Json::Object(fields) => fields,
+        _ => return reply,
+    };
+    if !lookups.records.is_empty() {
+        fields.insert("lookups".into(), Json::Array(lookups.records.clone()));
+    }
+    if let Some(lost) = &lookups.environment_lost {
+        fields.insert("environment_lost".into(), lost.clone());
+    }
+    Json::Object(fields)
 }
 
 /// The material resolver over the same layered chain. A project whose environment copy
@@ -5252,93 +5447,6 @@ fn project_material_lookup(options: &BTreeMap<&str, &str>) -> Run<Option<Lookup>
         return Ok(None);
     };
     Ok(project_library_chain(std::path::Path::new(store), None)?.material_lookup)
-}
-
-/// Defines the profile `name` of the project's environment in the model and returns its digest;
-/// `None` when the project has no environment or the environment has no such designation.
-/// Definitions are content-addressed, so a profile that is already there is not written again.
-fn define_from_environment(
-    store: &RevisionStore,
-    options: &BTreeMap<&str, &str>,
-    name: &str,
-) -> Run<Option<ContentDigest>> {
-    let Some(lookup) = project_lookup(options)? else {
-        return Ok(None);
-    };
-    let record = match lookup.find(name) {
-        Ok((_, entry)) => entry.record.clone(),
-        Err(error) if error.code == ErrorCode::NotFound => return Ok(None),
-        Err(error) => return Err(error),
-    };
-    let mut source = IdSource::system();
-    let mut fresh = || {
-        source.next_id().map_err(|_| Refusal {
-            rule_id: None,
-            code: ErrorCode::BackendUnavailable,
-            message: "no identity could be generated",
-        })
-    };
-    let actor = match options.get("--actor-id") {
-        Some(text) => Uuid7::parse(text).map_err(Refusal::from)?,
-        None => Uuid7::parse(&fresh()?.to_string()).map_err(Refusal::from)?,
-    };
-    let defined = define(
-        store,
-        &DefineRequest {
-            revision_id: RevisionId::from_uuid(fresh()?),
-            op_id: OpId::from_uuid(fresh()?),
-            actor,
-            project: ProjectId::from_uuid(fresh()?),
-            workspace: WorkspaceId::from_uuid(fresh()?),
-            definition: record,
-        },
-        &mut NoFault,
-    )?;
-    Ok(Some(defined.digest))
-}
-
-/// Defines the material grade `name` of the project's environment in the model and returns its
-/// digest (axisrow/BeamCraft#636); `None` when the project has no environment materials or the environment has no
-/// such grade. Definitions are content-addressed, so a grade that is already there is not
-/// written again.
-fn define_material_from_environment(
-    store: &RevisionStore,
-    options: &BTreeMap<&str, &str>,
-    name: &str,
-) -> Run<Option<ContentDigest>> {
-    let Some(lookup) = project_material_lookup(options)? else {
-        return Ok(None);
-    };
-    let record = match lookup.find(name) {
-        Ok((_, entry)) => entry.record.clone(),
-        Err(error) if error.code == ErrorCode::NotFound => return Ok(None),
-        Err(error) => return Err(error),
-    };
-    let mut source = IdSource::system();
-    let mut fresh = || {
-        source.next_id().map_err(|_| Refusal {
-            rule_id: None,
-            code: ErrorCode::BackendUnavailable,
-            message: "no identity could be generated",
-        })
-    };
-    let actor = match options.get("--actor-id") {
-        Some(text) => Uuid7::parse(text).map_err(Refusal::from)?,
-        None => Uuid7::parse(&fresh()?.to_string()).map_err(Refusal::from)?,
-    };
-    let defined = define(
-        store,
-        &DefineRequest {
-            revision_id: RevisionId::from_uuid(fresh()?),
-            op_id: OpId::from_uuid(fresh()?),
-            actor,
-            project: ProjectId::from_uuid(fresh()?),
-            workspace: WorkspaceId::from_uuid(fresh()?),
-            definition: record,
-        },
-        &mut NoFault,
-    )?;
-    Ok(Some(defined.digest))
 }
 
 /// The designations of the project's environment that the model does not define yet, for
@@ -5387,7 +5495,7 @@ fn environment_profiles_json(inspection: &Inspection, options: &BTreeMap<&str, &
 }
 
 /// The grades of the project's environment that the model does not define yet, for pickers
-/// (axisrow/BeamCraft#636): what `definitions` lists beside the profiles. A grade is spent once the model holds
+/// (#636): what `definitions` lists beside the profiles. A grade is spent once the model holds
 /// the catalogue material under any of its selectable names.
 fn environment_materials_json(
     inspection: &Inspection,

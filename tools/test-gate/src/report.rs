@@ -38,7 +38,9 @@ impl Os {
     pub const fn runner(self) -> &'static str {
         match self {
             Self::Linux => "ubuntu-latest",
-            Self::Macos => "macos-latest",
+            // macos-latest (macOS 26) leaves this repository's jobs in the acquire queue
+            // until they are cancelled; macos-15 is the proven neighbouring pool.
+            Self::Macos => "macos-15",
             Self::Windows => "windows-latest",
         }
     }
@@ -93,7 +95,7 @@ impl Scope {
 }
 
 /// A single supervised command, with its original status and separate execution time.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Stage {
     /// Stable step name.
@@ -107,7 +109,7 @@ pub struct Stage {
 }
 
 /// A successful report is eligible only after all required steps and snapshot validation.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Report {
     /// Wire format version.
@@ -136,6 +138,10 @@ pub struct Report {
     pub cargo: String,
     /// Nextest version.
     pub nextest: String,
+    /// Ceiling on Cargo build jobs and nextest test threads when `BEAMCRAFT_GATE_MAX_JOBS` was
+    /// set; absent, and omitted from the JSON, when the tools' own defaults applied.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_jobs: Option<u32>,
     /// Number of runnable selected tests in the prepared inventory.
     pub expected_tests: u64,
     /// Executed test cases in the fresh JUnit report.
@@ -171,8 +177,11 @@ impl Report {
             || self.rustc.len() > 256
             || self.cargo.len() > 256
             || self.nextest.split_whitespace().nth(1) != Some(NEXTEST_VERSION)
+            || self.max_jobs == Some(0)
         {
-            return fail("missing tool/architecture identity or wrong nextest version");
+            return fail(
+                "missing tool/architecture identity, wrong nextest version or a zero job ceiling",
+            );
         }
         if !self.source_unchanged
             || self.expected_tests == 0
