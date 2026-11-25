@@ -51,7 +51,7 @@ eframe = { version = "=0.37.0", default-features = false, features = ["wgpu_no_d
 # build needs its development package and the binary cannot start on a machine without it.
 winit = { version = "=0.30.13", default-features = false, features = ["wayland-dlopen"] }
 wgpu = { version = "=30.0.2", default-features = false, features = ["std", "wgsl", "dx12", "vulkan", "metal"] }
-pollster = "=1.0.1"
+pollster = "=1.0.3"
 # Decode and resize the runtime application icon; PNG only.
 image = { version = "=0.25.10", default-features = false, features = ["png"] }
 # Writes and reads the marker text chunk of the model library picture (`thumbnail.png`);
