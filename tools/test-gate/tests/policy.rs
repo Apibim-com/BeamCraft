@@ -216,7 +216,7 @@ fn required_ci_jobs_cannot_be_skipped_or_failed_while_platform_tests_run_beside_
     }
     needs["build-timings"] = serde_json::json!({"result":"skipped"});
     // Platform test lanes are absent from the CI wall: the verdict accepts their
-    // hand-off to ci-platform.yml and must not require them here.
+    // hand-off to the separate test track and must not require them here.
     github::verdict(&needs, &oses, "pull_request").unwrap();
     for bad in ["failure", "cancelled", "skipped"] {
         let mut changed = needs.clone();

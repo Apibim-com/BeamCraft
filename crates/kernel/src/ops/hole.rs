@@ -331,8 +331,8 @@ pub fn oblique_through_hole(body: &Body, cutter: &HoleCutter) -> Result<OpResult
 /// admission and certification, but the cutter sweeps along its own normalized axis. Both
 /// cap openings are the cavity translated by the sweep offset (`t = z/dz` at cap height
 /// `z`), the prism walls connect the two translated rings side for side, and the removed
-/// volume is the exact `area * thickness / dz` — a longer path through the slab for a
-/// tilted prism, enclosed outward.
+/// volume is the exact `area * thickness` — the translated cavity keeps the same
+/// cross-section at every height through the slab, so a longer sweep path adds nothing.
 pub fn oblique_through_hole_with(
     body: &Body,
     cutter: &HoleCutter,

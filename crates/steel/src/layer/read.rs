@@ -293,7 +293,6 @@ pub(super) fn member_hole_records(prim: &Prim) -> Result<(), Diagnostic> {
         "steel:mhole:extentFromMm",
         "steel:mhole:extentToMm",
         "steel:mhole:generatedBy",
-        "steel:mhole:kinds",
     ];
     let declared: Vec<bool> = names.iter().map(|name| present(name)).collect();
     if declared.iter().all(|seen| !seen) {
@@ -334,7 +333,6 @@ pub(super) fn member_hole_records(prim: &Prim) -> Result<(), Diagnostic> {
         || counts.len() != from.len()
         || counts.len() != to.len()
         || counts.len() != owners.len()
-        || counts.len() != kinds.len()
     {
         return Err(invalid());
     }
@@ -354,15 +352,6 @@ pub(super) fn member_hole_records(prim: &Prim) -> Result<(), Diagnostic> {
             return Err(invalid());
         };
         if !owner.is_empty() && !uuid7(owner) {
-            return Err(invalid());
-        }
-    }
-    // Every record kind is the amendment's hole token or the A13 polygon-cut one.
-    for kind in kinds {
-        let Value::Text(kind) = kind else {
-            return Err(invalid());
-        };
-        if crate::model::command::MemberHoleKind::parse(kind).is_none() {
             return Err(invalid());
         }
     }

@@ -805,9 +805,9 @@ fn selected(
                     rule_id: None,
                     code: ErrorCode::NotFound,
                     message: if profiles {
-                        "no profile definition in the head has this name"
+                        "no profile definition in the head or in any library of the lookup has this name"
                     } else {
-                        "no material definition in the head has this name"
+                        "no material definition in the head or in any library of the lookup has this name"
                     },
                 }),
                 Resolution::Ambiguous(found) => {

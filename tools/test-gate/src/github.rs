@@ -216,9 +216,8 @@ pub fn verdict(needs: &Value, oses: &[String], event: &str) -> Result<()> {
     }
     // Repository-specific policy checks (an attribution guard, for example) run as
     // separate workflow files beside this pipeline, so they are not required lanes.
-    // Complete-workspace test execution is the platform track (ci-platform.yml,
-    // owner decision 2026-11-05): it verifies every integration push and the
-    // nightly cadence beside this pipeline instead of waiting inside its wall.
+    // Complete-workspace test execution runs beside this pipeline on integration
+    // pushes and a nightly cadence instead of waiting inside its wall.
     require(
         "build-timings",
         if event == "pull_request" {
